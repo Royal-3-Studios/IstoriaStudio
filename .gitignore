@@ -1,0 +1,19 @@
+# Node (frontend)
+node_modules/
+dist/
+
+# Python (backend)
+__pycache__/
+*.pyc
+.env
+
+# Docker
+*.log
+*.pid
+
+# VS Code and system files
+.vscode/
+.DS_Store
+
+# Devcontainers
+.devcontainer/devcontainer.json~  # temp files

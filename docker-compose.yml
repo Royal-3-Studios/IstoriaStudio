@@ -1,0 +1,78 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: .devcontainer/Dockerfile
+    container_name: istoria_frontend
+    volumes:
+      - ./frontend:/app:cached
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    networks:
+      - istoria-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: .devcontainer/Dockerfile
+    container_name: istoria_backend
+    volumes:
+      - ./backend:/workspace:cached
+    ports:
+      - "8000:8000"
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - DATABASE_URL=postgresql+asyncpg://istoria:istoriapass@db:5432/istoriadb
+    networks:
+      - istoria-net
+    depends_on:
+      - minio
+  redis:
+    image: redis:7
+    container_name: istoria_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - istoria-net
+
+  db:
+    image: postgres:17.5
+    container_name: postgres_istoria
+    restart: always
+    environment:
+      POSTGRES_DB: istoriadb
+      POSTGRES_USER: istoria
+      POSTGRES_PASSWORD: istoriapass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - istoria-net
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Admin UI
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    networks:
+      - istoria-net
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  istoria-net:
+    driver: bridge

@@ -1,0 +1,22 @@
+{
+    "name": "Istoria Dev",
+    "dockerComposeFile": [
+        "../../docker-compose.yml"
+    ],
+    "service": "backend",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "root",
+    "initializeCommand": "docker compose up -d db minio",
+    "postCreateCommand": "pip install --root-user-action=ignore -r /workspace/requirements.txt",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.isort",
+                "ms-python.black-formatter",
+                "cweijan.vscode-database-client2"
+            ]
+        }
+    }
+}
