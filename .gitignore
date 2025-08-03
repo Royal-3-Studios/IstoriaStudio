@@ -1,11 +1,24 @@
 # Node (frontend)
 node_modules/
 dist/
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+frontend/.env*
+frontend/package-lock.json
+frontend/.vercel/
 
 # Python (backend)
 __pycache__/
 *.pyc
 .env
+backend/__pycache__/
+backend/*.pyc
+backend/.env*
+backend/instance/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.vscode/
 
 # Docker
 *.log
@@ -14,6 +27,8 @@ __pycache__/
 # VS Code and system files
 .vscode/
 .DS_Store
+Thumbs.db
+.env*
 
 # Devcontainers
 .devcontainer/devcontainer.json~  # temp files

@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import engine, Base, get_db
+from fastapi.middleware.cors import CORSMiddleware
 
 # ✅ Add this:
 from app.api import api_router  # Imports your /auth routes
@@ -19,6 +20,14 @@ app = FastAPI(title="Istoria Studio API", lifespan=lifespan)
 
 # ✅ Add this:
 app.include_router(api_router, prefix="/api")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")

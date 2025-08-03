@@ -11,7 +11,7 @@ from app.api.generated_asset.routes import router as generated_asset_router
 
 api_router = APIRouter()
 
-api_router.include_router(auth_router, prefix="/auth", tags=["Auth"])
+api_router.include_router(auth_router, prefix="/auth",  tags=["Auth"])
 api_router.include_router(
     purchase_router, prefix="/purchase", tags=["Purchase"])
 api_router.include_router(
