@@ -5,13 +5,13 @@ from uuid import UUID
 from app.db.models import Purchase
 from app.db.session import get_db
 from app.core.deps import get_current_user
-from pydantic import BaseModel
+from app.db.models.base import OrmBaseModel
 from typing import List, Optional
 
 router = APIRouter()
 
 
-class PurchaseCreate(BaseModel):
+class PurchaseCreate(OrmBaseModel):
     id: Optional[UUID] = None
     email: str
     amount: float

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from uuid import UUID
 from typing import Optional, List
-from pydantic import BaseModel
+from app.db.models.base import OrmBaseModel
 
 from app.db.models import AssetType
 from app.db.session import get_db
@@ -12,7 +12,7 @@ from app.db.session import get_db
 router = APIRouter()
 
 
-class AssetTypeCreate(BaseModel):
+class AssetTypeCreate(OrmBaseModel):
     id: Optional[UUID] = None
     name: str
     description: Optional[str] = None

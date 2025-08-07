@@ -5,14 +5,14 @@ from sqlalchemy import select
 
 from app.db.models import ProjectUpdateLog
 from app.db.session import get_db
-from pydantic import BaseModel
+from app.db.models.base import OrmBaseModel
 from typing import Optional, List
 from uuid import UUID
 
 router = APIRouter()
 
 
-class UpdateLogCreate(BaseModel):
+class UpdateLogCreate(OrmBaseModel):
     id: Optional[UUID] = None
     project_id: UUID
     change_summary: str

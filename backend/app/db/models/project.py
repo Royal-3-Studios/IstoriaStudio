@@ -13,6 +13,7 @@ class Project(Base):
     __tablename__ = "project"
 
     id: Mapped[UUID] = mapped_column(UUID, primary_key=True, default=uuid4)
+    is_archived: bool = False
     title: Mapped[str] = mapped_column(String)
     type: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="draft")

@@ -1,11 +1,9 @@
+from app.api import api_router  # Imports your /auth routes
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import engine, Base, get_db
 from fastapi.middleware.cors import CORSMiddleware
-
-# ✅ Add this:
-from app.api import api_router  # Imports your /auth routes
 
 
 @asynccontextmanager

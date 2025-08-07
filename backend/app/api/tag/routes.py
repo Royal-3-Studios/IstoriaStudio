@@ -6,13 +6,13 @@ from uuid import UUID
 from typing import Optional
 from app.db.models import Tag
 from app.db.session import get_db
-from pydantic import BaseModel
+from app.db.models.base import OrmBaseModel
 from typing import List
 
 router = APIRouter()
 
 
-class TagCreate(BaseModel):
+class TagCreate(OrmBaseModel):
     id: Optional[UUID] = None
     name: str
 

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.db.models import PromptLog
 from app.db.session import get_db
-from pydantic import BaseModel
+from app.db.models.base import OrmBaseModel
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 router = APIRouter()
 
 
-class PromptLogCreate(BaseModel):
+class PromptLogCreate(OrmBaseModel):
     id: Optional[UUID] = None
     prompt_input: dict
     prompt_output: str

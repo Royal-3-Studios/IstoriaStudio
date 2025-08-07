@@ -8,16 +8,24 @@ from app.enums.project_status import ProjectStatus
 from app.db.models import Project
 from app.db.session import get_db
 from app.db.models import Tag
-from pydantic import BaseModel, Field
+from app.db.models import GeneratedAsset
+from pydantic import Field
 from typing import Optional, List
 from uuid import UUID
 import enum
 from datetime import datetime
-
+from app.deps.auth import get_current_user
+from app.api.generated_asset.routes import GeneratedAssetRead
+from app.db.models.base import OrmBaseModel
 router = APIRouter()
 
 
-class ProjectCreate(BaseModel):
+@router.get("/secure", response_model=dict)
+async def secured_route(user=Depends(get_current_user)):
+    return {"message": f"Hello, {user['username']}!"}
+
+
+class ProjectCreate(OrmBaseModel):
     id: Optional[UUID] = None
     title: str
     type: str
@@ -29,7 +37,7 @@ class ProjectCreate(BaseModel):
     tags: Optional[List[UUID]] = None
 
 
-class ProjectUpdate(BaseModel):
+class ProjectUpdate(OrmBaseModel):
     id: Optional[UUID] = None
     title: Optional[str] = None
     type: Optional[str] = None
@@ -41,7 +49,7 @@ class ProjectUpdate(BaseModel):
     tags: Optional[List[UUID]] = None
 
 
-class ProjectRead(BaseModel):
+class ProjectRead(OrmBaseModel):
     id: UUID
     title: str
     type: str
@@ -54,12 +62,9 @@ class ProjectRead(BaseModel):
     # Or use a nested TagRead model if you want full objects
     tags: List[str] = []
 
-    class Config:
-        orm_mode = True
-
 
 @router.post("/", response_model=dict)
-async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)):
+async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     try:
         async with db.begin():
             project = Project(
@@ -68,7 +73,7 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
                 status=data.status.value,
                 description=data.description,
                 email=data.email,
-                user_id=data.user_id,
+                user_id=user["sub"],
                 is_active=data.is_active
             )
 
@@ -78,7 +83,8 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
 
             db.add(project)
 
-        return {"message": "Project created"}
+        # return {"message": "Project created"}
+        return {"id": str(project.id), "message": "Project created"}
 
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=f"Error: {e}")
@@ -90,7 +96,7 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
 @router.put("/{project_id}", response_model=dict)
 async def update_project(
     project_id: UUID,
-    data: ProjectUpdate,  # has Optional[List[UUID]] for tags
+    data: ProjectUpdate,
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -150,9 +156,18 @@ async def delete_project(
 
 
 @router.get("/", response_model=List[ProjectRead])
-async def get_all_projects(db: AsyncSession = Depends(get_db)):
+async def get_all_projects(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     result = await db.execute(
-        select(Project).options(selectinload(Project.tags))
+        select(Project).where(Project.user_id == user["sub"]).options(
+            selectinload(Project.tags))
+    )
+    return result.scalars().all()
+
+
+@router.get("/project/{project_id}", response_model=List[GeneratedAssetRead])
+async def get_assets_for_project(project_id: UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(GeneratedAsset).where(GeneratedAsset.project_id == project_id)
     )
     return result.scalars().all()
 

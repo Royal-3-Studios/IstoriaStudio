@@ -16,3 +16,5 @@ class AssetType(Base):
 
     assets: Mapped[List["GeneratedAsset"]] = relationship(
         "GeneratedAsset", back_populates="asset_type")
+    templates: Mapped[list["Template"]] = relationship(
+        "Template", back_populates="asset_type")
