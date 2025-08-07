@@ -18,6 +18,14 @@ services:
       context: ./backend
       dockerfile: .devcontainer/Dockerfile
     container_name: istoria_backend
+    runtime: nvidia # ✅ Required for GPU usage
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - ./backend:/workspace:cached
     ports:
@@ -97,7 +105,9 @@ services:
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: keycloak
     ports:
-      - "8080:8080" # Keycloak admin UI
+      - "8080:8080"
+    volumes:
+      - ./keycloak-themes:/opt/keycloak/themes
     depends_on:
       - keycloak-db
     networks:
