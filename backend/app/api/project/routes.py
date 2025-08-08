@@ -1,5 +1,5 @@
 from sqlalchemy.orm import selectinload
-from app.db.models import Tag  # Import Tag model
+from app.db.models import Tag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,6 +13,7 @@ from pydantic import Field
 from typing import Optional, List
 from uuid import UUID
 import enum
+from app.db.models.user import User
 from datetime import datetime
 from app.deps.auth import get_current_user
 from app.api.generated_asset.routes import GeneratedAssetRead
@@ -22,7 +23,7 @@ router = APIRouter()
 
 @router.get("/secure", response_model=dict)
 async def secured_route(user=Depends(get_current_user)):
-    return {"message": f"Hello, {user['username']}!"}
+    return {"message": f"Hello, {user.username}!"}
 
 
 class ProjectCreate(OrmBaseModel):
@@ -59,106 +60,149 @@ class ProjectRead(OrmBaseModel):
     user_id: Optional[UUID] = None
     is_active: bool
     created_at: datetime
-    # Or use a nested TagRead model if you want full objects
     tags: List[str] = []
 
 
 @router.post("/", response_model=dict)
-async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
-    try:
-        async with db.begin():
-            project = Project(
-                title=data.title,
-                type=data.type,
-                status=data.status.value,
-                description=data.description,
-                email=data.email,
-                user_id=user["sub"],
-                is_active=data.is_active
-            )
-
-            if data.tags:
-                result = await db.execute(select(Tag).where(Tag.id.in_(data.tags)))
-                project.tags = result.scalars().all()
-
-            db.add(project)
-
-        # return {"message": "Project created"}
-        return {"id": str(project.id), "message": "Project created"}
-
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=f"Error: {e}")
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {e}")
-
-
-@router.put("/{project_id}", response_model=dict)
-async def update_project(
-    project_id: UUID,
-    data: ProjectUpdate,
-    db: AsyncSession = Depends(get_db)
+async def create_project(
+    data: ProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     try:
-        async with db.begin():
-            result = await db.execute(select(Project).where(Project.id == project_id))
-            project = result.scalar_one_or_none()
-            if not project:
-                raise HTTPException(
-                    status_code=404, detail="Project not found")
+        project = Project(
+            title=data.title,
+            type=data.type,
+            status=data.status.value,
+            description=data.description,
+            email=data.email,
+            user_id=user.id,
+            is_active=data.is_active,
+        )
 
-            updates = data.model_dump(exclude_unset=True)
+        if data.tags:
+            res = await db.execute(select(Tag).where(Tag.id.in_(data.tags)))
+            project.tags = res.scalars().all()
 
-            if "tags" in updates:
-                tag_ids = updates.pop("tags")
-                if tag_ids:
-                    tag_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
-                    project.tags = tag_result.scalars().all()
-                else:
-                    project.tags = []
-
-            for field, value in updates.items():
-                if isinstance(value, enum.Enum):
-                    value = value.value
-                setattr(project, field, value)
-
-        return {"message": "Project updated successfully"}
-
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+        db.add(project)
+        await db.commit()
+        await db.refresh(project)
+        return {"id": str(project.id), "message": "Project created"}
 
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Error: {e}")
+
+
+# @router.put("/{project_id}", response_model=dict)
+# async def update_project(
+#     project_id: UUID,
+#     data: ProjectUpdate,
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     try:
+#         async with db.begin():
+#             result = await db.execute(select(Project).where(Project.id == project_id))
+#             project = result.scalar_one_or_none()
+#             if not project:
+#                 raise HTTPException(
+#                     status_code=404, detail="Project not found")
+
+#             updates = data.model_dump(exclude_unset=True)
+
+#             if "tags" in updates:
+#                 tag_ids = updates.pop("tags")
+#                 if tag_ids:
+#                     tag_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
+#                     project.tags = tag_result.scalars().all()
+#                 else:
+#                     project.tags = []
+
+#             for field, value in updates.items():
+#                 if isinstance(value, enum.Enum):
+#                     value = value.value
+#                 setattr(project, field, value)
+
+#         return {"message": "Project updated successfully"}
+
+#     except SQLAlchemyError as e:
+#         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error: {e}")
+@router.put("/{project_id}", response_model=dict)
+async def update_project(project_id: UUID, data: ProjectUpdate, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        updates = data.model_dump(exclude_unset=True)
+
+        if "tags" in updates:
+            tag_ids = updates.pop("tags")
+            if tag_ids:
+                tag_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
+                project.tags = tag_result.scalars().all()
+            else:
+                project.tags = []
+
+        for field, value in updates.items():
+            if isinstance(value, enum.Enum):
+                value = value.value
+            setattr(project, field, value)
+
+        await db.commit()
+        return {"message": "Project updated successfully"}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {e}")
+
+# @router.delete("/{project_id}", response_model=dict)
+# async def delete_project(
+#     project_id: UUID,
+#     db: AsyncSession = Depends(get_db)
+# ):
+#     try:
+#         async with db.begin():
+#             result = await db.execute(select(Project).where(Project.id == project_id))
+#             project = result.scalar_one_or_none()
+#             if not project:
+#                 raise HTTPException(
+#                     status_code=404, detail="Project not found")
+
+#             await db.delete(project)
+
+#         return {"message": "Project deleted successfully"}
+
+#     except SQLAlchemyError as e:
+#         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 
 @router.delete("/{project_id}", response_model=dict)
-async def delete_project(
-    project_id: UUID,
-    db: AsyncSession = Depends(get_db)
-):
+async def delete_project(project_id: UUID, db: AsyncSession = Depends(get_db)):
     try:
-        async with db.begin():
-            result = await db.execute(select(Project).where(Project.id == project_id))
-            project = result.scalar_one_or_none()
-            if not project:
-                raise HTTPException(
-                    status_code=404, detail="Project not found")
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
 
-            await db.delete(project)
-
+        await db.delete(project)
+        await db.commit()
         return {"message": "Project deleted successfully"}
-
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
     except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 
 @router.get("/", response_model=List[ProjectRead])
 async def get_all_projects(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     result = await db.execute(
-        select(Project).where(Project.user_id == user["sub"]).options(
+        select(Project).where(Project.user_id == user.id).options(
             selectinload(Project.tags))
     )
     return result.scalars().all()

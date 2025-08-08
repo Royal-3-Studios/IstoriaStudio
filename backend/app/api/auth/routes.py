@@ -2,7 +2,6 @@ from urllib.parse import urlencode
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi import APIRouter, Request, HTTPException
 from jose import jwt, jwk
-from app.db.models.user import User
 from jose.utils import base64url_decode
 import httpx
 import json
@@ -10,11 +9,10 @@ from app.db.models.base import OrmBaseModel
 from typing import List, Optional
 from uuid import UUID
 from app.core.config import get_settings
-from sqlalchemy import select
 from app.db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
-
+from app.services.users import get_or_create_user
 router = APIRouter()
 settings = get_settings()
 
@@ -41,33 +39,6 @@ async def get_jwks():
             jwks_cache = resp.json()
     return jwks_cache["keys"]
 
-# ========== GET_OR_CREATE_USER ==========
-
-
-async def get_or_create_user(db: AsyncSession, keycloak_user: dict):
-    keycloak_id = keycloak_user["sub"]
-    email = keycloak_user.get("email")
-    username = keycloak_user.get("preferred_username")
-    first_name = keycloak_user.get("given_name")
-    last_name = keycloak_user.get("family_name")
-
-    result = await db.execute(select(User).where(User.keycloak_id == keycloak_id))
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        user = User(
-            keycloak_id=keycloak_id,
-            email=email,
-            username=username,
-            first_name=first_name,
-            last_name=last_name
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-
-    return user
-
 
 # ========== LOGIN ==========
 
@@ -82,7 +53,7 @@ async def login(request: Request):
         f"&response_type=code"
         f"&redirect_uri={settings.redirect_uri}"
         f"&scope=openid"
-        f"&theme={theme}"
+        # f"&theme={theme}"
     )
     return RedirectResponse(url=redirect_uri)
 
@@ -283,6 +254,7 @@ async def refresh_tokens(request: Request):
         token_resp = await client.post(token_url, data=data)
 
     print("token_resp", token_resp)
+    print("token_resp", token_resp.content)
     if token_resp.status_code != 200:
         raise HTTPException(status_code=401, detail="Token refresh failed")
 

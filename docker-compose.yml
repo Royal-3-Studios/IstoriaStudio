@@ -41,13 +41,13 @@ services:
       - istoria-net
     depends_on:
       - minio
-  redis:
-    image: redis:7
-    container_name: istoria_redis
-    ports:
-      - "6379:6379"
-    networks:
-      - istoria-net
+  # redis:
+  #   image: redis:7
+  #   container_name: istoria_redis
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - istoria-net
 
   db:
     image: postgres:17.5
@@ -106,8 +106,9 @@ services:
       KC_DB_PASSWORD: keycloak
     ports:
       - "8080:8080"
-    volumes:
-      - ./keycloak-themes:/opt/keycloak/themes
+    # volumes:
+    # - ./keycloak-themes:/opt/keycloak/themes
+    # - ./keycloak-themes/custom-theme:/opt/keycloak/themes/custom-theme
     depends_on:
       - keycloak-db
     networks:
