@@ -1,4 +1,4 @@
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from app.db.models import Tag
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,8 @@ from datetime import datetime
 from app.deps.auth import get_current_user
 from app.api.generated_asset.routes import GeneratedAssetRead
 from app.db.models.base import OrmBaseModel
+from app.api.generated_asset.routes import GeneratedAssetLite
+
 router = APIRouter()
 
 
@@ -48,6 +50,7 @@ class ProjectUpdate(OrmBaseModel):
     user_id: Optional[UUID] = None
     is_active: Optional[bool] = None
     tags: Optional[List[UUID]] = None
+    featured_asset_id: UUID | None = None
 
 
 class ProjectRead(OrmBaseModel):
@@ -60,6 +63,9 @@ class ProjectRead(OrmBaseModel):
     user_id: Optional[UUID] = None
     is_active: bool
     created_at: datetime
+    featured_asset_id: UUID | None = None
+    featured_asset: GeneratedAssetLite | None = None
+    assets: list[GeneratedAssetLite] = []
     tags: List[str] = []
 
 
@@ -93,6 +99,31 @@ async def create_project(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
+
+@router.patch("/{project_id}", response_model=ProjectRead)
+async def update_project(project_id: UUID, payload: ProjectUpdate, db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+    proj = await db.get(Project, project_id)
+    if not proj or proj.user_id != user.id:
+        raise HTTPException(404, "Project not found")
+
+    if payload.featured_asset_id is not None:
+        asset = await db.get(GeneratedAsset, payload.featured_asset_id)
+        if not asset or asset.project_id != proj.id:
+            raise HTTPException(
+                400, "featured_asset_id must belong to this project")
+        proj.featured_asset_id = asset.id
+    elif payload.featured_asset_id is None and "featured_asset_id" in payload.dict(exclude_unset=True):
+        proj.featured_asset_id = None
+
+    if payload.title is not None:
+        proj.title = payload.title
+    if payload.description is not None:
+        proj.description = payload.description
+
+    await db.commit()
+    # pulls in joined featured_asset due to relationship
+    await db.refresh(proj)
+    return proj
 
 # @router.put("/{project_id}", response_model=dict)
 # async def update_project(
@@ -130,6 +161,8 @@ async def create_project(
 
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=f"Error: {e}")
+
+
 @router.put("/{project_id}", response_model=dict)
 async def update_project(project_id: UUID, data: ProjectUpdate, db: AsyncSession = Depends(get_db)):
     try:
@@ -199,11 +232,27 @@ async def delete_project(project_id: UUID, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 
+# @router.get("/", response_model=List[ProjectRead])
+# async def get_all_projects(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
+#     # in GET /api/project
+#     result = await db.execute(
+#         select(Project)
+#         .where(Project.user_id == user.id)
+#         .options(selectinload(Project.tags), selectinload(Project.assets))
+#     )
+#     return result.scalars().all()
+
 @router.get("/", response_model=List[ProjectRead])
 async def get_all_projects(db: AsyncSession = Depends(get_db), user=Depends(get_current_user)):
     result = await db.execute(
-        select(Project).where(Project.user_id == user.id).options(
-            selectinload(Project.tags))
+        select(Project)
+        .where(Project.user_id == user.id)
+        .options(
+            selectinload(Project.tags),
+            selectinload(Project.assets).selectinload(
+                GeneratedAsset.asset_type),
+            joinedload(Project.featured_asset)  # <- include the cover asset
+        )
     )
     return result.scalars().all()
 

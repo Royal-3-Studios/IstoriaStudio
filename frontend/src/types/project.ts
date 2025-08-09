@@ -19,5 +19,7 @@ export interface Project {
   prompt_logs: PromptLog[];
   assets?: GeneratedAsset[];
   update_logs: ProjectUpdateLog[];
+  featured_asset_id?: string | null;
+  featured_asset?: Pick<GeneratedAsset, "id" | "thumbnail_url" | "url"> | null;
   tags?: Tag[];
 }

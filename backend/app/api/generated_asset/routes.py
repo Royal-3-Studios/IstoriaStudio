@@ -12,7 +12,7 @@ from app.db.models.subscription import Subscription
 from app.db.models import GeneratedAsset
 from datetime import datetime
 from app.db.models.base import OrmBaseModel
-
+from app.api.asset_type.routes import AssetTypeRead
 router = APIRouter()
 
 
@@ -60,6 +60,13 @@ class GeneratedAssetRead(OrmBaseModel):
     template_id: Optional[UUID]
     style_json: Optional[Dict]
     text_overlays: Optional[List[Dict]]
+
+
+class GeneratedAssetLite(OrmBaseModel):
+    id: UUID
+    url: str | None = None
+    thumbnail_url: str | None = None
+    asset_type: AssetTypeRead | None = None
 
 
 class GeneratedAssetReturn(GeneratedAssetCreate):

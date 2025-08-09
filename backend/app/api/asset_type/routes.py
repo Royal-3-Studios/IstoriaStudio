@@ -12,6 +12,11 @@ from app.db.session import get_db
 router = APIRouter()
 
 
+class AssetTypeRead(OrmBaseModel):
+    id: UUID
+    name: str
+
+
 class AssetTypeCreate(OrmBaseModel):
     id: Optional[UUID] = None
     name: str
