@@ -6,15 +6,15 @@
       "DOM.Iterable",
       "ES2022"
     ],
-    "allowImportingTsExtensions": true,
+    // "allowImportingTsExtensions": true,
     "allowJs": true,
     "checkJs": false,
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
@@ -36,7 +36,7 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
   ],
   "exclude": [
     "node_modules"

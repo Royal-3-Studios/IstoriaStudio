@@ -4,7 +4,7 @@ from sqlalchemy import select
 from uuid import UUID
 from app.db.models import Purchase
 from app.db.session import get_db
-from app.core.deps import get_current_user
+from app.deps.auth import get_current_user
 from app.db.models.base import OrmBaseModel
 from typing import List, Optional
 

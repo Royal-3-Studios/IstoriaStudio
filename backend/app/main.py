@@ -1,31 +1,32 @@
-from app.api import api_router  # Imports your /auth routes
 from fastapi import FastAPI, Depends
-from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import engine, Base, get_db
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from pathlib import Path
 
+from app.api import api_router
+from app.db.session import get_db  # engine/Base not needed when using Alembic
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        print("✅ Tables checked/created")
-    yield
-    print("🛑 Shutting down")
+# Ensure the directory exists so StaticFiles doesn't 404
+Path("app/generated").mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Istoria Studio API", lifespan=lifespan)
+app = FastAPI(title="Istoria Studio API")
 
-# ✅ Add this:
+# Routes
 app.include_router(api_router, prefix="/api")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000"],  # add your real domains in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve generated images (e.g., from image_gen.py)
+app.mount("/generated", StaticFiles(directory="app/generated"), name="generated")
 
 
 @app.get("/")
@@ -35,5 +36,5 @@ async def root():
 
 @app.get("/health")
 async def healthcheck(db: AsyncSession = Depends(get_db)):
-    result = await db.execute("SELECT 1")
+    result = await db.execute(text("SELECT 1"))
     return {"db_status": result.scalar() == 1}

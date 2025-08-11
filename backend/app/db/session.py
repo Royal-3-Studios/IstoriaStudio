@@ -1,13 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from typing import AsyncGenerator
-import os
 
-# Use environment variable in production
-DATABASE_URL = os.getenv("ALEMBIC_DATABASE_URL",
-                         "postgresql+asyncpg://istoria:istoriapass@db:5432/istoriadb")
+from app.core.config import get_settings
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+settings = get_settings()
+
+engine = create_async_engine(settings.alembic_database_url, echo=True)
 
 async_session = async_sessionmaker(
     bind=engine,

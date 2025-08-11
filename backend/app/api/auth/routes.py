@@ -107,65 +107,6 @@ async def auth_callback(request: Request):
 # ========== GET CURRENT USER ==========
 
 
-# @router.get("/keycloak/me")
-# async def get_current_user(request: Request):
-#     token = request.cookies.get("access_token")
-#     if not token:
-#         raise HTTPException(status_code=401, detail="Missing token")
-
-#     try:
-#         header_b64, payload_b64, signature_b64 = token.split(".")
-#         headers = json.loads(base64url_decode(
-#             (header_b64 + "==").encode()).decode())
-#         kid = headers.get("kid")
-#     except Exception:
-#         raise HTTPException(status_code=401, detail="Malformed token")
-
-#     if not kid:
-#         raise HTTPException(status_code=401, detail="Missing key ID")
-
-#     keys = await get_jwks()
-#     key_data = next((k for k in keys if k["kid"] == kid), None)
-#     if not key_data:
-#         raise HTTPException(status_code=401, detail="Public key not found")
-
-#     public_key = jwk.construct(key_data)
-#     message = f"{header_b64}.{payload_b64}".encode()
-#     decoded_signature = base64url_decode(signature_b64 + "==")
-
-#     if not public_key.verify(message, decoded_signature):
-#         raise HTTPException(status_code=401, detail="Invalid signature")
-
-#     try:
-#         payload = jwt.decode(
-#             token,
-#             public_key,
-#             algorithms=[settings.algorithms],
-#             audience="account",
-#             issuer=f"{settings.keycloak_public}/realms/{settings.realm}"
-#         )
-#     except jwt.ExpiredSignatureError:
-#         raise HTTPException(status_code=401, detail="Token expired")
-#     except jwt.JWTClaimsError as e:
-#         raise HTTPException(
-#             status_code=401, detail=f"Invalid claims: {str(e)}")
-#     except jwt.JWTError as e:
-#         raise HTTPException(
-#             status_code=401, detail=f"Token validation failed: {str(e)}")
-#     except Exception:
-#         raise HTTPException(status_code=500, detail="Unexpected server error")
-
-#     return {
-#         "id": str(user.id),
-#         "keycloak_id": user.keycloak_id,
-#         "email": user.email,
-#         "username": user.username,
-#         "first_name": user.first_name,
-#         "last_name": user.last_name,
-#         "roles": payload.get("realm_access", {}).get("roles", []),
-#     }
-
-
 @router.get("/keycloak/me")
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
     token = request.cookies.get("access_token")

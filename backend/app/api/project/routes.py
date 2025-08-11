@@ -3,7 +3,6 @@ from app.db.models import Tag
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select, delete, update
 from app.enums.project_status import ProjectStatus
 from app.db.models import Project
@@ -88,7 +87,12 @@ async def create_project(
         )
 
         if data.tags:
-            res = await db.execute(select(Tag).where(Tag.id.in_(data.tags)))
+            res = await db.execute(select(Tag).where(Tag.id.in_(data.tags).options(
+                selectinload(Project.tags),
+                selectinload(Project.assets).selectinload(
+                    GeneratedAsset.asset_type),
+                joinedload(Project.featured_asset),
+            )))
             project.tags = res.scalars().all()
 
         db.add(project)
@@ -122,46 +126,8 @@ async def update_project(project_id: UUID, payload: ProjectUpdate, db: AsyncSess
         proj.description = payload.description
 
     await db.commit()
-    # pulls in joined featured_asset due to relationship
     await db.refresh(proj)
     return proj
-
-# @router.put("/{project_id}", response_model=dict)
-# async def update_project(
-#     project_id: UUID,
-#     data: ProjectUpdate,
-#     db: AsyncSession = Depends(get_db)
-# ):
-#     try:
-#         async with db.begin():
-#             result = await db.execute(select(Project).where(Project.id == project_id))
-#             project = result.scalar_one_or_none()
-#             if not project:
-#                 raise HTTPException(
-#                     status_code=404, detail="Project not found")
-
-#             updates = data.model_dump(exclude_unset=True)
-
-#             if "tags" in updates:
-#                 tag_ids = updates.pop("tags")
-#                 if tag_ids:
-#                     tag_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
-#                     project.tags = tag_result.scalars().all()
-#                 else:
-#                     project.tags = []
-
-#             for field, value in updates.items():
-#                 if isinstance(value, enum.Enum):
-#                     value = value.value
-#                 setattr(project, field, value)
-
-#         return {"message": "Project updated successfully"}
-
-#     except SQLAlchemyError as e:
-#         raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 
 @router.put("/{project_id}", response_model=dict)
@@ -194,21 +160,6 @@ async def update_project(project_id: UUID, data: ProjectUpdate, db: AsyncSession
         raise HTTPException(status_code=500, detail=f"Error: {e}")
 
 
-# @router.delete("/{project_id}", response_model=dict)
-# async def delete_project(project_id: UUID, db: AsyncSession = Depends(get_db)):
-#     try:
-#         result = await db.execute(select(Project).where(Project.id == project_id))
-#         project = result.scalar_one_or_none()
-#         if not project:
-#             raise HTTPException(status_code=404, detail="Project not found")
-
-#         await db.delete(project)
-#         await db.commit()
-#         return {"message": "Project deleted successfully"}
-#     except Exception as e:
-#         await db.rollback()
-#         raise HTTPException(status_code=500, detail=f"Error: {e}")
-
 @router.delete("/{project_id}", response_model=dict)
 async def delete_project(
     project_id: UUID,
@@ -217,7 +168,6 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    # Load project with ownership check
     result = await db.execute(select(Project).where(Project.id == project_id, Project.user_id == user.id))
     project = result.scalar_one_or_none()
     if not project:
@@ -225,15 +175,12 @@ async def delete_project(
 
     try:
         if cascade == "project_and_assets":
-            # Remove assets first
             await db.execute(
                 delete(GeneratedAsset).where(
                     GeneratedAsset.project_id == project_id)
             )
             await db.delete(project)
         else:
-            # Keep assets: detach them from this project
-            # Requires GeneratedAsset.project_id to be nullable (see note below)
             await db.execute(
                 update(GeneratedAsset)
                 .where(GeneratedAsset.project_id == project_id)
@@ -264,7 +211,7 @@ async def get_all_projects(db: AsyncSession = Depends(get_db), user=Depends(get_
     return result.scalars().all()
 
 
-@router.get("/project/{project_id}", response_model=List[GeneratedAssetRead])
+@router.get("/{project_id}", response_model=List[GeneratedAssetRead])
 async def get_assets_for_project(project_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(GeneratedAsset).where(GeneratedAsset.project_id == project_id)
