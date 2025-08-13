@@ -6,11 +6,11 @@ export type { Step };
 export default function StepHeader({
   step,
   steps,
-  onChange,
+  onChangeAction,
 }: {
   step: Step;
   steps: Step[];
-  onChange: (s: Step) => void;
+  onChangeAction: (s: Step) => void;
 }) {
   const labels: Record<Step, string> = {
     image: "Generate Image",
@@ -21,14 +21,14 @@ export default function StepHeader({
   };
 
   return (
-    <div className="flex items-center gap-3 border-b px-4 py-3">
+    <div className="flex items-center gap-3 border-b px-4 py-3 w-full">
       {steps.map((s, i) => {
         const active = s === step;
         return (
           <button
             key={s}
-            onClick={() => onChange(s)}
-            className={`text-sm px-3 py-1 rounded ${
+            onClick={() => onChangeAction(s)}
+            className={`text-sm px-3 py-1 rounded-full ${
               active ? "bg-primary text-primary-foreground" : "hover:bg-muted"
             }`}
           >
