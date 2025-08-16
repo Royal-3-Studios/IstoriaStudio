@@ -927,7 +927,7 @@ export default function ProjectEditorPage() {
             {currentStep === "type" && hasUserSelectedPreset && (
               <Button
                 size="sm"
-                className="rounded-full"
+                className="rounded-full opacity-40 hover:opacity-100"
                 onClick={() => {
                   setTypeConfirmed(true);
                   setVisitedByStep((prev) => ({ ...prev, type: true }));

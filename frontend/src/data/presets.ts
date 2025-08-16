@@ -6,6 +6,7 @@ export type Preset = {
   label: string;
   width: number;
   height: number;
+  starting_scale: number;
   dpi?: number;
   category: PresetCategory;
   tags?: string[];
@@ -21,6 +22,7 @@ export const PRESETS: Preset[] = [
     height: 2560,
     category: "book",
     popularity: 90,
+    starting_scale: 0.4,
     tags: ["ebook", "kindle"],
   },
   {
@@ -31,6 +33,7 @@ export const PRESETS: Preset[] = [
     dpi: 300,
     category: "book",
     popularity: 80,
+    starting_scale: 0.4,
   },
   // — Music —
   {
@@ -40,6 +43,7 @@ export const PRESETS: Preset[] = [
     height: 3000,
     category: "music",
     popularity: 90,
+    starting_scale: 0.4,
   },
   {
     id: "vinyl-square-4k",
@@ -48,6 +52,7 @@ export const PRESETS: Preset[] = [
     height: 4000,
     category: "music",
     popularity: 70,
+    starting_scale: 0.4,
   },
   // — Social —
   {
@@ -57,6 +62,7 @@ export const PRESETS: Preset[] = [
     height: 1080,
     category: "social",
     popularity: 95,
+    starting_scale: 0.6,
   },
   {
     id: "x-header",
@@ -65,6 +71,7 @@ export const PRESETS: Preset[] = [
     height: 500,
     category: "social",
     popularity: 80,
+    starting_scale: 0.6,
   },
   {
     id: "yt-thumb",
@@ -73,6 +80,7 @@ export const PRESETS: Preset[] = [
     height: 720,
     category: "social",
     popularity: 90,
+    starting_scale: 0.6,
   },
   // — Ads —
   {
@@ -82,6 +90,7 @@ export const PRESETS: Preset[] = [
     height: 628,
     category: "ads",
     popularity: 70,
+    starting_scale: 0.6,
   },
 ];
 
