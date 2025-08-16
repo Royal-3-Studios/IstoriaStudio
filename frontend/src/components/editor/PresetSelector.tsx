@@ -95,7 +95,7 @@ export default function PresetSelector({ value, onValueChangeAction }: Props) {
 
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium">Sizes:</label>
+      <label className="text-sm font-medium ml-2">Sizes:</label>
 
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -103,7 +103,7 @@ export default function PresetSelector({ value, onValueChangeAction }: Props) {
             variant="outline"
             role="combobox"
             aria-expanded={open}
-            className="w-full justify-between"
+            className="w-full justify-between rounded-full"
           >
             {selected
               ? `${selected.label} — ${selected.width}×${selected.height}`

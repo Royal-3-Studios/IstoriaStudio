@@ -571,30 +571,32 @@ export default function ProjectEditorPage() {
                   isTypeDocked ? "max-w-md" : "max-w-xl",
                 ].join(" ")}
               >
-                <Card
-                  className={[
-                    "relative transition-all duration-300 ease-out bg-secondary",
-                    isTypeDocked
-                      ? "h-10 p-0 overflow-hidden opacity-50 rounded-2xl hover:opacity-75 mt-4 md:mt-1"
-                      : "h-auto opacity-100 p-4",
-                  ].join(" ")}
-                >
-                  {!isTypeDocked ? (
-                    <div className="flex flex-col gap-3">
-                      <div className="text-sm text-muted-foreground">
-                        Choose your size / type to preview the canvas.
-                      </div>
+                {isTypeDocked ? (
+                  <div className="h-10 flex items-center px-2 ">
+                    <div className="w-full">
                       <PresetSelector
                         value={selectedPresetId}
                         onValueChangeAction={(id) => {
                           setSelectedPresetId(id);
-                          setHasUserSelectedPreset(true); // docks on next paint + shows blank canvas
+                          setHasUserSelectedPreset(true);
                         }}
                       />
                     </div>
-                  ) : (
-                    <div className="h-10 flex items-center px-2">
-                      <div className="w-48">
+                  </div>
+                ) : (
+                  <Card
+                    className={[
+                      "relative transition-all duration-300 ease-out bg-secondary",
+                      isTypeDocked
+                        ? "h-10 p-0 overflow-hidden opacity-50 rounded-2xl hover:opacity-75 mt-4 md:mt-1"
+                        : "h-auto opacity-100 p-4",
+                    ].join(" ")}
+                  >
+                    {!isTypeDocked ? (
+                      <div className="flex flex-col gap-3">
+                        <div className="text-sm text-muted-foreground text-center font-bold">
+                          Choose your size / type to preview the canvas.
+                        </div>
                         <PresetSelector
                           value={selectedPresetId}
                           onValueChangeAction={(id) => {
@@ -603,9 +605,21 @@ export default function ProjectEditorPage() {
                           }}
                         />
                       </div>
-                    </div>
-                  )}
-                </Card>
+                    ) : (
+                      <div className="h-10 flex items-center px-2">
+                        <div className="w-full">
+                          <PresetSelector
+                            value={selectedPresetId}
+                            onValueChangeAction={(id) => {
+                              setSelectedPresetId(id);
+                              setHasUserSelectedPreset(true);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                )}
               </div>
             </div>
           </div>
@@ -740,7 +754,7 @@ export default function ProjectEditorPage() {
         )}
 
         {/* ----- CANVAS AREA ----- */}
-        <div className="absolute inset-0 pt-16 md:pt-14">
+        <div className="mt-2 absolute inset-0 pt-16 md:pt-14">
           <div
             className={[
               "relative h-full w-full min-h-0 min-w-0 transition-all duration-300",
