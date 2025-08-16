@@ -1,5 +1,6 @@
 // src/lib/api.ts
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+export const BACKEND =
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
 type FetchOpts = RequestInit & { asJson?: boolean };
 
