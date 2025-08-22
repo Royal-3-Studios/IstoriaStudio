@@ -19,6 +19,46 @@ from app.core.config import get_settings
 settings = get_settings()
 
 _PIPE: Optional[StableDiffusionPipeline] = None
+_PIPE_CPU: Optional[StableDiffusionPipeline] = None
+
+
+def _load_pipe_cpu_fp32() -> StableDiffusionPipeline:
+    """
+    A separate CPU pipeline instantiated in float32 so CPU fallback works.
+    Kept alongside the main cached pipe to avoid cross-casting.
+    """
+    global _PIPE_CPU
+    if _PIPE_CPU is not None:
+        return _PIPE_CPU
+
+    model_id = settings.sd_model_id
+    pipe = StableDiffusionPipeline.from_pretrained(
+        model_id, torch_dtype=torch.float32)
+    _apply_memory_savers(pipe)
+    pipe = pipe.to("cpu")
+    _PIPE_CPU = pipe
+    return _PIPE_CPU
+
+
+def _to_cpu_float32(pipe):
+    """
+    Ensure the pipeline AND its major submodules are on CPU in float32.
+    Needed because CPU LayerNorm doesn't support float16.
+    """
+    try:
+        pipe.to("cpu")
+    except Exception:
+        pass
+    if torch is None:
+        return
+    for name in ("text_encoder", "unet", "vae"):
+        mod = getattr(pipe, name, None)
+        if mod is not None:
+            try:
+                mod.to(dtype=torch.float32, device="cpu")
+            except Exception:
+                # best-effort: some pipelines may name components differently
+                pass
 
 
 def _device() -> str:
@@ -76,26 +116,32 @@ def _load_pipe() -> StableDiffusionPipeline:
     return _PIPE
 
 
+# --- replace _run_pipe_safe with this hardened version ---
 def _run_pipe_safe(pipe: StableDiffusionPipeline, **kw):
     """
-    Try on current device; on CUDA OOM, empty cache and fall back to CPU once.
+    Try on current device; on CUDA OOM or FP16-on-CPU issues, swap to a dedicated CPU/FP32 pipe.
     """
     try:
         return pipe(**kw)
     except RuntimeError as e:
         msg = str(e)
+
+        # 1) GPU memory issues -> use CPU/FP32
         if "CUDA out of memory" in msg or "CUDNN_STATUS_ALLOC_FAILED" in msg:
             if torch and torch.cuda.is_available():
                 try:
                     torch.cuda.empty_cache()
                 except Exception:
                     pass
-            # CPU fallback
-            try:
-                pipe.to("cpu")
-                return pipe(**kw)
-            except Exception:
-                raise RuntimeError("OOM on GPU and CPU fallback failed") from e
+            cpu_pipe = _load_pipe_cpu_fp32()
+            return cpu_pipe(**kw)
+
+        # 2) Already on CPU but FP16 modules (LayerNorm / dtype warnings)
+        if "not implemented for 'Half'" in msg or "dtype=torch.float16 cannot run with cpu device" in msg:
+            cpu_pipe = _load_pipe_cpu_fp32()
+            return cpu_pipe(**kw)
+
+        # Otherwise: bubble up
         raise
 
 
@@ -117,29 +163,33 @@ def generate_image_key_or_url(
     *,
     width: int = 768,
     height: int = 1024,
-    # kept for call-site compatibility; overridden by settings.sd_steps
-    steps: int = 12,
-    guidance_scale: float = 1.8,     # same; overridden by settings.sd_guidance
+    steps: int = 12,                 # kept for call-site compatibility
+    guidance_scale: float = 1.8,     # ditto; settings override below
     negative_prompt: Optional[str] = None,
     project_id: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Tuple[str, bool]:
     """
-    Returns (identifier, is_key). If is_key=True -> identifier is an S3 key.
-    If is_key=False -> identifier is a local static URL (dev fallback).
+    Returns (identifier, is_key). If is_key=True -> S3 key.
+    If is_key=False -> local static URL (dev fallback).
 
-    Robust to limited VRAM:
-      1) try on GPU,
-      2) fallback to CPU,
-      3) if still failing, generate under a megapixel budget and upsample to target size.
+    Strategy:
+      1) Proactively cap megapixels on the FIRST attempt to stay on GPU.
+      2) If anything still fails, try a smaller size on a CPU/FP32 pipe as last resort.
+      3) If we generated smaller, upscale back to the requested size.
     """
     pipe = _load_pipe()
 
-    # snap to SD-friendly dims
+    # Snap to SD-friendly dims
     req_w = _snap_dim(int(width))
     req_h = _snap_dim(int(height))
 
-    # optional fixed seed
+    # Proactively cap pixels BEFORE first run (stay on-GPU, avoid OOM)
+    safe_w, safe_h, did_downscale = _maybe_downscale_for_budget(
+        req_w, req_h, settings.sd_max_mp
+    )
+
+    # Optional fixed seed
     generator = None
     if seed is not None and torch is not None:
         dev = _device()
@@ -148,21 +198,7 @@ def generate_image_key_or_url(
             device=device_for_seed).manual_seed(int(seed))
 
     try:
-        result = _run_pipe_safe(
-            pipe,
-            prompt=prompt,
-            width=req_w,
-            height=req_h,
-            num_inference_steps=settings.sd_steps,
-            guidance_scale=settings.sd_guidance,
-            negative_prompt=negative_prompt,
-            generator=generator,
-        )
-        image = result.images[0]
-    except Exception:
-        # final fallback: generate within MP budget, then upscale
-        safe_w, safe_h, _ = _maybe_downscale_for_budget(
-            req_w, req_h, settings.sd_max_mp)
+        # First attempt: use (possibly downscaled) safe_w/safe_h
         result = _run_pipe_safe(
             pipe,
             prompt=prompt,
@@ -173,8 +209,33 @@ def generate_image_key_or_url(
             negative_prompt=negative_prompt,
             generator=generator,
         )
-        small = result.images[0]
-        image = small.resize((req_w, req_h), Image.LANCZOS)
+        image = result.images[0]
+
+    except Exception:
+        # Last resort: shrink further & force CPU/FP32 pipeline
+        cpu_pipe = _load_pipe_cpu_fp32()
+        fallback_mp = min(settings.sd_max_mp, 1.0)  # hard fallback ~1MP
+        fb_w, fb_h, _ = _maybe_downscale_for_budget(req_w, req_h, fallback_mp)
+
+        result = _run_pipe_safe(
+            cpu_pipe,
+            prompt=prompt,
+            width=fb_w,
+            height=fb_h,
+            num_inference_steps=settings.sd_steps,
+            guidance_scale=settings.sd_guidance,
+            negative_prompt=negative_prompt,
+            generator=generator,
+        )
+        image = result.images[0]
+        # If we rendered smaller, upscale to target
+        if fb_w != req_w or fb_h != req_h:
+            image = image.resize((req_w, req_h), Image.LANCZOS)
+
+    else:
+        # If the first attempt rendered smaller, upscale to target
+        if did_downscale and (safe_w != req_w or safe_h != req_h):
+            image = image.resize((req_w, req_h), Image.LANCZOS)
 
     # ---- Upload / save ----
     if settings.s3_endpoint:
@@ -184,7 +245,6 @@ def generate_image_key_or_url(
             str(project_id or "no-project"), buf.getvalue())
         return key, True
 
-    # local dev fallback: save to disk and serve via /generated
     base_dir = Path(settings.generated_dir)
     out_dir = base_dir / str(project_id) if project_id else base_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -193,5 +253,9 @@ def generate_image_key_or_url(
     image.save(path)
 
     base_url = settings.server_url.rstrip("/")
-    url = f"{base_url}/generated/{project_id}/{filename}" if project_id else f"{base_url}/generated/{filename}"
+    url = (
+        f"{base_url}/generated/{project_id}/{filename}"
+        if project_id
+        else f"{base_url}/generated/{filename}"
+    )
     return url, False

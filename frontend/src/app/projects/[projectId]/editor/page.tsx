@@ -7,16 +7,37 @@ import dynamic from "next/dynamic";
 import type Konva from "konva";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
-import { BACKEND } from "@/lib/api";
 
+// UI
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-
 import StepHeader, { type Step } from "@/components/editor/StepHeader";
-import { PRESETS, defaultPresetForProjectType } from "@/data/presets";
 import PresetSelector from "@/components/editor/PresetSelector";
-import { Loader, Minus, Plus as PlusIcon, Paperclip } from "lucide-react";
+import PresetGallery from "@/components/editor/PresetGallery";
+
+// Data
+import {
+  PRESETS,
+  PRESET_PLACEHOLDER,
+  defaultPresetForProjectType,
+  type Preset,
+} from "@/data/presets";
+
+// === Your local hooks (page is at the same level as /hooks and /components)
+import { useProject } from "./hooks/useProject";
+import { useCanvasSizing } from "./hooks/useCanvasSizing";
+import { useGeneration } from "./hooks/useGeneration";
+import { usePrompt } from "./hooks/usePrompt";
+
+// Icons
+import {
+  Loader,
+  Minus,
+  Plus as PlusIcon,
+  Paperclip,
+  ArrowBigRight,
+  ArrowBigLeft,
+} from "lucide-react";
 
 // Konva (client-only)
 const Stage = dynamic(
@@ -40,136 +61,89 @@ const Rect = dynamic(
   { ssr: false }
 );
 
-// Types
-type Project = {
-  id: string;
-  title: string;
-  type: string;
-  description?: string | null;
-};
-
-// Helpers
-const getPresetById = (id: string) =>
-  PRESETS.find((p) => p.id === id) ?? PRESETS[0];
-
+// ---- Small utils & constants
 const DOCKED_TOP_PX = 12;
-
-const clampNumber = (n: number, min: number, max: number) =>
+const clamp = (n: number, min: number, max: number) =>
   Math.min(max, Math.max(min, n));
+const PREVIEW_MAX_LONG_EDGE = 1600;
 
-/** Breakpoint-based default zoom:
- * > 700px => 0.6
- * 500–700px => 0.4
- * < 500px => 0.3
- */
-function getBreakpointDefaultZoom(containerWidthPx: number) {
-  if (containerWidthPx > 700) return 0.6;
-  if (containerWidthPx >= 500) return 0.4;
-  return 0.3;
-}
+const getPresetById = (id: string): Preset =>
+  id === PRESET_PLACEHOLDER.id
+    ? PRESET_PLACEHOLDER
+    : (PRESETS as Preset[]).find((p) => p.id === id) ??
+      (PRESETS as Preset[])[0];
 
-export default function ProjectEditorPage() {
+export default function Page() {
   const { projectId } = useParams<{ projectId: string }>();
 
-  // ------- Project load -------
-  const [project, setProject] = useState<Project | null>(null);
-  const [isProjectLoading, setIsProjectLoading] = useState(true);
+  // ----- Project
+  const { project, loading: isProjectLoading } = useProject(projectId);
 
-  useEffect(() => {
-    let cancelLoad = false;
-    (async () => {
-      try {
-        const response = await fetch(`/api/project/${projectId}`, {
-          credentials: "include",
-        });
-        if (!response.ok) throw new Error(await response.text());
-        const projectData: Project = await response.json();
-        if (!cancelLoad) setProject(projectData);
-      } catch (error) {
-        console.error(error);
-        toast.error("Failed to load project");
-      } finally {
-        if (!cancelLoad) setIsProjectLoading(false);
-      }
-    })();
-    return () => {
-      cancelLoad = true;
-    };
-  }, [projectId]);
-
-  // ------- Presets (Type step) -------
+  // ----- Preset selection
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
-    PRESETS[0]?.id
+    PRESET_PLACEHOLDER.id
   );
-  useEffect(() => {
-    if (!project) return;
-    const def = defaultPresetForProjectType(project.type);
-    setSelectedPresetId(def.id);
-  }, [project]);
   const selectedPreset = useMemo(
     () => getPresetById(selectedPresetId),
     [selectedPresetId]
   );
+  const hasUserSelectedPreset = selectedPresetId !== PRESET_PLACEHOLDER.id;
 
-  // User must *interact* to choose a size
-  const [hasUserSelectedPreset, setHasUserSelectedPreset] = useState(false);
-  const isTypeDocked = hasUserSelectedPreset; // centered until selection; then docked
+  // Seed default preset when project loads
+  useEffect(() => {
+    if (!project) return;
+    const def = defaultPresetForProjectType(project.type) as Preset;
+    setSelectedPresetId(def.id);
+  }, [project]);
 
-  // ------- Step flow (Type → Image → Text → [Layout] → Export) -------
+  // ----- Step flow
   const stepFlow: Step[] = useMemo(() => {
-    const baseFlow: Step[] = ["type", "image", "text", "export"];
+    const base: Step[] = ["type", "image", "text", "export"];
     return project?.type?.toLowerCase() === "book"
       ? ["type", "image", "text", "layout", "export"]
-      : baseFlow;
+      : base;
   }, [project?.type]);
 
   const [currentStep, setCurrentStep] = useState<Step>("type");
-  useEffect(() => {
-    if (!stepFlow.includes(currentStep)) setCurrentStep(stepFlow[0]);
-  }, [stepFlow, currentStep]);
+  const stepIndex = stepFlow.indexOf(currentStep);
+  const prevStep = stepIndex > 0 ? stepFlow[stepIndex - 1] : null;
+  const nextStep =
+    stepIndex >= 0 && stepIndex + 1 < stepFlow.length
+      ? stepFlow[stepIndex + 1]
+      : null;
+  const prettyStep = (s: Step) =>
+    s === "image" ? "Generate" : s[0].toUpperCase() + s.slice(1);
+  const nextStepLabel = nextStep ? prettyStep(nextStep) : "";
 
-  // Confirm Type to move on to Image step
-  const [typeConfirmed, setTypeConfirmed] = useState(false);
+  // ----- Prompt (your hook)
+  const {
+    promptText,
+    setPromptText,
+    isPromptFocused,
+    setIsPromptFocused,
+    promptTextareaRef,
+    promptDocInputRef,
+    autosize,
+    dock, // docks the prompt UI
+  } = usePrompt();
 
-  // Which steps have been visited/finished
-  const [visitedByStep, setVisitedByStep] = useState<Record<Step, boolean>>({
-    image: false,
-    type: false,
-    text: false,
-    layout: false,
-    export: false,
-  });
-
-  // Mark downstream steps visited as the user progresses
-  useEffect(() => {
-    if (currentStep === "text" && visitedByStep.image && !visitedByStep.text) {
-      setVisitedByStep((prev) => ({ ...prev, text: true }));
-    }
-    if (
-      currentStep === "layout" &&
-      visitedByStep.text &&
-      !visitedByStep.layout
-    ) {
-      setVisitedByStep((prev) => ({ ...prev, layout: true }));
-    }
-    if (
-      currentStep === "export" &&
-      (visitedByStep.text || visitedByStep.layout) &&
-      !visitedByStep.export
-    ) {
-      setVisitedByStep((prev) => ({ ...prev, export: true }));
-    }
-  }, [currentStep, visitedByStep]);
-
-  // ------- Layers / image -------
+  // ----- Current image element & transform (local state)
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(
     null
   );
-  const [isImageLoading, setIsImageLoading] = useState(false);
   const [imageScale, setImageScale] = useState<number>(1);
   const [imageOffsetX, setImageOffsetX] = useState<number>(0);
   const [imageOffsetY, setImageOffsetY] = useState<number>(0);
+  const hasAnyArtwork = !!imageElement;
 
+  // Started image stage?
+  const [hasStartedImageStage, setHasStartedImageStage] = useState(false);
+
+  // isPromptDocked when on image step, started, and not focused
+  const isPromptDocked =
+    currentStep === "image" && hasStartedImageStage && !isPromptFocused;
+
+  // Fit image to the current preset
   function fitImageToPreset(mode: "cover" | "contain" = "cover") {
     if (!imageElement) return;
     const imgW = imageElement.naturalWidth || imageElement.width;
@@ -193,291 +167,53 @@ export default function ProjectEditorPage() {
     setImageOffsetY(offY);
   }
 
-  // ------- Text layers -------
-  const [titleText, setTitleText] = useState("Title");
-  const [subtitleText, setSubtitleText] = useState("Subtitle");
-  const [authorText, setAuthorText] = useState("Author");
-  const [primaryTextColor] = useState("#ffffff");
-
+  // When preset changes, refit
   useEffect(() => {
-    if (!project) return;
-    setTitleText(project.title ?? "Title");
-    if (project.description) setSubtitleText(project.description);
-  }, [project]);
+    if (!imageElement) return;
+    fitImageToPreset("cover");
+  }, [imageElement, selectedPreset.width, selectedPreset.height]);
 
-  // ------- Prompt + generation -------
-  const [promptText, setPromptText] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedUrls, setGeneratedUrls] = useState<string[]>([]);
-  const [attachedPromptDocName, setAttachedPromptDocName] = useState<
-    string | null
-  >(null);
-
-  // Track last size we generated at (to propose a crisp re-gen after size change)
-  const [lastGeneratedSize, setLastGeneratedSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
-
-  // After first generate/upload
-  const [hasStartedImageStage, setHasStartedImageStage] = useState(false);
-
-  // Show canvas as soon as user has chosen a size (blank preview),
-  // OR once they have actually generated/uploaded an image.
-  const shouldShowCanvas = hasUserSelectedPreset || hasStartedImageStage;
-
-  const hasAnyArtwork = !!imageElement || generatedUrls.length > 0;
-  const showPromptUI = currentStep === "image"; // prompt only on Image step
-  const [isPromptFocused, setIsPromptFocused] = useState(false);
-  const isPromptDocked =
-    showPromptUI && hasStartedImageStage && !isPromptFocused; // dock after first generate/upload
-
-  // Hidden inputs / prompt ref
-  const promptDocInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const promptTextareaRef = useRef<HTMLTextAreaElement>(null);
-
-  function autosizePrompt(textarea?: HTMLTextAreaElement | null) {
-    const el = textarea ?? promptTextareaRef.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = Math.min(el.scrollHeight, 260) + "px";
-  }
-
-  function openPromptDocPicker() {
-    promptDocInputRef.current?.click();
-  }
-  async function handlePromptDocChange(
-    event: React.ChangeEvent<HTMLInputElement>
-  ) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setAttachedPromptDocName(file.name);
-    const text = await file.text();
-    setPromptText(text.trim());
-    setTimeout(() => autosizePrompt(), 0);
-  }
-
-  // Optional: upload a starting image (only meaningful on Image step)
-  function openImagePicker() {
-    imageInputRef.current?.click();
-  }
-  function handleImageChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setHasStartedImageStage(true);
-    setIsImageLoading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        setImageElement(img);
-        setIsImageLoading(false);
-        fitImageToPreset("cover");
-        setVisitedByStep((prev) => ({ ...prev, image: true }));
-      };
-      img.src = reader.result as string;
-      setGeneratedUrls((prev) => [reader.result as string, ...prev]);
-      toast.success("Image loaded");
-    };
-    reader.readAsDataURL(file);
-  }
-
-  // Generate via API — uses CURRENT preset (Type → Generate)
-  async function handleGenerate() {
-    try {
-      if (!promptText.trim()) return;
-      setHasStartedImageStage(true);
-      setIsGenerating(true);
-      setIsImageLoading(true);
-
-      const response = await fetch(`${BACKEND}/api/generated-asset/generate`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: projectId,
-          prompt: promptText,
-          preset: selectedPreset.id,
-          width: selectedPreset.width,
-          height: selectedPreset.height,
-        }),
-      });
-      if (!response.ok) throw new Error(await response.text());
-      const data = await response.json();
-      const url = (data.url ?? data.asset?.url) as string;
-      if (!url) throw new Error("No image URL returned.");
-
-      setGeneratedUrls((prev) => [url, ...prev]);
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        setImageElement(img);
-        setIsImageLoading(false);
-        fitImageToPreset("cover");
-        setVisitedByStep((prev) => ({ ...prev, image: true }));
-      };
-      img.src = url;
-
-      setLastGeneratedSize({
-        width: selectedPreset.width,
-        height: selectedPreset.height,
-      });
-
-      toast.success("Generated!");
-    } catch (error) {
-      console.error(error);
-      toast.error("Generation failed");
-      setIsImageLoading(false);
-    } finally {
-      setIsGenerating(false);
-    }
-  }
-
-  // ------- Fit-to-container preview (throttled) -------
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const [canvasContainerSize, setCanvasContainerSize] = useState({
-    width: 0,
-    height: 0,
-  });
-
-  useEffect(() => {
-    if (!canvasContainerRef.current) return;
-    const containerEl = canvasContainerRef.current;
-
-    let rafId = 0;
-    const measureContainer = () => {
-      const rect = containerEl.getBoundingClientRect();
-      setCanvasContainerSize({
-        width: Math.max(0, rect.width - 8),
-        height: Math.max(0, rect.height - 8),
-      });
-    };
-    const scheduleMeasure = () => {
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(measureContainer);
-    };
-
-    measureContainer();
-    const resizeObserver = new ResizeObserver(scheduleMeasure);
-    resizeObserver.observe(containerEl);
-    window.addEventListener("resize", scheduleMeasure);
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", scheduleMeasure);
-    };
-  }, []);
-
-  const fitToContainerScale = useMemo(() => {
-    if (!canvasContainerSize.width || !canvasContainerSize.height) return 1;
-    return Math.min(
-      canvasContainerSize.width / selectedPreset.width,
-      canvasContainerSize.height / selectedPreset.height
+  // ----- Canvas sizing (your hook: frameW, frameH, previewCapLongEdge?)
+  const { containerRef, fitToContainerScale, previewCapScale } =
+    useCanvasSizing(
+      selectedPreset.width || 1,
+      selectedPreset.height || 1,
+      PREVIEW_MAX_LONG_EDGE
     );
-  }, [
-    canvasContainerSize.width,
-    canvasContainerSize.height,
-    selectedPreset.width,
-    selectedPreset.height,
-  ]);
 
-  const PREVIEW_MAX_LONG_EDGE = 1600;
-  const previewCapScale = useMemo(() => {
-    const longestEdge = Math.max(selectedPreset.width, selectedPreset.height);
-    return Math.min(1, PREVIEW_MAX_LONG_EDGE / longestEdge);
-  }, [selectedPreset.width, selectedPreset.height]);
-
-  // ------- Zoom (with breakpoint defaults) -------
+  // Zoom on top of the base scales
   const ZOOM_MIN = 0.05;
-  const ZOOM_MAX = 1;
-  const ZOOM_STEP = 0.1;
-
+  const ZOOM_MAX = 2;
+  const ZOOM_STEP = 0.05;
   const [zoomPercent, setZoomPercent] = useState(0.6);
-  const userHasAdjustedZoomRef = useRef(false);
-  const hasSetInitialZoomRef = useRef(false);
-
-  const handleZoomIn = () => {
-    userHasAdjustedZoomRef.current = true;
-    setZoomPercent((prev) =>
-      Math.min(ZOOM_MAX, +(prev + ZOOM_STEP).toFixed(2))
-    );
-  };
-  const handleZoomOut = () => {
-    userHasAdjustedZoomRef.current = true;
-    setZoomPercent((prev) =>
-      Math.max(ZOOM_MIN, +(prev - ZOOM_STEP).toFixed(2))
-    );
-  };
-  const handleResetZoom = () => {
-    userHasAdjustedZoomRef.current = false;
-    hasSetInitialZoomRef.current = false; // allow recompute
-    const decisionWidth =
-      canvasContainerSize.width ||
-      (typeof window !== "undefined" ? window.innerWidth : 800);
-    setZoomPercent(getBreakpointDefaultZoom(decisionWidth));
-  };
-
-  // Pick a breakpointed default zoom when the canvas first appears
-  useEffect(() => {
-    if (!shouldShowCanvas) return;
-    if (!hasSetInitialZoomRef.current && !userHasAdjustedZoomRef.current) {
-      const decisionWidth =
-        canvasContainerSize.width ||
-        (typeof window !== "undefined" ? window.innerWidth : 800);
-      setZoomPercent(getBreakpointDefaultZoom(decisionWidth));
-      hasSetInitialZoomRef.current = true;
-    }
-  }, [shouldShowCanvas, canvasContainerSize.width]);
-
-  // Keyboard shortcuts for zoom
-  useEffect(() => {
-    const onKeydown = (event: KeyboardEvent) => {
-      const targetEl = event.target as HTMLElement | null;
-      const tag = targetEl?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || targetEl?.isContentEditable)
-        return;
-      if (event.key === "+" || event.key === "=") {
-        event.preventDefault();
-        handleZoomIn();
-      } else if (event.key === "-") {
-        event.preventDefault();
-        handleZoomOut();
-      } else if (event.key === "0") {
-        event.preventDefault();
-        handleResetZoom();
-      }
-    };
-    window.addEventListener("keydown", onKeydown);
-    return () => window.removeEventListener("keydown", onKeydown);
-  }, [canvasContainerSize.width]);
-
   const composedStageScale = useMemo(() => {
-    const baseScale = Math.min(fitToContainerScale, previewCapScale);
-    const zoomClamped = clampNumber(zoomPercent, ZOOM_MIN, ZOOM_MAX);
-    return baseScale * zoomClamped;
+    const base = Math.min(fitToContainerScale || 1, previewCapScale || 1);
+    const z = clamp(zoomPercent, ZOOM_MIN, ZOOM_MAX);
+    return base * z;
   }, [fitToContainerScale, previewCapScale, zoomPercent]);
 
+  // Stage sizing (in px)
   const stageWidthPx = Math.max(
     1,
-    Math.floor(selectedPreset.width * composedStageScale)
+    Math.floor((selectedPreset.width || 1) * composedStageScale)
   );
   const stageHeightPx = Math.max(
     1,
-    Math.floor(selectedPreset.height * composedStageScale)
+    Math.floor((selectedPreset.height || 1) * composedStageScale)
   );
 
-  // ------- Auto-fit when preset changes -------
-  useEffect(() => {
-    if (!imageElement) return;
-    fitImageToPreset("cover"); // refit to new aspect
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPreset.width, selectedPreset.height]);
-
-  // ------- Export -------
   const stageRef = useRef<Konva.Stage>(null);
+
+  // ----- Generation (your hook: needs at least 2 args)
+  const onImage = (url: string, img: HTMLImageElement) => {
+    setImageElement(img);
+    setHasStartedImageStage(true);
+    fitImageToPreset("cover");
+  };
+  const { isGenerating, isImageLoading, generatedUrls, generate } =
+    useGeneration(projectId);
+
+  // Export
   async function exportPNG() {
     if (!stageRef.current) return;
     const dataURL = stageRef.current.toDataURL({
@@ -489,153 +225,224 @@ export default function ProjectEditorPage() {
     saveAs(blob, `${safeTitle}_${selectedPreset.id}.png`);
   }
 
-  const aspectRatio = selectedPreset.width / selectedPreset.height;
-  const isPresetVeryWide = aspectRatio >= 1.6;
-  const isBookFlow = project?.type?.toLowerCase() === "book";
-
-  // Compute which steps are enabled
+  // Step enabling
   const enabledSteps: Step[] = useMemo(() => {
     const enabled = new Set<Step>();
     enabled.add("type");
-    if (typeConfirmed) enabled.add("image");
-    if (visitedByStep.image) enabled.add("text");
-    if (isBookFlow && visitedByStep.text) enabled.add("layout");
+    if (hasUserSelectedPreset) enabled.add("image");
+    if (hasAnyArtwork) enabled.add("text");
+    if (stepFlow.includes("layout") && hasAnyArtwork) enabled.add("layout");
     if (
-      (!isBookFlow && visitedByStep.text) ||
-      (isBookFlow && visitedByStep.layout)
+      (!stepFlow.includes("layout") && hasAnyArtwork) ||
+      stepFlow.includes("layout")
     ) {
       enabled.add("export");
     }
     return stepFlow.filter((s) => enabled.has(s));
-  }, [typeConfirmed, visitedByStep, isBookFlow, stepFlow]);
+  }, [hasUserSelectedPreset, hasAnyArtwork, stepFlow]);
 
-  // Is the current preset different from the last generation size?
-  const sizeMismatch =
-    !!lastGeneratedSize &&
-    (lastGeneratedSize.width !== selectedPreset.width ||
-      lastGeneratedSize.height !== selectedPreset.height);
+  const canContinue =
+    currentStep === "type"
+      ? hasUserSelectedPreset
+      : currentStep === "image"
+        ? hasAnyArtwork && !isGenerating && !isImageLoading
+        : currentStep === "export"
+          ? false
+          : true;
 
-  // ======= LOADING/BLANK LOGIC (the fix) =======
-  // Only show loading skeleton while we're on the Image step and actually generating/uploading
-  const showLoadingSkeleton =
-    currentStep === "image" && (isGenerating || isImageLoading);
+  function goBack() {
+    if (!prevStep) return;
+    setCurrentStep(prevStep);
+  }
+  function goForward() {
+    if (!nextStep || !canContinue) return;
+    setCurrentStep(nextStep);
+  }
 
-  // Show a blank preview canvas on Type after the user picks a size
-  const showBlankCanvasPreview =
-    currentStep === "type" &&
-    hasUserSelectedPreset &&
-    !hasAnyArtwork &&
-    !isImageLoading;
+  // Background color toggle
+  const [canvasBg, setCanvasBg] = useState<"white" | "black">("white");
 
-  // Render the Stage whenever the canvas should be visible and we’re NOT in a loading state.
-  // This includes the blank preview case (Type step) and normal cases with/without artwork.
-  const shouldRenderStage = shouldShowCanvas && !showLoadingSkeleton;
+  // Blur rule: blur while prompt editor is visible (centered) or before first gen/upload
+  const shouldBlurCanvas =
+    currentStep === "image" && (!hasStartedImageStage || !isPromptDocked);
 
-  // ======= RENDER =======
+  // ----- Prompt: hidden file inputs
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  function openImagePicker() {
+    imageInputRef.current?.click();
+  }
+  function handleImageChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setHasStartedImageStage(true);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        setImageElement(img);
+        fitImageToPreset("cover");
+        toast.success("Image loaded");
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Submit/generate action shared by Enter and button
+  async function handleGenerate() {
+    if (!promptText.trim()) return;
+    // Dock immediately (so Enter behaves like the button)
+    dock();
+    setHasStartedImageStage(true);
+    // Your hook’s generate likely expects positional args:
+    // generate(prompt: string, presetId: string, width: number, height: number)
+    await generate({
+      prompt: promptText,
+      presetId: selectedPreset.id,
+      width: selectedPreset.width,
+      height: selectedPreset.height,
+      onImage: (url, img) => {
+        // optional: handle the generated image
+        console.log("Generated image:", url, img);
+      },
+    });
+  }
+
+  // Render
   if (isProjectLoading) return <div className="p-6">Loading…</div>;
   if (!project) return <div className="p-6">Project not found.</div>;
 
+  const showPromptUI = currentStep === "image";
+
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-x-hidden">
+    // <div className="flex flex-col min-h-screen overflow-x-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* ====== HEADER ====== */}
       <div className="relative z-30 h-12 shrink-0 flex items-center px-4 w-full">
         <StepHeader
           step={currentStep}
           steps={stepFlow}
           enabled={enabledSteps}
-          onChangeAction={(s) => {
-            if (s === "image" && !typeConfirmed) return; // don't jump early
-            setCurrentStep(s);
-          }}
+          onChangeAction={(s) => setCurrentStep(s)}
         />
       </div>
 
       {/* ====== CONTENT AREA ====== */}
       <div className="relative flex-1 min-h-0 min-w-0 p-4 pt-2">
-        {/* ----- TYPE SELECT OVERLAY (Step 1) ----- */}
-        {currentStep === "type" && (
-          <div className="absolute inset-0 z-20 pointer-events-none">
-            <div
-              className="absolute left-1/2 w-[min(100%,64rem)] px-4 transition-all duration-300 ease-out pointer-events-auto"
-              style={{
-                willChange: "transform, top",
-                top: isTypeDocked ? DOCKED_TOP_PX : "50%",
-                transform: isTypeDocked
-                  ? "translate(-50%, 0) scale(0.92)"
-                  : "translate(-50%, -50%) scale(1)",
-              }}
-            >
-              <div
-                className={[
-                  "relative mx-auto transition-all duration-300 ease-out",
-                  isTypeDocked ? "max-w-md" : "max-w-xl",
-                ].join(" ")}
-              >
-                {isTypeDocked ? (
-                  <div className="h-10 flex items-center px-2 ">
-                    <div className="w-full">
-                      <PresetSelector
-                        value={selectedPresetId}
-                        onValueChangeAction={(id) => {
-                          setSelectedPresetId(id);
-                          setHasUserSelectedPreset(true);
-                        }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <Card
-                    className={[
-                      "relative transition-all duration-300 ease-out bg-secondary",
-                      isTypeDocked
-                        ? "h-10 p-0 overflow-hidden opacity-50 rounded-2xl hover:opacity-75 mt-4 md:mt-1"
-                        : "h-auto opacity-100 p-4",
-                    ].join(" ")}
+        {/* Top rail (Steps 2+) */}
+        {currentStep !== "type" && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 w-[min(100%,80rem)] px-4 pointer-events-none">
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center pointer-events-auto">
+              <div className="justify-self-start">
+                {prevStep && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={goBack}
+                    className="group rounded-full h-6 sm:h-8 w-10 px-2 cursor-pointer"
+                    title={`Back to ${prettyStep(prevStep)}`}
                   >
-                    {!isTypeDocked ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="text-sm text-muted-foreground text-center font-bold">
-                          Choose your size / type to preview the canvas.
-                        </div>
-                        <PresetSelector
-                          value={selectedPresetId}
-                          onValueChangeAction={(id) => {
-                            setSelectedPresetId(id);
-                            setHasUserSelectedPreset(true);
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <div className="h-10 flex items-center px-2">
-                        <div className="w-full">
-                          <PresetSelector
-                            value={selectedPresetId}
-                            onValueChangeAction={(id) => {
-                              setSelectedPresetId(id);
-                              setHasUserSelectedPreset(true);
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </Card>
+                    <ArrowBigLeft className="h-4 w-4 shrink-0" />
+                  </Button>
+                )}
+              </div>
+              <div />
+              <div className="justify-self-end">
+                {currentStep !== "export" && canContinue && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={goForward}
+                    className="group rounded-full transition-all duration-300 flex items-center overflow-hidden h-8 cursor-pointer px-2"
+                    title={`Continue to ${nextStepLabel}`}
+                  >
+                    <ArrowBigRight className="h-4 w-4 shrink-0" />
+                  </Button>
                 )}
               </div>
             </div>
           </div>
         )}
 
-        {/* ----- PROMPT OVERLAY (Step 2) ----- */}
+        {/* ====== TYPE STEP ====== */}
+        {currentStep === "type" && (
+          <div className="absolute inset-0 z-20 pointer-events-none">
+            <div
+              className="absolute left-1/2 w-[min(100%,80rem)] px-4 transition-all duration-300 ease-out pointer-events-auto"
+              style={{
+                willChange: "transform, top",
+                // top: hasUserSelectedPreset ? DOCKED_TOP_PX : "615%",
+                // transform: hasUserSelectedPreset
+                //   ? "translate(-50%, 0) scale(0.92)"
+                //   : "translate(-50%, -50%) scale(1)",
+                top: hasUserSelectedPreset ? DOCKED_TOP_PX : 12, // anchor to the top
+                transform: hasUserSelectedPreset
+                  ? "translate(-50%, 0) scale(0.92)"
+                  : "translate(-50%, 0) scale(1)",
+              }}
+            >
+              <div className="relative mx-auto transition-all duration-300 ease-out w-full">
+                {!hasUserSelectedPreset ? (
+                  <Card className="mb-12 border bg-card shadow-md px-4 py-6">
+                    <div className="flex w-full flex-col gap-4">
+                      <div className="text-xs sm:text-sm text-muted-foreground text-center font-bold">
+                        Pick a size/type to preview the canvas.
+                      </div>
+                      <div className="mx-auto w-full">
+                        {/* Height frame for the gallery — tune the numbers as you like */}
+                        <div className="max-w-7xl mx-auto h-[min(72vh,720px)]">
+                          <PresetGallery
+                            presets={PRESETS as unknown as Preset[]}
+                            value={null}
+                            onChangeAction={(id) => setSelectedPresetId(id)}
+                            projectType={project.type}
+                            showFilters
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full">
+                    <div />
+                    <div className="justify-self-center max-w-md w-full">
+                      <PresetSelector
+                        value={selectedPresetId}
+                        onValueChangeAction={(id) => setSelectedPresetId(id)}
+                      />
+                    </div>
+                    <div className="ml-1 mt-4 justify-self-end">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={goForward}
+                        disabled={!canContinue}
+                        className="text-xs sm:text-sm rounded-full h-8 mt-1 cursor-pointer hover:scale-110 px-2"
+                        title="Continue to Generate"
+                      >
+                        <ArrowBigRight className="h-4 w-4 shrink-0" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ====== PROMPT OVERLAY (Image Step) ====== */}
         {showPromptUI && (
           <div className="absolute inset-0 z-20 pointer-events-none">
             <div
               className="absolute left-1/2 w-[min(100%,80rem)] px-4 transition-all duration-300 ease-out pointer-events-auto"
               style={{
                 willChange: "transform, top",
-                top: isPromptDocked ? DOCKED_TOP_PX : "50%",
-                transform: isPromptDocked
-                  ? "translate(-50%, 0) scale(0.92)"
-                  : "translate(-50%, -50%) scale(1)",
+                top: DOCKED_TOP_PX, // always dock at 12px
+                transform: hasUserSelectedPreset
+                  ? "translate(-50%, 0) scale(0.96)" // gentle scale once chosen
+                  : "translate(-50%, 0) scale(1)", // no vertical centering anymore
               }}
             >
               <div
@@ -650,7 +457,13 @@ export default function ProjectEditorPage() {
                   type="file"
                   accept=".txt,text/plain"
                   className="hidden"
-                  onChange={handlePromptDocChange}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const text = await file.text();
+                    setPromptText(text.trim());
+                    setTimeout(() => autosize(), 0);
+                  }}
                 />
                 <input
                   ref={imageInputRef}
@@ -660,58 +473,106 @@ export default function ProjectEditorPage() {
                   onChange={handleImageChange}
                 />
 
-                {/* Prompt card */}
                 <Card
                   className={[
-                    "relative transition-all duration-300 ease-out bg-secondary",
+                    "relative transition-all duration-300 ease-out border bg-card shadow-md",
                     isPromptDocked
-                      ? "h-10 p-0 overflow-hidden opacity-50 rounded-2xl hover:opacity-75 mt-4 md:mt-1"
-                      : "h-auto opacity-100",
+                      ? "h-10 p-0 overflow-hidden rounded-2xl"
+                      : "",
                   ].join(" ")}
                 >
-                  <textarea
-                    ref={promptTextareaRef}
-                    className={[
-                      "w-full bg-transparent border-none outline-none resize-none ",
-                      "rounded-2xl pl-5 pr-24",
-                      isPromptDocked
-                        ? "py-2.5 text-sm"
-                        : " text-base min-h-[7rem]",
-                      "placeholder:text-muted-foreground",
-                      "focus:ring-0 focus:outline-none",
-                      "whitespace-pre-wrap break-words overflow-hidden",
-                      "transition-all duration-300",
-                    ].join(" ")}
-                    placeholder="Describe what to generate…  (Shift+Enter = newline, Enter = generate)"
-                    value={promptText}
-                    onFocus={() => {
-                      setIsPromptFocused(true);
-                      setTimeout(() => autosizePrompt(), 0);
-                    }}
-                    onBlur={() =>
-                      setTimeout(() => setIsPromptFocused(false), 120)
-                    }
-                    onChange={(event) => setPromptText(event.target.value)}
-                    onInput={(event) => {
-                      if (!isPromptDocked) autosizePrompt(event.currentTarget);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        handleGenerate();
-                      }
-                    }}
-                    rows={isPromptDocked ? 1 : 4}
-                    style={isPromptDocked ? { height: "2.5rem" } : undefined}
-                  />
+                  {isPromptDocked ? (
+                    // Docked toolbar (size 6 → 8 at sm)
+                    <div className="h-10 px-2 sm:px-3 flex items-center justify-between">
+                      <div className="truncate text-[10px] sm:text-xs opacity-60">
+                        Ready to tweak your image?
+                      </div>
+                      <div className="flex items-center gap-1.5 sm:gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="h-6 sm:h-8 px-2 sm:px-3 text-[10px] sm:text-xs rounded-full cursor-pointer"
+                          onClick={handleGenerate}
+                          disabled={isGenerating || !promptText.trim()}
+                          title="Regenerate with current prompt"
+                          aria-label="Regenerate"
+                        >
+                          {isGenerating ? (
+                            <>
+                              <Loader className="h-4 w-4 animate-spin" />
+                              <span className="ml-1.5 hidden sm:inline">
+                                Generating…
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <PlusIcon className="h-4 w-4" />
+                              <span className="ml-1.5 hidden sm:inline">
+                                Regenerate
+                              </span>
+                            </>
+                          )}
+                        </Button>
 
-                  {/* Actions only when centered */}
-                  {!isPromptDocked && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-6 sm:h-8 px-2 sm:px-3 text-[10px] sm:text-xs rounded-full cursor-pointer"
+                          onClick={() => {
+                            setIsPromptFocused(true);
+                            setTimeout(() => {
+                              promptTextareaRef.current?.focus();
+                              autosize();
+                            }, 0);
+                          }}
+                          title="Change prompt"
+                          aria-label="Change prompt"
+                        >
+                          Change prompt
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    // Centered editor
                     <>
+                      <textarea
+                        ref={promptTextareaRef}
+                        className={[
+                          "w-full bg-transparent border-none outline-none resize-none focus:overflow-y-auto",
+                          "rounded-2xl pl-5 pr-24",
+                          "text-base min-h-[7rem] mb-4",
+                          "placeholder:text-muted-foreground",
+                          "focus:ring-0 focus:outline-none",
+                          "whitespace-pre-wrap break-words overflow-hidden",
+                          "transition-all duration-300",
+                        ].join(" ")}
+                        placeholder="Describe what to generate…"
+                        value={promptText}
+                        onFocus={() => {
+                          setIsPromptFocused(true);
+                          setTimeout(() => autosize(), 0);
+                        }}
+                        onBlur={() =>
+                          setTimeout(() => setIsPromptFocused(false), 120)
+                        }
+                        onChange={(event) => setPromptText(event.target.value)}
+                        onInput={() => autosize()}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            handleGenerate();
+                          }
+                        }}
+                        rows={4}
+                      />
+
+                      {/* Attach + Actions */}
                       <button
                         type="button"
-                        onClick={openPromptDocPicker}
-                        className="absolute left-3 bottom-2 inline-flex items-center gap-1 text-xs rounded-full px-2 py-1 border bg-muted/60 hover:bg-muted transition"
+                        onClick={() => promptDocInputRef.current?.click()}
+                        className="absolute left-3 bottom-2 inline-flex items-center gap-1 text-xs rounded-full px-2 py-1 border hover:bg-background hover:scale-110 bg-accent/40 transition"
                         title="Upload prompt (.txt)"
                         aria-label="Upload prompt"
                       >
@@ -719,58 +580,63 @@ export default function ProjectEditorPage() {
                         Attach
                       </button>
 
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="absolute right-3 bottom-2 rounded-full"
-                        onClick={handleGenerate}
-                        disabled={isGenerating || !promptText.trim()}
-                        title="Generate"
-                      >
-                        {isGenerating ? (
-                          <>
-                            <Loader className="mr-2 h-4 w-4 animate-spin" />
-                            Generating…
-                          </>
-                        ) : (
-                          <>
-                            <PlusIcon className="mr-2 h-4 w-4" />
-                            Generate
-                          </>
-                        )}
-                      </Button>
+                      <div className="absolute right-3 bottom-2">
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            className="h-6 sm:h-8 rounded-full text-xs sm:text-sm cursor-pointer"
+                            onClick={openImagePicker}
+                            variant="outline"
+                          >
+                            Upload image
+                          </Button>
+                          <Button
+                            type="button"
+                            className="h-6 sm:h-8 rounded-full text-xs sm:text-sm cursor-pointer"
+                            onClick={handleGenerate}
+                            disabled={isGenerating || !promptText.trim()}
+                            title="Generate"
+                          >
+                            {isGenerating ? (
+                              <>
+                                <Loader className="h-4 w-4 animate-spin" />
+                                <span className="ml-1.5 hidden sm:inline">
+                                  Generating…
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <PlusIcon className="h-4 w-4" />
+                                <span className="ml-1.5 hidden sm:inline">
+                                  Generate
+                                </span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
                     </>
                   )}
                 </Card>
-
-                {!isPromptDocked && attachedPromptDocName && (
-                  <div className="mt-1">
-                    <Badge variant="secondary">{attachedPromptDocName}</Badge>
-                  </div>
-                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* ----- CANVAS AREA ----- */}
+        {/* ====== CANVAS AREA ====== */}
         <div className="mt-2 absolute inset-0 pt-16 md:pt-14">
           <div
             className={[
               "relative h-full w-full min-h-0 min-w-0 transition-all duration-300",
-              // Blur canvas when prompt is centered during Image step
-              showPromptUI && hasStartedImageStage && !isPromptDocked
-                ? "blur-[10px] opacity-60"
-                : "",
+              shouldBlurCanvas ? "blur-[10px] opacity-60" : "",
             ].join(" ")}
           >
             <div
-              ref={canvasContainerRef}
+              ref={containerRef}
               className="flex h-full w-full min-h-0 min-w-0 items-center justify-center"
             >
               <div className="max-h-full max-w-full">
-                {/* Loading skeleton ONLY during generate/upload on the Image step */}
-                {showLoadingSkeleton && (
+                {(isGenerating || isImageLoading) && currentStep === "image" ? (
                   <div
                     className="inline-block rounded-sm border shadow-sm animate-pulse bg-muted/30"
                     style={{
@@ -783,12 +649,9 @@ export default function ProjectEditorPage() {
                       <div className="h-full w-full rounded bg-muted/50" />
                     </div>
                   </div>
-                )}
-
-                {/* Stage: shows for blank preview (Type step) and for real images */}
-                {shouldRenderStage && (
+                ) : (
                   <div
-                    className="inline-block border rounded-sm shadow-sm"
+                    className="inline-block border rounded-sm shadow-sm bg-neutral-900"
                     style={{ lineHeight: 0 }}
                   >
                     <Stage
@@ -804,12 +667,12 @@ export default function ProjectEditorPage() {
                         <Rect
                           x={0}
                           y={0}
-                          width={selectedPreset.width}
-                          height={selectedPreset.height}
-                          fill="#000"
+                          width={selectedPreset.width || 1}
+                          height={selectedPreset.height || 1}
+                          fill={canvasBg === "white" ? "#fff" : "#000"}
                         />
 
-                        {/* Uploaded or generated image (if present); otherwise it's a blank preview */}
+                        {/* Image */}
                         {imageElement && (
                           <KonvaImage
                             image={imageElement}
@@ -825,45 +688,59 @@ export default function ProjectEditorPage() {
                           />
                         )}
 
-                        {/* Title/subtitle/author only when NOT on Image step and when we have art */}
+                        {/* Example overlay texts (hidden on image step) */}
                         {currentStep !== "image" && imageElement && (
                           <>
                             <KonvaText
-                              text={titleText}
-                              fill={primaryTextColor}
+                              text={project.title ?? "Title"}
+                              fill={"#ffffff"}
                               fontSize={Math.round(
-                                selectedPreset.height * 0.12
+                                (selectedPreset.height || 1) * 0.12
                               )}
                               fontStyle="bold"
-                              x={Math.round(selectedPreset.width * 0.06)}
-                              y={Math.round(selectedPreset.height * 0.08)}
-                              width={Math.round(selectedPreset.width * 0.88)}
+                              x={Math.round((selectedPreset.width || 1) * 0.06)}
+                              y={Math.round(
+                                (selectedPreset.height || 1) * 0.08
+                              )}
+                              width={Math.round(
+                                (selectedPreset.width || 1) * 0.88
+                              )}
                               align="center"
                               listening={false}
                             />
-                            {!!subtitleText && (
+                            {!!project.description && (
                               <KonvaText
-                                text={subtitleText}
-                                fill={primaryTextColor}
+                                text={project.description}
+                                fill={"#ffffff"}
                                 fontSize={Math.round(
-                                  selectedPreset.height * 0.06
+                                  (selectedPreset.height || 1) * 0.06
                                 )}
-                                x={Math.round(selectedPreset.width * 0.08)}
-                                y={Math.round(selectedPreset.height * 0.28)}
-                                width={Math.round(selectedPreset.width * 0.84)}
+                                x={Math.round(
+                                  (selectedPreset.width || 1) * 0.08
+                                )}
+                                y={Math.round(
+                                  (selectedPreset.height || 1) * 0.28
+                                )}
+                                width={Math.round(
+                                  (selectedPreset.width || 1) * 0.84
+                                )}
                                 align="center"
                                 listening={false}
                               />
                             )}
                             <KonvaText
-                              text={authorText}
-                              fill={primaryTextColor}
+                              text={"Author"}
+                              fill={"#ffffff"}
                               fontSize={Math.round(
-                                selectedPreset.height * 0.05
+                                (selectedPreset.height || 1) * 0.05
                               )}
-                              x={Math.round(selectedPreset.width * 0.1)}
-                              y={Math.round(selectedPreset.height * 0.85)}
-                              width={Math.round(selectedPreset.width * 0.8)}
+                              x={Math.round((selectedPreset.width || 1) * 0.1)}
+                              y={Math.round(
+                                (selectedPreset.height || 1) * 0.85
+                              )}
+                              width={Math.round(
+                                (selectedPreset.width || 1) * 0.8
+                              )}
                               align="center"
                               listening={false}
                             />
@@ -876,83 +753,80 @@ export default function ProjectEditorPage() {
               </div>
             </div>
 
-            {/* Zoom controls */}
-            {shouldRenderStage && (
-              <div
-                className={[
-                  "pointer-events-auto z-10 transition-all duration-300 ease-out",
-                  isPresetVeryWide
-                    ? "absolute top-3 left-3 flex flex-row items-center gap-1.5"
-                    : "absolute left-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5",
-                ].join(" ")}
+            {/* Left: Zoom controls */}
+            <div className="pointer-events-auto z-10 transition-all duration-300 ease-out absolute left-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5">
+              <Button
+                variant="outline"
+                className="rounded-full cursor-pointer"
+                size="icon"
+                onClick={() =>
+                  setZoomPercent((z) =>
+                    Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2))
+                  )
+                }
+                aria-label="Zoom in"
               >
-                <Button
-                  variant="outline"
-                  className="rounded-full"
-                  size="icon"
-                  onClick={handleZoomOut}
-                  aria-label="Zoom out"
-                >
-                  <Minus className="h-4 w-4" />
-                </Button>
-                <span className="px-2 py-1 rounded-xl text-xs bg-background/80 border tabular-nums">
-                  {Math.round(zoomPercent * 100)}%
-                </span>
-                <Button
-                  variant="outline"
-                  className="rounded-full"
-                  size="icon"
-                  onClick={handleZoomIn}
-                  aria-label="Zoom in"
-                >
-                  <PlusIcon className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleResetZoom}>
-                  Reset
-                </Button>
-              </div>
-            )}
+                <PlusIcon className="h-4 w-4" />
+              </Button>
+              <span className="px-2 py-1 rounded-xl text-xs bg-background/80 border tabular-nums">
+                {Math.round(zoomPercent * 100)}%
+              </span>
+              <Button
+                variant="outline"
+                className="rounded-full cursor-pointer"
+                size="icon"
+                onClick={() =>
+                  setZoomPercent((z) =>
+                    Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2))
+                  )
+                }
+                aria-label="Zoom out"
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="cursor-pointer"
+                onClick={() => setZoomPercent(0.6)}
+              >
+                Reset
+              </Button>
+            </div>
+
+            {/* Right: background toggle */}
+            {/* <div className="pointer-events-auto z-10 transition-all duration-300 ease-out absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5">
+              <Button
+                size="sm"
+                variant={canvasBg === "white" ? "secondary" : "outline"}
+                className="h-6 sm:h-8 rounded-full text-[10px] sm:text-xs"
+                onClick={() => setCanvasBg("white")}
+                aria-label="White background"
+              >
+                White
+              </Button>
+              <Button
+                size="sm"
+                variant={canvasBg === "black" ? "secondary" : "outline"}
+                className="h-6 sm:h-8 rounded-full text-[10px] sm:text-xs"
+                onClick={() => setCanvasBg("black")}
+                aria-label="Black background"
+              >
+                Black
+              </Button>
+            </div> */}
           </div>
         </div>
 
-        {/* Bottom utility row */}
+        {/* ====== BOTTOM BAR ====== */}
         <div className="absolute bottom-2 inset-x-3 flex items-center justify-between text-xs text-muted-foreground">
           <div className="truncate">
-            {selectedPreset.label} • {selectedPreset.width}×
-            {selectedPreset.height}px
+            {/* {selectedPreset.label} */}
+            {hasUserSelectedPreset && <br />}
+            {/* {selectedPreset.width}×{selectedPreset.height}px */}
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* TYPE: Continue button appears only after a user has picked a size */}
-            {currentStep === "type" && hasUserSelectedPreset && (
-              <Button
-                size="sm"
-                className="rounded-full opacity-40 hover:opacity-100"
-                onClick={() => {
-                  setTypeConfirmed(true);
-                  setVisitedByStep((prev) => ({ ...prev, type: true }));
-                  setCurrentStep("image");
-                }}
-              >
-                Continue to Generate
-              </Button>
-            )}
-
-            {/* IMAGE: Offer crisp regeneration if size changed since last generation */}
-            {currentStep === "image" && hasAnyArtwork && sizeMismatch && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleGenerate}
-                disabled={isGenerating || !promptText.trim()}
-                title={`Regenerate at ${selectedPreset.width}×${selectedPreset.height}`}
-              >
-                {isGenerating
-                  ? "Regenerating…"
-                  : `Regenerate @ ${selectedPreset.width}×${selectedPreset.height}`}
-              </Button>
-            )}
-
+          <div className="flex items-center gap-2 mb-4">
             {currentStep === "export" && hasAnyArtwork && (
               <Button size="sm" onClick={exportPNG}>
                 Export PNG

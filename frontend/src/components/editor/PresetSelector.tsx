@@ -94,25 +94,24 @@ export default function PresetSelector({ value, onValueChangeAction }: Props) {
   }, [filtered]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 w-full min-w-72 cursor-pointer">
       <label className="text-sm font-medium ml-2">Sizes:</label>
-
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             role="combobox"
             aria-expanded={open}
-            className="w-full justify-between rounded-full"
+            className="w-full justify-between rounded-full text-xs sm:text-sm cursor-pointer sm:h-8"
           >
-            {selected
-              ? `${selected.label} — ${selected.width}×${selected.height}`
-              : "Search & choose a preset"}
+            <p className="text-center w-full">
+              {selected ? `${selected.label}` : "Search & choose a preset"}
+            </p>
             <ChevronsUpDown className="h-4 w-4 opacity-50" />
           </Button>
         </PopoverTrigger>
 
-        <PopoverContent className="w-[420px] p-0 max-h-[60vh]">
+        <PopoverContent className="w-full p-0 max-h-[60vh] text-xs cursor-pointer">
           <Command shouldFilter={false}>
             <CommandInput
               placeholder="Type to search presets…"
@@ -137,8 +136,8 @@ export default function PresetSelector({ value, onValueChangeAction }: Props) {
                         setQ("");
                       }}
                     >
-                      <div className="flex flex-col">
-                        <span className="text-sm">{p.label}</span>
+                      <div className="flex flex-col cursor-pointer w-full">
+                        <span className="text-xs sm:text-sm">{p.label}</span>
                         <span className="text-xs text-muted-foreground">
                           {p.width}×{p.height} • {p.category}
                         </span>
