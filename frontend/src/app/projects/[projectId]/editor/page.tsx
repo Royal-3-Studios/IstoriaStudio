@@ -8,38 +8,76 @@ import type Konva from "konva";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
 
-// UI
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import StepHeader, { type Step } from "@/components/editor/StepHeader";
-import PresetSelector from "@/components/editor/PresetSelector";
 import PresetGallery from "@/components/editor/PresetGallery";
 
-// Data
+import FullEditorOverlay from "@/components/editor/FullEditorOverlay";
+
 import {
   PRESETS,
   PRESET_PLACEHOLDER,
   defaultPresetForProjectType,
   type Preset,
 } from "@/data/presets";
+import type { Preset as GalleryPreset } from "@/components/editor/PresetGallery";
 
-// === Your local hooks (page is at the same level as /hooks and /components)
 import { useProject } from "./hooks/useProject";
 import { useCanvasSizing } from "./hooks/useCanvasSizing";
 import { useGeneration } from "./hooks/useGeneration";
 import { usePrompt } from "./hooks/usePrompt";
 
-// Icons
 import {
   Loader,
-  Minus,
   Plus as PlusIcon,
   Paperclip,
   ArrowBigRight,
   ArrowBigLeft,
+  X as CloseIcon,
+  Sparkles,
+  Upload as UploadIcon,
+  Type as TypeIcon,
+  Square as SquareIcon,
+  PencilRuler,
+  LogOut as ExitIcon,
+  Wand2 as MagicIcon,
 } from "lucide-react";
 
-// Konva (client-only)
+// ---------- helpers ----------
+type DeviceBucket = "small" | "medium" | "large";
+
+function deviceBucketFromWidth(w: number): DeviceBucket {
+  if (w < 640) return "small"; // phones
+  if (w < 1024) return "medium"; // tablets / small laptops
+  return "large"; // desktops
+}
+
+function startingScaleFor(
+  preset: {
+    starting_scale_small?: number;
+    starting_scale_medium?: number;
+    starting_scale_large?: number;
+  },
+  bucket: DeviceBucket
+) {
+  if (bucket === "small") return preset.starting_scale_small ?? 1;
+  if (bucket === "medium") return preset.starting_scale_medium ?? 1;
+  return preset.starting_scale_large ?? 1;
+}
+
+const DOCKED_TOP_PX = 12;
+const clamp = (n: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, n));
+const PREVIEW_MAX_LONG_EDGE = 1600;
+
+const getPresetById = (id: string): Preset =>
+  id === PRESET_PLACEHOLDER.id
+    ? PRESET_PLACEHOLDER
+    : (PRESETS as Preset[]).find((p) => p.id === id) ??
+      (PRESETS as Preset[])[0];
+
+// ---------- Konva (client-only) ----------
 const Stage = dynamic(
   () => import("@/components/konva/StageClient").then((m) => m.default),
   { ssr: false }
@@ -61,25 +99,17 @@ const Rect = dynamic(
   { ssr: false }
 );
 
-// ---- Small utils & constants
-const DOCKED_TOP_PX = 12;
-const clamp = (n: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, n));
-const PREVIEW_MAX_LONG_EDGE = 1600;
+// ✅ Use your wrapper (avoids invalid element issues)
+import Transformer from "@/components/konva/TransformerClient";
 
-const getPresetById = (id: string): Preset =>
-  id === PRESET_PLACEHOLDER.id
-    ? PRESET_PLACEHOLDER
-    : (PRESETS as Preset[]).find((p) => p.id === id) ??
-      (PRESETS as Preset[])[0];
-
+// ---------- Component ----------
 export default function Page() {
   const { projectId } = useParams<{ projectId: string }>();
 
-  // ----- Project
+  // Project
   const { project, loading: isProjectLoading } = useProject(projectId);
 
-  // ----- Preset selection
+  // Preset selection
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     PRESET_PLACEHOLDER.id
   );
@@ -87,6 +117,19 @@ export default function Page() {
     () => getPresetById(selectedPresetId),
     [selectedPresetId]
   );
+
+  const galleryPresets: GalleryPreset[] = useMemo(
+    () =>
+      PRESETS.map((p) => ({
+        id: p.id,
+        label: p.label,
+        width: p.width,
+        height: p.height,
+        company: p.platform ?? p.category ?? "Other",
+      })),
+    []
+  );
+
   const hasUserSelectedPreset = selectedPresetId !== PRESET_PLACEHOLDER.id;
 
   // Seed default preset when project loads
@@ -96,26 +139,28 @@ export default function Page() {
     setSelectedPresetId(def.id);
   }, [project]);
 
-  // ----- Step flow
-  const stepFlow: Step[] = useMemo(() => {
-    const base: Step[] = ["type", "image", "text", "export"];
-    return project?.type?.toLowerCase() === "book"
-      ? ["type", "image", "text", "layout", "export"]
-      : base;
-  }, [project?.type]);
-
+  // Steps: no Base — Edit hosts AI generation
+  const stepsList: Step[] = ["type", "edit", "variants", "qa", "export"];
   const [currentStep, setCurrentStep] = useState<Step>("type");
-  const stepIndex = stepFlow.indexOf(currentStep);
-  const prevStep = stepIndex > 0 ? stepFlow[stepIndex - 1] : null;
+  const stepIndex = stepsList.indexOf(currentStep);
+  const prevStep = stepIndex > 0 ? stepsList[stepIndex - 1] : null;
   const nextStep =
-    stepIndex >= 0 && stepIndex + 1 < stepFlow.length
-      ? stepFlow[stepIndex + 1]
+    stepIndex >= 0 && stepIndex + 1 < stepsList.length
+      ? stepsList[stepIndex + 1]
       : null;
+
+  const labelMap: Record<Step, string> = {
+    type: "Type",
+    edit: "Edit",
+    variants: "Variants",
+    qa: "Checks",
+    export: "Export",
+  };
   const prettyStep = (s: Step) =>
-    s === "image" ? "Generate" : s[0].toUpperCase() + s.slice(1);
+    labelMap[s] ?? s[0].toUpperCase() + s.slice(1);
   const nextStepLabel = nextStep ? prettyStep(nextStep) : "";
 
-  // ----- Prompt (your hook)
+  // Prompt (for generator panel)
   const {
     promptText,
     setPromptText,
@@ -124,10 +169,18 @@ export default function Page() {
     promptTextareaRef,
     promptDocInputRef,
     autosize,
-    dock, // docks the prompt UI
+    dock,
   } = usePrompt();
 
-  // ----- Current image element & transform (local state)
+  // Generator panel visibility (lives in Edit)
+  const [showGenerator, setShowGenerator] = useState<boolean>(false);
+
+  // Floating CTA dismissed? (when user chooses manual)
+  const [ctaDismissed, setCtaDismissed] = useState<boolean>(false);
+
+  const [isFullEditorOpen, setIsFullEditorOpen] = useState(false);
+
+  // Image element & transform
   const [imageElement, setImageElement] = useState<HTMLImageElement | null>(
     null
   );
@@ -136,14 +189,23 @@ export default function Page() {
   const [imageOffsetY, setImageOffsetY] = useState<number>(0);
   const hasAnyArtwork = !!imageElement;
 
-  // Started image stage?
-  const [hasStartedImageStage, setHasStartedImageStage] = useState(false);
+  // Edit layers & selection
+  type TextLayer = {
+    id: string;
+    text: string;
+    x: number;
+    y: number;
+    size: number;
+  };
+  type BoxLayer = { id: string; x: number; y: number; w: number; h: number };
 
-  // isPromptDocked when on image step, started, and not focused
-  const isPromptDocked =
-    currentStep === "image" && hasStartedImageStage && !isPromptFocused;
+  const [texts, setTexts] = useState<TextLayer[]>([]);
+  const [boxes, setBoxes] = useState<BoxLayer[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const transformerRef = useRef<Konva.Transformer | null>(null);
+  const stageRef = useRef<Konva.Stage>(null);
 
-  // Fit image to the current preset
+  // Fit image to preset
   function fitImageToPreset(mode: "cover" | "contain" = "cover") {
     if (!imageElement) return;
     const imgW = imageElement.naturalWidth || imageElement.width;
@@ -167,13 +229,30 @@ export default function Page() {
     setImageOffsetY(offY);
   }
 
-  // When preset changes, refit
+  // Refit on image/preset change
   useEffect(() => {
     if (!imageElement) return;
     fitImageToPreset("cover");
   }, [imageElement, selectedPreset.width, selectedPreset.height]);
 
-  // ----- Canvas sizing (your hook: frameW, frameH, previewCapLongEdge?)
+  // Attach Transformer to selected node
+  useEffect(() => {
+    if (!transformerRef.current || !stageRef.current) return;
+
+    if (!selectedId) {
+      transformerRef.current.nodes([]);
+      transformerRef.current.getLayer()?.batchDraw();
+      return;
+    }
+
+    const node = stageRef.current.findOne(`#${selectedId}`);
+    if (node) {
+      transformerRef.current.nodes([node]);
+      transformerRef.current.getLayer()?.batchDraw();
+    }
+  }, [selectedId]);
+
+  // Canvas sizing (main view)
   const { containerRef, fitToContainerScale, previewCapScale } =
     useCanvasSizing(
       selectedPreset.width || 1,
@@ -181,18 +260,28 @@ export default function Page() {
       PREVIEW_MAX_LONG_EDGE
     );
 
-  // Zoom on top of the base scales
+  // Zoom (init from preset/device bucket)
   const ZOOM_MIN = 0.05;
-  const ZOOM_MAX = 2;
-  const ZOOM_STEP = 0.05;
-  const [zoomPercent, setZoomPercent] = useState(0.6);
+  const ZOOM_MAX = 3;
+  const [zoomPercent, setZoomPercent] = useState<number>(() => {
+    const bucket =
+      typeof window === "undefined"
+        ? "large"
+        : deviceBucketFromWidth(window.innerWidth);
+    return startingScaleFor(selectedPreset, bucket);
+  });
+  useEffect(() => {
+    const bucket = deviceBucketFromWidth(window.innerWidth);
+    setZoomPercent(startingScaleFor(selectedPreset, bucket));
+  }, [selectedPreset.id, selectedPreset.width, selectedPreset.height]);
+
   const composedStageScale = useMemo(() => {
     const base = Math.min(fitToContainerScale || 1, previewCapScale || 1);
     const z = clamp(zoomPercent, ZOOM_MIN, ZOOM_MAX);
     return base * z;
   }, [fitToContainerScale, previewCapScale, zoomPercent]);
 
-  // Stage sizing (in px)
+  // Stage pixel size (main view)
   const stageWidthPx = Math.max(
     1,
     Math.floor((selectedPreset.width || 1) * composedStageScale)
@@ -202,16 +291,24 @@ export default function Page() {
     Math.floor((selectedPreset.height || 1) * composedStageScale)
   );
 
-  const stageRef = useRef<Konva.Stage>(null);
-
-  // ----- Generation (your hook: needs at least 2 args)
-  const onImage = (url: string, img: HTMLImageElement) => {
+  // Generation (AI)
+  const { isGenerating, isImageLoading, generate } = useGeneration(projectId);
+  const onImage = (_url: string, img: HTMLImageElement) => {
     setImageElement(img);
-    setHasStartedImageStage(true);
     fitImageToPreset("cover");
   };
-  const { isGenerating, isImageLoading, generatedUrls, generate } =
-    useGeneration(projectId);
+
+  async function handleGenerate() {
+    if (!promptText.trim()) return;
+    dock();
+    await generate({
+      prompt: promptText,
+      presetId: selectedPreset.id,
+      width: selectedPreset.width,
+      height: selectedPreset.height,
+      onImage,
+    });
+  }
 
   // Export
   async function exportPNG() {
@@ -229,23 +326,20 @@ export default function Page() {
   const enabledSteps: Step[] = useMemo(() => {
     const enabled = new Set<Step>();
     enabled.add("type");
-    if (hasUserSelectedPreset) enabled.add("image");
-    if (hasAnyArtwork) enabled.add("text");
-    if (stepFlow.includes("layout") && hasAnyArtwork) enabled.add("layout");
-    if (
-      (!stepFlow.includes("layout") && hasAnyArtwork) ||
-      stepFlow.includes("layout")
-    ) {
+    if (hasUserSelectedPreset) enabled.add("edit"); // manual editing allowed on blank canvas
+    if (hasAnyArtwork) {
+      enabled.add("variants");
+      enabled.add("qa");
       enabled.add("export");
     }
-    return stepFlow.filter((s) => enabled.has(s));
-  }, [hasUserSelectedPreset, hasAnyArtwork, stepFlow]);
+    return stepsList.filter((s) => enabled.has(s));
+  }, [hasUserSelectedPreset, hasAnyArtwork]); // stepsList is static
 
   const canContinue =
     currentStep === "type"
       ? hasUserSelectedPreset
-      : currentStep === "image"
-        ? hasAnyArtwork && !isGenerating && !isImageLoading
+      : currentStep === "edit"
+        ? hasAnyArtwork // require artwork to advance to variants
         : currentStep === "export"
           ? false
           : true;
@@ -256,17 +350,30 @@ export default function Page() {
   }
   function goForward() {
     if (!nextStep || !canContinue) return;
+
+    // Leaving Type: go to Edit
+    if (currentStep === "type") {
+      setCurrentStep("edit");
+      return;
+    }
     setCurrentStep(nextStep);
   }
 
-  // Background color toggle
-  const [canvasBg, setCanvasBg] = useState<"white" | "black">("white");
+  // Canvas background
+  const [canvasBg] = useState<"white" | "black">("white");
 
-  // Blur rule: blur while prompt editor is visible (centered) or before first gen/upload
+  // Blur rule: blur when generator is centered or before first asset
+  const isPromptDocked =
+    currentStep === "edit" &&
+    showGenerator &&
+    hasAnyArtwork &&
+    !isPromptFocused;
   const shouldBlurCanvas =
-    currentStep === "image" && (!hasStartedImageStage || !isPromptDocked);
+    currentStep === "edit" &&
+    showGenerator &&
+    (!hasAnyArtwork || !isPromptDocked);
 
-  // ----- Prompt: hidden file inputs
+  // Hidden file inputs
   const imageInputRef = useRef<HTMLInputElement>(null);
   function openImagePicker() {
     imageInputRef.current?.click();
@@ -274,7 +381,6 @@ export default function Page() {
   function handleImageChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setHasStartedImageStage(true);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -290,48 +396,110 @@ export default function Page() {
     reader.readAsDataURL(file);
   }
 
-  // Submit/generate action shared by Enter and button
-  async function handleGenerate() {
-    if (!promptText.trim()) return;
-    // Dock immediately (so Enter behaves like the button)
-    dock();
-    setHasStartedImageStage(true);
-    // Your hook’s generate likely expects positional args:
-    // generate(prompt: string, presetId: string, width: number, height: number)
-    await generate({
-      prompt: promptText,
-      presetId: selectedPreset.id,
-      width: selectedPreset.width,
-      height: selectedPreset.height,
-      onImage: (url, img) => {
-        // optional: handle the generated image
-        console.log("Generated image:", url, img);
+  // Keyboard: delete & nudge (Edit step)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (currentStep !== "edit" || !selectedId) return;
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        setBoxes((b) => b.filter((x) => x.id !== selectedId));
+        setTexts((t) => t.filter((x) => x.id !== selectedId));
+        if (selectedId === "bg") {
+          setImageElement(null);
+        }
+        setSelectedId(null);
+        return;
+      }
+
+      const nudge = (dx = 0, dy = 0) => {
+        setBoxes((b) =>
+          b.map((x) =>
+            x.id === selectedId ? { ...x, x: x.x + dx, y: x.y + dy } : x
+          )
+        );
+        setTexts((t) =>
+          t.map((x) =>
+            x.id === selectedId ? { ...x, x: x.x + dx, y: x.y + dy } : x
+          )
+        );
+        if (selectedId === "bg") {
+          setImageOffsetX((x) => x + dx);
+          setImageOffsetY((y) => y + dy);
+        }
+      };
+
+      if (e.key === "ArrowLeft") nudge(-1, 0);
+      if (e.key === "ArrowRight") nudge(1, 0);
+      if (e.key === "ArrowUp") nudge(0, -1);
+      if (e.key === "ArrowDown") nudge(0, 1);
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentStep, selectedId]);
+
+  // Edit helpers
+  function addTitleText() {
+    const id = crypto.randomUUID();
+    const W = selectedPreset.width || 1;
+    const H = selectedPreset.height || 1;
+
+    setTexts((t) => [
+      ...t,
+      {
+        id,
+        text: project?.title || "Title",
+        x: Math.round(W * 0.1),
+        y: Math.round(H * 0.1),
+        size: Math.round(H * 0.12),
       },
-    });
+    ]);
+    setSelectedId(id);
   }
+
+  function addRect() {
+    const id = crypto.randomUUID();
+    const W = selectedPreset.width || 1;
+    const H = selectedPreset.height || 1;
+
+    setBoxes((b) => [
+      ...b,
+      {
+        id,
+        x: Math.round(W * 0.1),
+        y: Math.round(H * 0.7),
+        w: Math.round(W * 0.8),
+        h: Math.round(H * 0.12),
+      },
+    ]);
+    setSelectedId(id);
+  }
+
+  // --- Floating Generate CTA logic ---
+  const showCtaOverlay =
+    currentStep === "edit" && !showGenerator && !isFullEditorOpen;
+  const dockCta = ctaDismissed || hasAnyArtwork;
 
   // Render
   if (isProjectLoading) return <div className="p-6">Loading…</div>;
   if (!project) return <div className="p-6">Project not found.</div>;
 
-  const showPromptUI = currentStep === "image";
-
   return (
-    // <div className="flex flex-col min-h-screen overflow-x-hidden">
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {/* ====== HEADER ====== */}
-      <div className="relative z-30 h-12 shrink-0 flex items-center px-4 w-full">
+      {/* HEADER */}
+      <div className="relative z-30 h-10 shrink-0 flex items-center px-4 w-full">
         <StepHeader
           step={currentStep}
-          steps={stepFlow}
+          steps={stepsList}
           enabled={enabledSteps}
-          onChangeAction={(s) => setCurrentStep(s)}
+          onChangeAction={setCurrentStep}
+          labels={{ qa: "Checks" }}
         />
       </div>
 
-      {/* ====== CONTENT AREA ====== */}
+      {/* CONTENT AREA */}
       <div className="relative flex-1 min-h-0 min-w-0 p-4 pt-2">
-        {/* Top rail (Steps 2+) */}
+        {/* Top rail: back/next */}
         {currentStep !== "type" && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 w-[min(100%,80rem)] px-4 pointer-events-none">
             <div className="grid grid-cols-[1fr_auto_1fr] items-center pointer-events-auto">
@@ -366,18 +534,14 @@ export default function Page() {
           </div>
         )}
 
-        {/* ====== TYPE STEP ====== */}
+        {/* TYPE STEP */}
         {currentStep === "type" && (
           <div className="absolute inset-0 z-20 pointer-events-none">
             <div
               className="absolute left-1/2 w-[min(100%,80rem)] px-4 transition-all duration-300 ease-out pointer-events-auto"
               style={{
                 willChange: "transform, top",
-                // top: hasUserSelectedPreset ? DOCKED_TOP_PX : "615%",
-                // transform: hasUserSelectedPreset
-                //   ? "translate(-50%, 0) scale(0.92)"
-                //   : "translate(-50%, -50%) scale(1)",
-                top: hasUserSelectedPreset ? DOCKED_TOP_PX : 12, // anchor to the top
+                top: DOCKED_TOP_PX,
                 transform: hasUserSelectedPreset
                   ? "translate(-50%, 0) scale(0.92)"
                   : "translate(-50%, 0) scale(1)",
@@ -385,17 +549,18 @@ export default function Page() {
             >
               <div className="relative mx-auto transition-all duration-300 ease-out w-full">
                 {!hasUserSelectedPreset ? (
-                  <Card className="mb-12 border bg-card shadow-md px-4 py-6">
-                    <div className="flex w-full flex-col gap-4">
-                      <div className="text-xs sm:text-sm text-muted-foreground text-center font-bold">
-                        Pick a size/type to preview the canvas.
+                  <Card className="mt-3 h-[75vh] mb-12 border bg-card shadow-md px-4 py-3">
+                    <div className="flex w-full flex-col gap-2 ">
+                      <div className="text-xs text-muted-foreground text-center font-bold">
+                        Choose a size/type to preview the canvas.
                       </div>
-                      <div className="mx-auto w-full">
-                        {/* Height frame for the gallery — tune the numbers as you like */}
-                        <div className="max-w-7xl mx-auto h-[min(72vh,720px)]">
+                      <div className="mx-auto w-full ">
+                        <div className="max-w-7xl mx-auto h-[min(66vh,720px)]">
                           <PresetGallery
-                            presets={PRESETS as unknown as Preset[]}
-                            value={null}
+                            presets={galleryPresets}
+                            value={
+                              hasUserSelectedPreset ? selectedPresetId : null
+                            }
                             onChangeAction={(id) => setSelectedPresetId(id)}
                             projectType={project.type}
                             showFilters
@@ -405,24 +570,34 @@ export default function Page() {
                     </div>
                   </Card>
                 ) : (
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center w-full">
-                    <div />
-                    <div className="justify-self-center max-w-md w-full">
-                      <PresetSelector
-                        value={selectedPresetId}
-                        onValueChangeAction={(id) => setSelectedPresetId(id)}
-                      />
+                  <div className="flex items-center justify-between w-full">
+                    <div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setSelectedPresetId(PRESET_PLACEHOLDER.id)
+                        }
+                        className="text-xs sm:text-sm rounded-full h-8 mt-1 cursor-pointer"
+                        title="Change type (back to gallery)"
+                      >
+                        Change type
+                      </Button>
                     </div>
-                    <div className="ml-1 mt-4 justify-self-end">
+                    <div className="justify-self-start ml-1 mt-2 text-xs sm:text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {selectedPreset.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={goForward}
-                        disabled={!canContinue}
-                        className="text-xs sm:text-sm rounded-full h-8 mt-1 cursor-pointer hover:scale-110 px-2"
-                        title="Continue to Generate"
+                        onClick={() => setCurrentStep("edit")}
+                        className="text-xs sm:text-sm rounded-full h-8 cursor-pointer px-2"
+                        title="Go to editor"
                       >
-                        <ArrowBigRight className="h-4 w-4 shrink-0" />
+                        Continue to Edit
                       </Button>
                     </div>
                   </div>
@@ -432,26 +607,26 @@ export default function Page() {
           </div>
         )}
 
-        {/* ====== PROMPT OVERLAY (Image Step) ====== */}
-        {showPromptUI && (
+        {/* GENERATOR PANEL (Edit step) */}
+        {currentStep === "edit" && showGenerator && !isFullEditorOpen && (
           <div className="absolute inset-0 z-20 pointer-events-none">
             <div
               className="absolute left-1/2 w-[min(100%,80rem)] px-4 transition-all duration-300 ease-out pointer-events-auto"
               style={{
                 willChange: "transform, top",
-                top: DOCKED_TOP_PX, // always dock at 12px
-                transform: hasUserSelectedPreset
-                  ? "translate(-50%, 0) scale(0.96)" // gentle scale once chosen
-                  : "translate(-50%, 0) scale(1)", // no vertical centering anymore
+                top: hasAnyArtwork ? DOCKED_TOP_PX : "25%",
+                transform: hasAnyArtwork
+                  ? "translate(-50%, 0) scale(1)"
+                  : "translate(-50%, 0) scale(0.98)",
               }}
             >
               <div
                 className={[
                   "relative mx-auto transition-all duration-300 ease-out",
-                  isPromptDocked ? "max-w-md" : "max-w-3xl",
+                  hasAnyArtwork && !isPromptFocused ? "max-w-md" : "max-w-3xl",
                 ].join(" ")}
               >
-                {/* Hidden inputs */}
+                {/* hidden inputs */}
                 <input
                   ref={promptDocInputRef}
                   type="file"
@@ -476,13 +651,13 @@ export default function Page() {
                 <Card
                   className={[
                     "relative transition-all duration-300 ease-out border bg-card shadow-md",
-                    isPromptDocked
+                    hasAnyArtwork && !isPromptFocused
                       ? "h-10 p-0 overflow-hidden rounded-2xl"
                       : "",
                   ].join(" ")}
                 >
-                  {isPromptDocked ? (
-                    // Docked toolbar (size 6 → 8 at sm)
+                  {hasAnyArtwork && !isPromptFocused ? (
+                    // Docked toolbar
                     <div className="h-10 px-2 sm:px-3 flex items-center justify-between">
                       <div className="truncate text-[10px] sm:text-xs opacity-60">
                         Ready to tweak your image?
@@ -531,6 +706,34 @@ export default function Page() {
                           aria-label="Change prompt"
                         >
                           Change prompt
+                        </Button>
+
+                        {/* NEW: open full-screen editor */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-6 sm:h-8 px-2 sm:px-3 text-[10px] sm:text-xs rounded-full cursor-pointer"
+                          onClick={() => {
+                            setShowGenerator(false);
+                            setIsFullEditorOpen(true);
+                          }}
+                          title="Open full editor"
+                          aria-label="Open full editor"
+                        >
+                          Edit
+                        </Button>
+
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6"
+                          onClick={() => setShowGenerator(false)}
+                          aria-label="Hide generator"
+                          title="Hide"
+                        >
+                          <CloseIcon className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -613,6 +816,15 @@ export default function Page() {
                               </>
                             )}
                           </Button>
+                          <Button
+                            type="button"
+                            className="h-6 sm:h-8 rounded-full text-xs sm:text-sm cursor-pointer"
+                            variant="ghost"
+                            onClick={() => setShowGenerator(false)}
+                            title="Close"
+                          >
+                            Close
+                          </Button>
                         </div>
                       </div>
                     </>
@@ -623,7 +835,66 @@ export default function Page() {
           </div>
         )}
 
-        {/* ====== CANVAS AREA ====== */}
+        {/* 🟣 FLOATING GENERATE CTA (center → docks to top) */}
+        {showCtaOverlay && (
+          <div className="absolute inset-0 z-20 pointer-events-none">
+            <div
+              className="absolute left-1/2 w-[min(100%,80rem)] px-4 transition-all duration-300 ease-out pointer-events-none"
+              style={{
+                willChange: "transform, top",
+                top: dockCta ? DOCKED_TOP_PX : "50%",
+                transform: dockCta
+                  ? "translate(-50%, 0) scale(0.95)"
+                  : "translate(-50%, -50%) scale(1)",
+              }}
+            >
+              <div
+                className={`mx-auto ${dockCta ? "max-w-[28rem]" : "max-w-[40rem]"}`}
+              >
+                <div
+                  className={`flex ${dockCta ? "justify-end" : "justify-center"} pointer-events-auto`}
+                >
+                  <div
+                    className={[
+                      "flex items-center gap-2 rounded-2xl border bg-background/90 backdrop-blur shadow-md px-3 py-2",
+                      "transition-all duration-300",
+                    ].join(" ")}
+                  >
+                    <Button
+                      size="sm"
+                      variant={dockCta ? "secondary" : "default"}
+                      onClick={() => setShowGenerator(true)}
+                      className="rounded-full cursor-pointer text-xs"
+                      title="Generate an image"
+                    >
+                      <Sparkles className="h-2 w-2 mr-1" />
+                      Generate
+                    </Button>
+
+                    {!dockCta && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          addTitleText();
+                          setCtaDismissed(true);
+                          setIsFullEditorOpen(true); // ← enter full-screen editor
+                        }}
+                        className="rounded-full cursor-pointer text-xs"
+                        title="Start manual on a blank canvas"
+                      >
+                        <PencilRuler className="h-2 w-2 mr-1" />
+                        Create
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CANVAS (main, non-fullscreen) */}
         <div className="mt-2 absolute inset-0 pt-16 md:pt-14">
           <div
             className={[
@@ -636,7 +907,9 @@ export default function Page() {
               className="flex h-full w-full min-h-0 min-w-0 items-center justify-center"
             >
               <div className="max-h-full max-w-full">
-                {(isGenerating || isImageLoading) && currentStep === "image" ? (
+                {(isGenerating || isImageLoading) &&
+                currentStep === "edit" &&
+                showGenerator ? (
                   <div
                     className="inline-block rounded-sm border shadow-sm animate-pulse bg-muted/30"
                     style={{
@@ -658,29 +931,45 @@ export default function Page() {
                       width={stageWidthPx}
                       height={stageHeightPx}
                       ref={stageRef}
+                      onMouseDown={(e) => {
+                        if (e.target === e.target.getStage())
+                          setSelectedId(null);
+                      }}
+                      onTap={(e) => {
+                        if (e.target === e.target.getStage())
+                          setSelectedId(null);
+                      }}
                     >
                       <Layer
                         scaleX={composedStageScale}
                         scaleY={composedStageScale}
                       >
-                        {/* Canvas background / frame */}
+                        {/* Canvas frame */}
                         <Rect
                           x={0}
                           y={0}
                           width={selectedPreset.width || 1}
                           height={selectedPreset.height || 1}
                           fill={canvasBg === "white" ? "#fff" : "#000"}
+                          listening={false}
                         />
 
-                        {/* Image */}
+                        {/* Background image */}
                         {imageElement && (
                           <KonvaImage
+                            id="bg"
                             image={imageElement}
                             x={imageOffsetX}
                             y={imageOffsetY}
                             scaleX={imageScale}
                             scaleY={imageScale}
-                            draggable={currentStep !== "export"}
+                            draggable={currentStep === "edit"}
+                            onClick={() =>
+                              currentStep === "edit" && setSelectedId("bg")
+                            }
+                            onTap={() =>
+                              currentStep === "edit" && setSelectedId("bg")
+                            }
                             onDragEnd={(e) => {
                               setImageOffsetX(e.target.x());
                               setImageOffsetY(e.target.y());
@@ -688,63 +977,97 @@ export default function Page() {
                           />
                         )}
 
-                        {/* Example overlay texts (hidden on image step) */}
-                        {currentStep !== "image" && imageElement && (
-                          <>
-                            <KonvaText
-                              text={project.title ?? "Title"}
-                              fill={"#ffffff"}
-                              fontSize={Math.round(
-                                (selectedPreset.height || 1) * 0.12
-                              )}
-                              fontStyle="bold"
-                              x={Math.round((selectedPreset.width || 1) * 0.06)}
-                              y={Math.round(
-                                (selectedPreset.height || 1) * 0.08
-                              )}
-                              width={Math.round(
-                                (selectedPreset.width || 1) * 0.88
-                              )}
-                              align="center"
-                              listening={false}
-                            />
-                            {!!project.description && (
-                              <KonvaText
-                                text={project.description}
-                                fill={"#ffffff"}
-                                fontSize={Math.round(
-                                  (selectedPreset.height || 1) * 0.06
-                                )}
-                                x={Math.round(
-                                  (selectedPreset.width || 1) * 0.08
-                                )}
-                                y={Math.round(
-                                  (selectedPreset.height || 1) * 0.28
-                                )}
-                                width={Math.round(
-                                  (selectedPreset.width || 1) * 0.84
-                                )}
-                                align="center"
-                                listening={false}
-                              />
-                            )}
-                            <KonvaText
-                              text={"Author"}
-                              fill={"#ffffff"}
-                              fontSize={Math.round(
-                                (selectedPreset.height || 1) * 0.05
-                              )}
-                              x={Math.round((selectedPreset.width || 1) * 0.1)}
-                              y={Math.round(
-                                (selectedPreset.height || 1) * 0.85
-                              )}
-                              width={Math.round(
-                                (selectedPreset.width || 1) * 0.8
-                              )}
-                              align="center"
-                              listening={false}
-                            />
-                          </>
+                        {/* Boxes */}
+                        {boxes.map((b) => (
+                          <Rect
+                            key={b.id}
+                            id={b.id}
+                            x={b.x}
+                            y={b.y}
+                            width={b.w}
+                            height={b.h}
+                            fill="#00000088"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            draggable={currentStep === "edit"}
+                            onClick={() => setSelectedId(b.id)}
+                            onTap={() => setSelectedId(b.id)}
+                            onDragEnd={(e) => {
+                              const { x, y } = e.target.position();
+                              setBoxes((arr) =>
+                                arr.map((it) =>
+                                  it.id === b.id ? { ...it, x, y } : it
+                                )
+                              );
+                            }}
+                            onTransformEnd={(e) => {
+                              const node = e.target;
+                              const scaleX = node.scaleX();
+                              const scaleY = node.scaleY();
+                              node.scaleX(1);
+                              node.scaleY(1);
+                              const next = {
+                                x: node.x(),
+                                y: node.y(),
+                                w: Math.max(2, b.w * scaleX),
+                                h: Math.max(2, b.h * scaleY),
+                              };
+                              setBoxes((arr) =>
+                                arr.map((it) =>
+                                  it.id === b.id ? { ...it, ...next } : it
+                                )
+                              );
+                            }}
+                          />
+                        ))}
+
+                        {/* Texts */}
+                        {texts.map((t) => (
+                          <KonvaText
+                            key={t.id}
+                            id={t.id}
+                            text={t.text}
+                            fill="#ffffff"
+                            fontSize={t.size}
+                            x={t.x}
+                            y={t.y}
+                            draggable={currentStep === "edit"}
+                            onClick={() => setSelectedId(t.id)}
+                            onTap={() => setSelectedId(t.id)}
+                            onDragEnd={(e) => {
+                              const { x, y } = e.target.position();
+                              setTexts((arr) =>
+                                arr.map((it) =>
+                                  it.id === t.id ? { ...it, x, y } : it
+                                )
+                              );
+                            }}
+                            onTransformEnd={(e) => {
+                              const node = e.target;
+                              const scaleY = node.scaleY();
+                              node.scaleY(1);
+                              const nextSize = Math.max(
+                                4,
+                                Math.round(t.size * scaleY)
+                              );
+                              setTexts((arr) =>
+                                arr.map((it) =>
+                                  it.id === t.id
+                                    ? { ...it, size: nextSize }
+                                    : it
+                                )
+                              );
+                            }}
+                          />
+                        ))}
+
+                        {/* Transformer (Edit only) */}
+                        {currentStep === "edit" && (
+                          <Transformer
+                            ref={transformerRef}
+                            rotateEnabled
+                            keepRatio
+                          />
                         )}
                       </Layer>
                     </Stage>
@@ -752,86 +1075,278 @@ export default function Page() {
                 )}
               </div>
             </div>
-
-            {/* Left: Zoom controls */}
-            <div className="pointer-events-auto z-10 transition-all duration-300 ease-out absolute left-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5">
-              <Button
-                variant="outline"
-                className="rounded-full cursor-pointer"
-                size="icon"
-                onClick={() =>
-                  setZoomPercent((z) =>
-                    Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2))
-                  )
-                }
-                aria-label="Zoom in"
-              >
-                <PlusIcon className="h-4 w-4" />
-              </Button>
-              <span className="px-2 py-1 rounded-xl text-xs bg-background/80 border tabular-nums">
-                {Math.round(zoomPercent * 100)}%
-              </span>
-              <Button
-                variant="outline"
-                className="rounded-full cursor-pointer"
-                size="icon"
-                onClick={() =>
-                  setZoomPercent((z) =>
-                    Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2))
-                  )
-                }
-                aria-label="Zoom out"
-              >
-                <Minus className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="cursor-pointer"
-                onClick={() => setZoomPercent(0.6)}
-              >
-                Reset
-              </Button>
-            </div>
-
-            {/* Right: background toggle */}
-            {/* <div className="pointer-events-auto z-10 transition-all duration-300 ease-out absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5">
-              <Button
-                size="sm"
-                variant={canvasBg === "white" ? "secondary" : "outline"}
-                className="h-6 sm:h-8 rounded-full text-[10px] sm:text-xs"
-                onClick={() => setCanvasBg("white")}
-                aria-label="White background"
-              >
-                White
-              </Button>
-              <Button
-                size="sm"
-                variant={canvasBg === "black" ? "secondary" : "outline"}
-                className="h-6 sm:h-8 rounded-full text-[10px] sm:text-xs"
-                onClick={() => setCanvasBg("black")}
-                aria-label="Black background"
-              >
-                Black
-              </Button>
-            </div> */}
           </div>
         </div>
 
-        {/* ====== BOTTOM BAR ====== */}
-        <div className="absolute bottom-2 inset-x-3 flex items-center justify-between text-xs text-muted-foreground">
-          <div className="truncate">
-            {/* {selectedPreset.label} */}
-            {hasUserSelectedPreset && <br />}
-            {/* {selectedPreset.width}×{selectedPreset.height}px */}
-          </div>
+        {/* Hidden image input (shared) */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleImageChange}
+        />
 
+        <FullEditorOverlay
+          open={isFullEditorOpen}
+          onClose={() => setIsFullEditorOpen(false)}
+          onAiVariant={() => {
+            setIsFullEditorOpen(false);
+            setCtaDismissed(true);
+            setShowGenerator(true);
+            // later: snapshot current as a variant
+          }}
+          preset={selectedPreset}
+          imageElement={imageElement}
+          imageScale={imageScale}
+          imageOffsetX={imageOffsetX}
+          imageOffsetY={imageOffsetY}
+          setImageOffsetX={setImageOffsetX}
+          setImageOffsetY={setImageOffsetY}
+          texts={texts}
+          setTexts={setTexts}
+          boxes={boxes}
+          setBoxes={setBoxes}
+          selectedId={selectedId}
+          setSelectedId={setSelectedId}
+          stageRef={stageRef}
+          transformerRef={transformerRef}
+          canvasBg={canvasBg}
+        />
+
+        {/* BOTTOM BAR */}
+        <div className="absolute bottom-2 inset-x-3 flex items-center justify-between text-xs text-muted-foreground">
+          <div className="truncate">{hasUserSelectedPreset && <br />}</div>
           <div className="flex items-center gap-2 mb-4">
             {currentStep === "export" && hasAnyArtwork && (
               <Button size="sm" onClick={exportPNG}>
                 Export PNG
               </Button>
             )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** ---------------- Full-screen canvas ----------------
+ * Separate subcomponent to keep the overlay tidy.
+ * It reuses the same stageRef/transformerRef and layer state.
+ */
+function FullScreenCanvas({
+  preset,
+  imageElement,
+  imageScale,
+  imageOffsetX,
+  imageOffsetY,
+  setImageOffsetX,
+  setImageOffsetY,
+  texts,
+  setTexts,
+  boxes,
+  setBoxes,
+  selectedId,
+  setSelectedId,
+  stageRef,
+  transformerRef,
+  canvasBg,
+}: {
+  preset: Preset;
+  imageElement: HTMLImageElement | null;
+  imageScale: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  setImageOffsetX: (v: number | ((x: number) => number)) => void;
+  setImageOffsetY: (v: number | ((y: number) => number)) => void;
+  texts: { id: string; text: string; x: number; y: number; size: number }[];
+  setTexts: React.Dispatch<
+    React.SetStateAction<
+      { id: string; text: string; x: number; y: number; size: number }[]
+    >
+  >;
+  boxes: { id: string; x: number; y: number; w: number; h: number }[];
+  setBoxes: React.Dispatch<
+    React.SetStateAction<
+      { id: string; x: number; y: number; w: number; h: number }[]
+    >
+  >;
+  selectedId: string | null;
+  setSelectedId: (id: string | null) => void;
+  stageRef: React.MutableRefObject<Konva.Stage | null>;
+  transformerRef: React.MutableRefObject<Konva.Transformer | null>;
+  canvasBg: "white" | "black";
+}) {
+  // Fit-to-viewport scaling just for the overlay
+  const { containerRef, fitToContainerScale } = useCanvasSizing(
+    preset.width || 1,
+    preset.height || 1,
+    4096 // allow larger previews in full-screen
+  );
+
+  const stageScale = fitToContainerScale || 1;
+  const stageWidth = Math.max(1, Math.floor((preset.width || 1) * stageScale));
+  const stageHeight = Math.max(
+    1,
+    Math.floor((preset.height || 1) * stageScale)
+  );
+
+  // Keep transformer synced in overlay too
+  useEffect(() => {
+    if (!transformerRef.current || !stageRef.current) return;
+
+    if (!selectedId) {
+      transformerRef.current.nodes([]);
+      transformerRef.current.getLayer()?.batchDraw();
+      return;
+    }
+    const node = stageRef.current.findOne(`#${selectedId}`);
+    if (node) {
+      transformerRef.current.nodes([node]);
+      transformerRef.current.getLayer()?.batchDraw();
+    }
+  }, [selectedId, stageRef, transformerRef]);
+
+  return (
+    <div className="absolute inset-0">
+      {/* left tools (basic) */}
+      <div className="absolute left-4 top-16 z-10 flex flex-col gap-2">
+        <span className="px-2 py-1 text-[10px] rounded bg-muted border">
+          Manual tools
+        </span>
+        {/* You can add more tools here later; keeping lean for now */}
+      </div>
+
+      <div
+        ref={containerRef}
+        className="absolute inset-0 flex items-center justify-center p-4"
+        style={{ paddingTop: 20 }}
+      >
+        <div className="max-h-full max-w-full">
+          <div
+            className="inline-block border rounded-sm shadow-sm bg-neutral-900"
+            style={{ lineHeight: 0 }}
+          >
+            <Stage
+              width={stageWidth}
+              height={stageHeight}
+              ref={stageRef}
+              onMouseDown={(e) => {
+                if (e.target === e.target.getStage()) setSelectedId(null);
+              }}
+              onTap={(e) => {
+                if (e.target === e.target.getStage()) setSelectedId(null);
+              }}
+            >
+              <Layer scaleX={stageScale} scaleY={stageScale}>
+                {/* Canvas frame */}
+                <Rect
+                  x={0}
+                  y={0}
+                  width={preset.width || 1}
+                  height={preset.height || 1}
+                  fill={canvasBg === "white" ? "#fff" : "#000"}
+                  listening={false}
+                />
+
+                {/* Background image */}
+                {imageElement && (
+                  <KonvaImage
+                    id="bg"
+                    image={imageElement}
+                    x={imageOffsetX}
+                    y={imageOffsetY}
+                    scaleX={imageScale}
+                    scaleY={imageScale}
+                    draggable
+                    onClick={() => setSelectedId("bg")}
+                    onTap={() => setSelectedId("bg")}
+                    onDragEnd={(e) => {
+                      setImageOffsetX(e.target.x());
+                      setImageOffsetY(e.target.y());
+                    }}
+                  />
+                )}
+
+                {/* Boxes */}
+                {boxes.map((b) => (
+                  <Rect
+                    key={b.id}
+                    id={b.id}
+                    x={b.x}
+                    y={b.y}
+                    width={b.w}
+                    height={b.h}
+                    fill="#00000088"
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                    draggable
+                    onClick={() => setSelectedId(b.id)}
+                    onTap={() => setSelectedId(b.id)}
+                    onDragEnd={(e) => {
+                      const { x, y } = e.target.position();
+                      setBoxes((arr) =>
+                        arr.map((it) => (it.id === b.id ? { ...it, x, y } : it))
+                      );
+                    }}
+                    onTransformEnd={(e) => {
+                      const node = e.target;
+                      const scaleX = node.scaleX();
+                      const scaleY = node.scaleY();
+                      node.scaleX(1);
+                      node.scaleY(1);
+                      const next = {
+                        x: node.x(),
+                        y: node.y(),
+                        w: Math.max(2, b.w * scaleX),
+                        h: Math.max(2, b.h * scaleY),
+                      };
+                      setBoxes((arr) =>
+                        arr.map((it) =>
+                          it.id === b.id ? { ...it, ...next } : it
+                        )
+                      );
+                    }}
+                  />
+                ))}
+
+                {/* Texts */}
+                {texts.map((t) => (
+                  <KonvaText
+                    key={t.id}
+                    id={t.id}
+                    text={t.text}
+                    fill="#ffffff"
+                    fontSize={t.size}
+                    x={t.x}
+                    y={t.y}
+                    draggable
+                    onClick={() => setSelectedId(t.id)}
+                    onTap={() => setSelectedId(t.id)}
+                    onDragEnd={(e) => {
+                      const { x, y } = e.target.position();
+                      setTexts((arr) =>
+                        arr.map((it) => (it.id === t.id ? { ...it, x, y } : it))
+                      );
+                    }}
+                    onTransformEnd={(e) => {
+                      const node = e.target;
+                      const scaleY = node.scaleY();
+                      node.scaleY(1);
+                      const nextSize = Math.max(4, Math.round(t.size * scaleY));
+                      setTexts((arr) =>
+                        arr.map((it) =>
+                          it.id === t.id ? { ...it, size: nextSize } : it
+                        )
+                      );
+                    }}
+                  />
+                ))}
+
+                {/* Transformer */}
+                <Transformer ref={transformerRef} rotateEnabled keepRatio />
+              </Layer>
+            </Stage>
           </div>
         </div>
       </div>

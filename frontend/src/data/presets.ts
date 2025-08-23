@@ -1,4 +1,5 @@
 // src/data/presets.ts
+
 export type PresetCategory =
   | "book"
   | "music"
@@ -32,7 +33,12 @@ export type Preset = {
   label: string;
   width: number;
   height: number;
-  starting_scale: number;
+
+  // Per-device starting scales (all presets now include these)
+  starting_scale_small: number;
+  starting_scale_medium: number;
+  starting_scale_large: number;
+
   dpi?: number;
   category: PresetCategory; // broad bucket for your app’s flows
   platform?: PresetPlatform; // specific destination (for filtering/UX)
@@ -41,15 +47,39 @@ export type Preset = {
   aliases?: string[];
 };
 
-// --- smart default for starting_scale (based on longest edge) ---
-const autoScale = (w: number, h: number) => {
-  if (h <= 800) return 0.8;
-  if (h <= 1200) return 0.6;
-  if (h <= 2000) return 0.5;
-  if (h <= 3000) return 0.4;
-  return 0.8;
+// --- simple height-based autoscalers (tweak anytime) ---
+const autoScaleSmall = (w: number, h: number) => {
+  if (w <= 900) {
+    if (h <= 800) return 0.4;
+    if (h <= 1200) return 0.3;
+    if (h <= 2000) return 0.2;
+    if (h <= 3000) return 0.2;
+  } else {
+    if (h <= 800) return 0.3;
+    if (h <= 1200) return 0.25;
+    if (h <= 2000) return 0.2;
+    if (h <= 3000) return 0.2;
+  }
+  return 0.5;
 };
 
+const autoScaleMedium = (w: number, h: number) => {
+  if (h <= 800) return 0.5;
+  if (h <= 1200) return 0.45;
+  if (h <= 2000) return 0.35;
+  if (h <= 3000) return 0.35;
+  return 0.5;
+};
+
+const autoScaleLarge = (w: number, h: number) => {
+  if (h <= 800) return 0.55;
+  if (h <= 1200) return 0.45;
+  if (h <= 2000) return 0.35;
+  if (h <= 3000) return 0.25;
+  return 0.45;
+};
+
+// Placeholder for UI
 export const PRESET_PLACEHOLDER: Preset = {
   id: "select-size",
   label: "— Select a size —",
@@ -57,7 +87,9 @@ export const PRESET_PLACEHOLDER: Preset = {
   height: 0,
   category: "generic",
   platform: "none",
-  starting_scale: 0.8,
+  starting_scale_small: 1,
+  starting_scale_medium: 1,
+  starting_scale_large: 1,
   popularity: 9999,
 };
 
@@ -71,7 +103,9 @@ export const PRESETS: Preset[] = [
     category: "book",
     platform: "kdp",
     popularity: 95,
-    starting_scale: autoScale(1600, 2560),
+    starting_scale_small: autoScaleSmall(1600, 2560),
+    starting_scale_medium: autoScaleMedium(1600, 2560),
+    starting_scale_large: autoScaleLarge(1600, 2560),
     tags: ["ebook", "kindle"],
   },
   {
@@ -81,7 +115,9 @@ export const PRESETS: Preset[] = [
     height: 2400,
     category: "book",
     popularity: 80,
-    starting_scale: autoScale(1600, 2400),
+    starting_scale_small: autoScaleSmall(1600, 2400),
+    starting_scale_medium: autoScaleMedium(1600, 2400),
+    starting_scale_large: autoScaleLarge(1600, 2400),
   },
   {
     id: "kdp-6x9-paperback-front",
@@ -91,7 +127,9 @@ export const PRESETS: Preset[] = [
     dpi: 300,
     category: "book",
     popularity: 70,
-    starting_scale: autoScale(1800, 2700),
+    starting_scale_small: autoScaleSmall(1800, 2700),
+    starting_scale_medium: autoScaleMedium(1800, 2700),
+    starting_scale_large: autoScaleLarge(1800, 2700),
   },
   {
     id: "wattpad-512x800",
@@ -100,7 +138,9 @@ export const PRESETS: Preset[] = [
     height: 800,
     category: "book",
     platform: "wattpad",
-    starting_scale: autoScale(512, 800),
+    starting_scale_small: autoScaleSmall(512, 800),
+    starting_scale_medium: autoScaleMedium(512, 800),
+    starting_scale_large: autoScaleLarge(512, 800),
   },
   {
     id: "acx-3000x3000",
@@ -110,7 +150,9 @@ export const PRESETS: Preset[] = [
     category: "book",
     platform: "acx",
     popularity: 75,
-    starting_scale: autoScale(3000, 3000),
+    starting_scale_small: autoScaleSmall(3000, 3000),
+    starting_scale_medium: autoScaleMedium(3000, 3000),
+    starting_scale_large: autoScaleLarge(3000, 3000),
   },
 
   // ————— Music / Artwork —————
@@ -121,7 +163,9 @@ export const PRESETS: Preset[] = [
     height: 3000,
     category: "music",
     popularity: 90,
-    starting_scale: autoScale(3000, 3000),
+    starting_scale_small: autoScaleSmall(3000, 3000),
+    starting_scale_medium: autoScaleMedium(3000, 3000),
+    starting_scale_large: autoScaleLarge(3000, 3000),
   },
   {
     id: "vinyl-square-4k",
@@ -130,7 +174,9 @@ export const PRESETS: Preset[] = [
     height: 4000,
     category: "music",
     popularity: 70,
-    starting_scale: autoScale(4000, 4000),
+    starting_scale_small: autoScaleSmall(4000, 4000),
+    starting_scale_medium: autoScaleMedium(4000, 4000),
+    starting_scale_large: autoScaleLarge(4000, 4000),
   },
 
   // ————— Social: Instagram —————
@@ -142,7 +188,9 @@ export const PRESETS: Preset[] = [
     category: "social",
     platform: "instagram",
     popularity: 90,
-    starting_scale: autoScale(1080, 1350),
+    starting_scale_small: autoScaleSmall(1080, 1350),
+    starting_scale_medium: autoScaleMedium(1080, 1350),
+    starting_scale_large: autoScaleLarge(1080, 1350),
   },
   {
     id: "ig-feed-square-1080x1080",
@@ -152,7 +200,9 @@ export const PRESETS: Preset[] = [
     category: "social",
     platform: "instagram",
     popularity: 95,
-    starting_scale: autoScale(1080, 1080),
+    starting_scale_small: autoScaleSmall(1080, 1080),
+    starting_scale_medium: autoScaleMedium(1080, 1080),
+    starting_scale_large: autoScaleLarge(1080, 1080),
   },
   {
     id: "ig-feed-landscape-1080x566",
@@ -161,7 +211,9 @@ export const PRESETS: Preset[] = [
     height: 566,
     category: "social",
     platform: "instagram",
-    starting_scale: autoScale(1080, 566),
+    starting_scale_small: autoScaleSmall(1080, 566),
+    starting_scale_medium: autoScaleMedium(1080, 566),
+    starting_scale_large: autoScaleLarge(1080, 566),
   },
   {
     id: "ig-story-reel-1080x1920",
@@ -171,7 +223,9 @@ export const PRESETS: Preset[] = [
     category: "social",
     platform: "instagram",
     popularity: 85,
-    starting_scale: autoScale(1080, 1920),
+    starting_scale_small: autoScaleSmall(1080, 1920),
+    starting_scale_medium: autoScaleMedium(1080, 1920),
+    starting_scale_large: autoScaleLarge(1080, 1920),
   },
 
   // ————— Social: Facebook —————
@@ -182,7 +236,9 @@ export const PRESETS: Preset[] = [
     height: 1080,
     category: "social",
     platform: "facebook",
-    starting_scale: autoScale(1080, 1080),
+    starting_scale_small: autoScaleSmall(1080, 1080),
+    starting_scale_medium: autoScaleMedium(1080, 1080),
+    starting_scale_large: autoScaleLarge(1080, 1080),
   },
   {
     id: "fb-feed-1200x630",
@@ -191,7 +247,9 @@ export const PRESETS: Preset[] = [
     height: 630,
     category: "social",
     platform: "facebook",
-    starting_scale: autoScale(1200, 630),
+    starting_scale_small: autoScaleSmall(1200, 630),
+    starting_scale_medium: autoScaleMedium(1200, 630),
+    starting_scale_large: autoScaleLarge(1200, 630),
   },
   {
     id: "fb-story-1080x1920",
@@ -200,7 +258,9 @@ export const PRESETS: Preset[] = [
     height: 1920,
     category: "social",
     platform: "facebook",
-    starting_scale: autoScale(1080, 1920),
+    starting_scale_small: autoScaleSmall(1080, 1920),
+    starting_scale_medium: autoScaleMedium(1080, 1920),
+    starting_scale_large: autoScaleLarge(1080, 1920),
   },
   {
     id: "fb-cover-820x360",
@@ -209,7 +269,9 @@ export const PRESETS: Preset[] = [
     height: 360,
     category: "branding",
     platform: "facebook",
-    starting_scale: autoScale(820, 360),
+    starting_scale_small: autoScaleSmall(820, 360),
+    starting_scale_medium: autoScaleMedium(820, 360),
+    starting_scale_large: autoScaleLarge(820, 360),
   },
   {
     id: "fb-event-1920x1005",
@@ -218,7 +280,9 @@ export const PRESETS: Preset[] = [
     height: 1005,
     category: "branding",
     platform: "facebook",
-    starting_scale: autoScale(1920, 1005),
+    starting_scale_small: autoScaleSmall(1920, 1005),
+    starting_scale_medium: autoScaleMedium(1920, 1005),
+    starting_scale_large: autoScaleLarge(1920, 1005),
   },
 
   // ————— Social: X / Twitter —————
@@ -229,7 +293,9 @@ export const PRESETS: Preset[] = [
     height: 675,
     category: "social",
     platform: "x",
-    starting_scale: autoScale(1200, 675),
+    starting_scale_small: autoScaleSmall(1200, 675),
+    starting_scale_medium: autoScaleMedium(1200, 675),
+    starting_scale_large: autoScaleLarge(1200, 675),
   },
   {
     id: "x-header-1500x500",
@@ -238,7 +304,9 @@ export const PRESETS: Preset[] = [
     height: 500,
     category: "branding",
     platform: "x",
-    starting_scale: autoScale(1500, 500),
+    starting_scale_small: autoScaleSmall(1500, 500),
+    starting_scale_medium: autoScaleMedium(1500, 500),
+    starting_scale_large: autoScaleLarge(1500, 500),
   },
   {
     id: "x-avatar-400x400",
@@ -247,7 +315,9 @@ export const PRESETS: Preset[] = [
     height: 400,
     category: "branding",
     platform: "x",
-    starting_scale: autoScale(400, 400),
+    starting_scale_small: autoScaleSmall(400, 400),
+    starting_scale_medium: autoScaleMedium(400, 400),
+    starting_scale_large: autoScaleLarge(400, 400),
   },
 
   // ————— Social: LinkedIn —————
@@ -258,7 +328,9 @@ export const PRESETS: Preset[] = [
     height: 1350,
     category: "social",
     platform: "linkedin",
-    starting_scale: autoScale(1200, 1350),
+    starting_scale_small: autoScaleSmall(1200, 1350),
+    starting_scale_medium: autoScaleMedium(1200, 1350),
+    starting_scale_large: autoScaleLarge(1200, 1350),
   },
   {
     id: "li-linkshare-1200x627",
@@ -267,7 +339,9 @@ export const PRESETS: Preset[] = [
     height: 627,
     category: "social",
     platform: "linkedin",
-    starting_scale: autoScale(1200, 627),
+    starting_scale_small: autoScaleSmall(1200, 627),
+    starting_scale_medium: autoScaleMedium(1200, 627),
+    starting_scale_large: autoScaleLarge(1200, 627),
   },
   {
     id: "li-cover-personal-1584x396",
@@ -276,7 +350,9 @@ export const PRESETS: Preset[] = [
     height: 396,
     category: "branding",
     platform: "linkedin",
-    starting_scale: autoScale(1584, 396),
+    starting_scale_small: autoScaleSmall(1584, 396),
+    starting_scale_medium: autoScaleMedium(1584, 396),
+    starting_scale_large: autoScaleLarge(1584, 396),
   },
   {
     id: "li-cover-company-1128x191",
@@ -285,7 +361,9 @@ export const PRESETS: Preset[] = [
     height: 191,
     category: "branding",
     platform: "linkedin",
-    starting_scale: autoScale(1128, 191),
+    starting_scale_small: autoScaleSmall(1128, 191),
+    starting_scale_medium: autoScaleMedium(1128, 191),
+    starting_scale_large: autoScaleLarge(1128, 191),
   },
   {
     id: "li-logo-300x300",
@@ -294,7 +372,9 @@ export const PRESETS: Preset[] = [
     height: 300,
     category: "branding",
     platform: "linkedin",
-    starting_scale: autoScale(300, 300),
+    starting_scale_small: autoScaleSmall(300, 300),
+    starting_scale_medium: autoScaleMedium(300, 300),
+    starting_scale_large: autoScaleLarge(300, 300),
   },
 
   // ————— Social: YouTube —————
@@ -306,7 +386,9 @@ export const PRESETS: Preset[] = [
     category: "social",
     platform: "youtube",
     popularity: 90,
-    starting_scale: autoScale(1280, 720),
+    starting_scale_small: autoScaleSmall(1280, 720),
+    starting_scale_medium: autoScaleMedium(1280, 720),
+    starting_scale_large: autoScaleLarge(1280, 720),
   },
   {
     id: "yt-channel-2560x1440",
@@ -315,7 +397,9 @@ export const PRESETS: Preset[] = [
     height: 1440,
     category: "branding",
     platform: "youtube",
-    starting_scale: autoScale(2560, 1440),
+    starting_scale_small: autoScaleSmall(2560, 1440),
+    starting_scale_medium: autoScaleMedium(2560, 1440),
+    starting_scale_large: autoScaleLarge(2560, 1440),
   },
 
   // ————— Social: TikTok —————
@@ -326,7 +410,9 @@ export const PRESETS: Preset[] = [
     height: 1920,
     category: "social",
     platform: "tiktok",
-    starting_scale: autoScale(1080, 1920),
+    starting_scale_small: autoScaleSmall(1080, 1920),
+    starting_scale_medium: autoScaleMedium(1080, 1920),
+    starting_scale_large: autoScaleLarge(1080, 1920),
   },
 
   // ————— Social: Pinterest —————
@@ -337,7 +423,9 @@ export const PRESETS: Preset[] = [
     height: 1500,
     category: "social",
     platform: "pinterest",
-    starting_scale: autoScale(1000, 1500),
+    starting_scale_small: autoScaleSmall(1000, 1500),
+    starting_scale_medium: autoScaleMedium(1000, 1500),
+    starting_scale_large: autoScaleLarge(1000, 1500),
   },
   {
     id: "pin-square-1000x1000",
@@ -346,7 +434,9 @@ export const PRESETS: Preset[] = [
     height: 1000,
     category: "social",
     platform: "pinterest",
-    starting_scale: autoScale(1000, 1000),
+    starting_scale_small: autoScaleSmall(1000, 1000),
+    starting_scale_medium: autoScaleMedium(1000, 1000),
+    starting_scale_large: autoScaleLarge(1000, 1000),
   },
   {
     id: "pin-long-1000x2100",
@@ -355,7 +445,9 @@ export const PRESETS: Preset[] = [
     height: 2100,
     category: "social",
     platform: "pinterest",
-    starting_scale: autoScale(1000, 2100),
+    starting_scale_small: autoScaleSmall(1000, 2100),
+    starting_scale_medium: autoScaleMedium(1000, 2100),
+    starting_scale_large: autoScaleLarge(1000, 2100),
   },
 
   // ————— Product: Amazon —————
@@ -366,7 +458,9 @@ export const PRESETS: Preset[] = [
     height: 2000,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(2000, 2000),
+    starting_scale_small: autoScaleSmall(2000, 2000),
+    starting_scale_medium: autoScaleMedium(2000, 2000),
+    starting_scale_large: autoScaleLarge(2000, 2000),
   },
   {
     id: "amz-product-2560x2560",
@@ -375,7 +469,9 @@ export const PRESETS: Preset[] = [
     height: 2560,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(2560, 2560),
+    starting_scale_small: autoScaleSmall(2560, 2560),
+    starting_scale_medium: autoScaleMedium(2560, 2560),
+    starting_scale_large: autoScaleLarge(2560, 2560),
   },
   // A+ Content (common modules)
   {
@@ -385,7 +481,9 @@ export const PRESETS: Preset[] = [
     height: 300,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(970, 300),
+    starting_scale_small: autoScaleSmall(970, 300),
+    starting_scale_medium: autoScaleMedium(970, 300),
+    starting_scale_large: autoScaleLarge(970, 300),
   },
   {
     id: "amz-a-plus-premium-1464x600",
@@ -394,7 +492,9 @@ export const PRESETS: Preset[] = [
     height: 600,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(1464, 600),
+    starting_scale_small: autoScaleSmall(1464, 600),
+    starting_scale_medium: autoScaleMedium(1464, 600),
+    starting_scale_large: autoScaleLarge(1464, 600),
   },
   {
     id: "amz-brand-story-1464x625",
@@ -403,7 +503,9 @@ export const PRESETS: Preset[] = [
     height: 625,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(1464, 625),
+    starting_scale_small: autoScaleSmall(1464, 625),
+    starting_scale_medium: autoScaleMedium(1464, 625),
+    starting_scale_large: autoScaleLarge(1464, 625),
   },
   {
     id: "amz-brand-story-mobile-463x625",
@@ -412,7 +514,9 @@ export const PRESETS: Preset[] = [
     height: 625,
     category: "product",
     platform: "amazon",
-    starting_scale: autoScale(463, 625),
+    starting_scale_small: autoScaleSmall(463, 625),
+    starting_scale_medium: autoScaleMedium(463, 625),
+    starting_scale_large: autoScaleLarge(463, 625),
   },
   // Storefront
   {
@@ -422,7 +526,9 @@ export const PRESETS: Preset[] = [
     height: 600,
     category: "branding",
     platform: "amazon",
-    starting_scale: autoScale(3000, 600),
+    starting_scale_small: autoScaleSmall(3000, 600),
+    starting_scale_medium: autoScaleMedium(3000, 600),
+    starting_scale_large: autoScaleLarge(3000, 600),
   },
   {
     id: "amz-store-logo-400x400",
@@ -431,7 +537,9 @@ export const PRESETS: Preset[] = [
     height: 400,
     category: "branding",
     platform: "amazon",
-    starting_scale: autoScale(400, 400),
+    starting_scale_small: autoScaleSmall(400, 400),
+    starting_scale_medium: autoScaleMedium(400, 400),
+    starting_scale_large: autoScaleLarge(400, 400),
   },
 
   // ————— Product: Etsy / Shopify —————
@@ -442,7 +550,9 @@ export const PRESETS: Preset[] = [
     height: 2000,
     category: "product",
     platform: "etsy",
-    starting_scale: autoScale(2000, 2000),
+    starting_scale_small: autoScaleSmall(2000, 2000),
+    starting_scale_medium: autoScaleMedium(2000, 2000),
+    starting_scale_large: autoScaleLarge(2000, 2000),
   },
   {
     id: "shopify-product-2048x2048",
@@ -451,7 +561,9 @@ export const PRESETS: Preset[] = [
     height: 2048,
     category: "product",
     platform: "shopify",
-    starting_scale: autoScale(2048, 2048),
+    starting_scale_small: autoScaleSmall(2048, 2048),
+    starting_scale_medium: autoScaleMedium(2048, 2048),
+    starting_scale_large: autoScaleLarge(2048, 2048),
   },
 
   // ————— Ads: Google Display Network (static) —————
@@ -462,7 +574,9 @@ export const PRESETS: Preset[] = [
     height: 250,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(300, 250),
+    starting_scale_small: autoScaleSmall(300, 250),
+    starting_scale_medium: autoScaleMedium(300, 250),
+    starting_scale_large: autoScaleLarge(300, 250),
   },
   {
     id: "gads-336x280",
@@ -471,7 +585,9 @@ export const PRESETS: Preset[] = [
     height: 280,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(336, 280),
+    starting_scale_small: autoScaleSmall(336, 280),
+    starting_scale_medium: autoScaleMedium(336, 280),
+    starting_scale_large: autoScaleLarge(336, 280),
   },
   {
     id: "gads-728x90",
@@ -480,7 +596,9 @@ export const PRESETS: Preset[] = [
     height: 90,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(728, 90),
+    starting_scale_small: autoScaleSmall(728, 90),
+    starting_scale_medium: autoScaleMedium(728, 90),
+    starting_scale_large: autoScaleLarge(728, 90),
   },
   {
     id: "gads-970x250",
@@ -489,7 +607,9 @@ export const PRESETS: Preset[] = [
     height: 250,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(970, 250),
+    starting_scale_small: autoScaleSmall(970, 250),
+    starting_scale_medium: autoScaleMedium(970, 250),
+    starting_scale_large: autoScaleLarge(970, 250),
   },
   {
     id: "gads-300x600",
@@ -498,7 +618,9 @@ export const PRESETS: Preset[] = [
     height: 600,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(300, 600),
+    starting_scale_small: autoScaleSmall(300, 600),
+    starting_scale_medium: autoScaleMedium(300, 600),
+    starting_scale_large: autoScaleLarge(300, 600),
   },
   {
     id: "gads-160x600",
@@ -507,7 +629,9 @@ export const PRESETS: Preset[] = [
     height: 600,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(160, 600),
+    starting_scale_small: autoScaleSmall(160, 600),
+    starting_scale_medium: autoScaleMedium(160, 600),
+    starting_scale_large: autoScaleLarge(160, 600),
   },
   {
     id: "gads-320x100",
@@ -516,7 +640,9 @@ export const PRESETS: Preset[] = [
     height: 100,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(320, 100),
+    starting_scale_small: autoScaleSmall(320, 100),
+    starting_scale_medium: autoScaleMedium(320, 100),
+    starting_scale_large: autoScaleLarge(320, 100),
   },
   {
     id: "gads-468x60",
@@ -525,7 +651,9 @@ export const PRESETS: Preset[] = [
     height: 60,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(468, 60),
+    starting_scale_small: autoScaleSmall(468, 60),
+    starting_scale_medium: autoScaleMedium(468, 60),
+    starting_scale_large: autoScaleLarge(468, 60),
   },
   {
     id: "gads-250x250",
@@ -534,7 +662,9 @@ export const PRESETS: Preset[] = [
     height: 250,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(250, 250),
+    starting_scale_small: autoScaleSmall(250, 250),
+    starting_scale_medium: autoScaleMedium(250, 250),
+    starting_scale_large: autoScaleLarge(250, 250),
   },
   {
     id: "gads-200x200",
@@ -543,7 +673,9 @@ export const PRESETS: Preset[] = [
     height: 200,
     category: "ads",
     platform: "google",
-    starting_scale: autoScale(200, 200),
+    starting_scale_small: autoScaleSmall(200, 200),
+    starting_scale_medium: autoScaleMedium(200, 200),
+    starting_scale_large: autoScaleLarge(200, 200),
   },
 ];
 
@@ -566,8 +698,10 @@ export function defaultPresetForProjectType(projectType: string | undefined): Pr
     branding: (p) => p.category === "branding",
   };
   const key = (projectType ?? "").toLowerCase();
-  const predicate = map[key] ?? ((p: Preset) => p.category === "generic" || p.category === "social");
-  const candidates = PRESETS.filter(predicate).sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+  const predicate = map[key] ?? ((p) => p.category === "generic" || p.category === "social");
+  const candidates = PRESETS
+    .filter(predicate)
+    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
   return candidates[0] ?? PRESETS[0];
 }
 */

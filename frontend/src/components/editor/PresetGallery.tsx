@@ -105,9 +105,9 @@ export default function PresetGallery({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-3 flex flex-col gap-2 md:gap-6 sm:flex-row sm:items-center justify-center">
+      <div className="mb-3 flex gap-2 md:gap-6 sm:flex-row sm:items-center justify-center">
         <Input
-          placeholder='Search company or name (e.g. "Google", "Cover", "1200x628" in text is also fine)'
+          placeholder="Search..."
           value={q}
           onChange={(e) => {
             const v = e.target.value;
@@ -120,26 +120,22 @@ export default function PresetGallery({
               if (!Number.isNaN(H)) setH(H);
             }
           }}
-          className="max-w-96 rounded-full"
+          className="text-xs max-w-96 rounded-full h-7"
         />
-        <div className="flex items-center gap-2">
+        <div className="flex justify-center gap-2">
           <Input
-            type="number"
-            inputMode="numeric"
             placeholder="W"
             min={1}
             value={w}
             onChange={(e) => setW(e.target.value ? Number(e.target.value) : "")}
-            className="max-w-24 rounded-full text-center"
+            className="text-xs min-w-16 max-w-24 rounded-full text-center h-7"
           />
           <Input
-            type="number"
-            inputMode="numeric"
             placeholder="H"
             min={1}
             value={h}
             onChange={(e) => setH(e.target.value ? Number(e.target.value) : "")}
-            className="max-w-24 rounded-full text-center"
+            className="text-xs min-w-16 max-w-24 rounded-full text-center h-7"
           />
         </div>
       </div>
@@ -151,7 +147,7 @@ export default function PresetGallery({
               {company}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 sm:gap-4 px-2 xl:px-6">
+            <div className="pt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 sm:gap-4 px-2 xl:px-6">
               {items.map((p) => (
                 <Card
                   key={p.id}
@@ -168,11 +164,11 @@ export default function PresetGallery({
 
                     <div className="mt-auto pt-1">
                       <div className="mb-2 space-y-1">
-                        <div className="text-sm font-medium leading-tight">
+                        <div className="text-center text-xs sm:text-sm font-medium leading-tight">
                           {p.label}
                         </div>
                         <div className="text-[11px] sm:text-xs text-muted-foreground">
-                          {p.company ?? "Other"} • {p.width}×{p.height}
+                          {/* {p.company ?? "Other"} • {p.width}×{p.height} */}
                         </div>
                       </div>
 
