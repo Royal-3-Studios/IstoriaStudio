@@ -27,7 +27,6 @@ import EditBar from "@/components/editor/EditBar";
 import LeftPanel from "@/components/editor/LeftPanel";
 import RightPanel from "@/components/editor/RightPanel";
 import RightSidebar from "@/components/editor/RightSidebar";
-
 import { useCanvasSizing } from "@/app/projects/[projectId]/editor/hooks/useCanvasSizing";
 import { useFullscreen } from "@/app/projects/[projectId]/editor/hooks/useFullscreen";
 import LeftSidebar from "./LeftSidebar";
@@ -256,13 +255,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth < 1024) {
-      console.log("[editor] forcing leftMobileOpen true (debug)");
-      setLeftMobileOpen(true);
-    }
   }, []);
 
   const gridTemplateColumns = useMemo(() => {
@@ -651,7 +643,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
         {/* Custom overlay to dim/close (high z to beat page overlay) */}
         {leftMobileOpen && (
           <div
-            className="fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
+            className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
             onClick={() => setLeftMobileOpen(false)}
           />
         )}
@@ -663,7 +655,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
             setRightMobileOpen(false);
             setLeftMobileOpen(true);
           }}
-          className="lg:hidden absolute left-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
+          className="cursor-pointer lg:hidden absolute left-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
         >
           <PanelLeft className="h-4 w-4" />
         </button>
@@ -676,7 +668,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
             setLeftMobileOpen(false);
             setRightMobileOpen(true);
           }}
-          className="lg:hidden fixed right-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
+          className="cursor-pointer lg:hidden fixed right-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
         >
           <PanelRight className="h-4 w-4" />
         </button>
@@ -700,13 +692,13 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
       {/* === MOBILE: Right sheet (under lg) === */}
       <div className="lg:hidden">
         {rightMobileOpen && (
-          <div className="fixed top-2 right-2 z-[5000] rounded bg-blue-600 text-white text-xs px-2 py-1">
+          <div className="cursor-pointer fixed top-2 right-2 z-[5000] rounded bg-blue-600 text-white text-xs px-2 py-1">
             MOBILE RIGHT OPEN (debug)
           </div>
         )}
         {rightMobileOpen && (
           <div
-            className="fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
+            className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
             onClick={() => setRightMobileOpen(false)}
           />
         )}
@@ -728,9 +720,13 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
               }}
               onToggleVisibleAction={(id) => {
                 setHiddenIds((prev) => {
-                  const s = new Set(prev);
-                  s.has(id) ? s.delete(id) : s.add(id);
-                  return s;
+                  const next = new Set(prev);
+                  if (next.has(id)) {
+                    next.delete(id);
+                  } else {
+                    next.add(id);
+                  }
+                  return next;
                 });
               }}
             />
