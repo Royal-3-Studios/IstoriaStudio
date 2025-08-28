@@ -14,13 +14,9 @@ import {
   Percent,
 } from "lucide-react";
 
-// NEW: tooling imports
-import {
-  ToolsToolbar,
-  ToolOptionsDock,
-  type ToolId,
-  type ToolOptions,
-} from "@/components/editor/EditorTooling";
+import { ToolsToolbar } from "@/components/editor/tools/ToolsToolbar";
+import { ToolOptionsDock } from "@/components/editor/tools/ToolOptionsDock";
+import { useEditorTools } from "@/components/editor/context/EditorToolsProvider";
 
 type Props = {
   // zoomPercent multiplies your autoscale base (1 = fit)
@@ -29,8 +25,8 @@ type Props = {
   onZoomOutAction: () => void;
   onZoomToAction: (n: number) => void; // set zoomPercent directly (1.25 = 125%)
   onFitAction: () => void; // set zoomPercent = 1
-  onFill?: () => void; // optional: set zoomPercent to “fill” (if you compute it)
-  onResetToPreset?: () => void; // optional: use starting_scale
+  onFill?: () => void; // optional: set zoomPercent to “fill”
+  onResetToPreset?: () => void; // optional: use starting scale
   className?: string;
 };
 
@@ -48,23 +44,10 @@ export default function EditBar({
   onResetToPreset,
   className,
 }: Props) {
-  // ===== Tooling state =====
-  const [tool, setTool] = useState<ToolId | null>(null);
-  const [toolOpen, setToolOpen] = useState(false);
-  const [toolOpts, setToolOpts] = useState<Partial<ToolOptions>>({
-    stroke: "#ffffff",
-    strokeWidth: 8,
-    fill: "#000000",
-    opacity: 100,
-    blendMode: "normal",
-    fontFamily: "Inter",
-    fontSize: 24,
-    fontWeight: 600,
-    lineCap: "round",
-    lineJoin: "round",
-  });
+  // ===== Global tools state from provider =====
+  const { state, dispatch } = useEditorTools(); // { active, open, options }
 
-  // ===== Zoom state =====
+  // ===== Zoom state (your original) =====
   const pct = useMemo(() => Math.round(zoomPercent * 100), [zoomPercent]);
   const [inputPct, setInputPct] = useState(String(pct));
   useEffect(() => setInputPct(String(pct)), [pct]);
@@ -77,7 +60,7 @@ export default function EditBar({
     setInputPct(String(Math.round(clamped)));
   };
 
-  // Esc closes the floating dock; zoom shortcuts unchanged
+  // Shortcuts: Cmd/Ctrl +/- ; Cmd/Ctrl+0 fit ; Cmd/Ctrl+1 100% ; Esc closes dock
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -101,44 +84,41 @@ export default function EditBar({
         onZoomToAction(1);
         return;
       }
-      if (e.key === "Escape" && toolOpen) {
+      if (e.key === "Escape" && state.open) {
         e.preventDefault();
-        setToolOpen(false);
+        dispatch({ type: "CLOSE" });
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onZoomInAction, onZoomOutAction, onFitAction, onZoomToAction, toolOpen]);
+  }, [
+    onZoomInAction,
+    onZoomOutAction,
+    onFitAction,
+    onZoomToAction,
+    state.open,
+    dispatch,
+  ]);
 
-  // for optional click-away scrim sizing (not required)
+  // Positioning context for floating sheet
   const barWrapRef = useRef<HTMLDivElement | null>(null);
 
   return (
     <div
       className={[
-        "sticky top-0 z-[140] w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/70",
+        // solid (no translucency)
+        "sticky top-0 z-[140] w-full border-b bg-background",
         className || "",
       ].join(" ")}
     >
-      {/* Containing width + positioning context for the floating dock */}
+      {/* Width container + positioning for overlay */}
       <div className="mx-auto max-w-[1200px] px-3">
         <div ref={barWrapRef} className="relative">
           {/* ===== Top row: tools + zoom + actions ===== */}
           <div className="flex items-center gap-2 py-2">
-            {/* Tools toolbar (left) */}
-            <ToolsToolbar
-              tool={tool}
-              open={toolOpen}
-              onToggle={(id) => {
-                if (tool === id) {
-                  setToolOpen((o) => !o); // click same tool toggles dock
-                } else {
-                  setTool(id);
-                  setToolOpen(true);
-                }
-              }}
-              className="mr-2"
-            />
+            {/* Tools toolbar (left) — toggles handled in provider */}
+            <ToolsToolbar className="mr-2" />
 
             {/* Zoom controls */}
             <div className="flex items-center gap-1">
@@ -239,36 +219,37 @@ export default function EditBar({
               )}
             </div>
 
-            {/* Right side space for future toggles (snap/grid/guides etc.) */}
+            {/* Right-side space for future toggles (snap/grid/guides etc.) */}
             <div className="ml-auto flex items-center gap-2">{/* … */}</div>
           </div>
 
-          {/* ===== Floating Options Dock (OVERLAY) ===== */}
-          {toolOpen && tool && (
+          {/* ===== Floating Options Dock (OVERLAY, solid) ===== */}
+          {state.open && state.active && (
             <div className="absolute left-0 right-0 top-full mt-1 z-[150]">
               <ToolOptionsDock
-                open={true}
-                tool={tool}
-                options={toolOpts}
-                onChange={(patch) => setToolOpts((o) => ({ ...o, ...patch }))}
-                onClose={() => setToolOpen(false)}
-                // Optional callbacks for vector ops/alignment
+                open
+                tool={state.active}
+                options={state.options}
+                onChangeAction={(patch) =>
+                  dispatch({ type: "PATCH_OPTIONS", patch })
+                }
+                onCloseAction={() => dispatch({ type: "CLOSE" })}
+                // Optional callbacks if you need them later:
                 onBooleanOp={(op) => console.log("boolean op:", op)}
                 onPathAlign={(align) => console.log("align:", align)}
               />
             </div>
           )}
 
-          {/* (Optional) click-away scrim that only covers content under the dock.
-              If you want full-viewport click-away, replace with `fixed inset-0`
-              and compute a top offset. */}
-          {toolOpen && tool && (
+          {/* (Optional) click-away scrim below the dock, within the bar width.
+              Remove if you don't want click-away to close it. */}
+          {/* {state.open && state.active && (
             <div
               className="absolute left-0 right-0 top-[calc(100%+0.5rem)] bottom-[-2rem] z-[140]"
-              onClick={() => setToolOpen(false)}
+              onClick={() => dispatch({ type: "CLOSE" })}
               aria-hidden="true"
             />
-          )}
+          )} */}
         </div>
       </div>
     </div>

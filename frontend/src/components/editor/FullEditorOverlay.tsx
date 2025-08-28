@@ -30,6 +30,7 @@ import RightSidebar from "@/components/editor/RightSidebar";
 import { useCanvasSizing } from "@/app/projects/[projectId]/editor/hooks/useCanvasSizing";
 import { useFullscreen } from "@/app/projects/[projectId]/editor/hooks/useFullscreen";
 import LeftSidebar from "./LeftSidebar";
+import { EditorToolsProvider } from "./context/EditorToolsProvider";
 
 // Konva (client-only)
 const Stage = dynamic(
@@ -269,470 +270,477 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
   }, [isDesktop, leftOpen, rightOpen]);
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-[100] bg-background"
-      style={{ display: open ? "block" : "none" }}
-    >
-      {/* ==== Row 0: top info/actions ==== */}
-      <div className="h-10 border-b bg-background/95 px-3 sm:px-4 flex items-center justify-between">
-        <div className="text-xs sm:text-sm text-muted-foreground">
-          Editing:{" "}
-          <span className="text-foreground font-medium">
-            {preset.label ?? "Asset"}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* On lg: toggle sidebars in/out. On small: open mobile overlays */}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              isDesktop ? setLeftOpen((v) => !v) : setLeftMobileOpen(true)
-            }
-            title="Toggle left panel"
-          >
-            <PanelLeft className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              isDesktop ? setRightOpen((v) => !v) : setRightMobileOpen(true)
-            }
-            title="Toggle right panel"
-          >
-            <PanelRight className="h-3.5 w-3.5" />
-          </Button>
-
-          <Button
-            size="sm"
-            variant={hand ? "secondary" : "ghost"}
-            onClick={() => setHand((v) => !v)}
-            title={hand ? "Disable Hand" : "Enable Hand"}
-          >
-            <Hand className="h-3.5 w-3.5 mr-1.5" /> Hand
-          </Button>
-          <Button
-            size="sm"
-            variant={showGrid ? "secondary" : "ghost"}
-            onClick={() => setShowGrid((v) => !v)}
-            title="Toggle Grid"
-          >
-            <GridIcon className="h-4 w-4 mr-1.5" /> Grid
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={toggleFullscreen}
-            title={isFullscreen ? "Exit full screen" : "Full screen"}
-          >
-            {isFullscreen ? (
-              <>
-                <Minimize2 className="h-4 w-4 mr-1.5" /> Exit Full
-              </>
-            ) : (
-              <>
-                <Maximize2 className="h-4 w-4 mr-1.5" /> Full Screen
-              </>
-            )}
-          </Button>
-          {onAiVariant && (
+    <EditorToolsProvider>
+      <div
+        ref={overlayRef}
+        className="fixed inset-0 z-[100] bg-background"
+        style={{ display: open ? "block" : "none" }}
+      >
+        {/* ==== Row 0: top info/actions ==== */}
+        <div className="h-10 border-b bg-background/95 px-3 sm:px-4 flex items-center justify-between">
+          <div className="text-xs sm:text-sm text-muted-foreground">
+            Editing:{" "}
+            <span className="text-foreground font-medium">
+              {preset.label ?? "Asset"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* On lg: toggle sidebars in/out. On small: open mobile overlays */}
             <Button
               size="sm"
-              variant="outline"
-              onClick={onAiVariant}
-              title="Generate Variant (AI)"
+              variant="ghost"
+              onClick={() =>
+                isDesktop ? setLeftOpen((v) => !v) : setLeftMobileOpen(true)
+              }
+              title="Toggle left panel"
             >
-              <MagicIcon className="h-4 w-4 mr-1.5" /> AI Variant
+              <PanelLeft className="h-3.5 w-3.5" />
             </Button>
-          )}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={async () => {
-              await exitFullscreen();
-              onClose();
-            }}
-            title="Exit editor"
-          >
-            <ExitIcon className="h-4 w-4 mr-1.5" /> Exit
-          </Button>
-        </div>
-      </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                isDesktop ? setRightOpen((v) => !v) : setRightMobileOpen(true)
+              }
+              title="Toggle right panel"
+            >
+              <PanelRight className="h-3.5 w-3.5" />
+            </Button>
 
-      {/* ==== Row 1: EditBar (zoom/fit) ==== */}
-      <EditBar
-        zoomPercent={zoomPercent}
-        onZoomInAction={() =>
-          setZoomPercent((z) => Math.min(ZOOM_MAX, +(z * 1.1).toFixed(3)))
-        }
-        onZoomOutAction={() =>
-          setZoomPercent((z) => Math.max(ZOOM_MIN, +(z / 1.1).toFixed(3)))
-        }
-        onZoomToAction={(n) =>
-          setZoomPercent(() => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n)))
-        }
-        onFitAction={() => setZoomPercent(1)}
-        className="border-t-0"
-      />
-
-      {/* ==== Main area grid ==== */}
-      <div
-        className="w-full"
-        style={{
-          height: "calc(100vh - 5rem)", // 2.5rem top + 2.5rem editbar
-          display: "grid",
-          gridTemplateColumns: gridTemplateColumns,
-        }}
-      >
-        {/* ===== LEFT (desktop only) ===== */}
-        <div className="hidden lg:flex border-r bg-muted/20 relative overflow-visible transition-[width] duration-200 ease-in-out">
-          <LeftPanel
-            open={leftOpen}
-            onToggleAction={setLeftOpen}
-            assets={assets}
-            activeAssetId={activeAssetId}
-            onSelectAssetAction={onSelectAssetAction}
-            openWidth={LEFT_OPEN_WIDTH}
-            railWidth={LEFT_RAIL_WIDTH}
-          />
-        </div>
-
-        {/* ===== CENTER: Canvas bay ===== */}
-        <div className="relative min-w-0 min-h-0">
-          <div
-            ref={bayRef}
-            className={[
-              "flex h-full w-full items-center justify-center p-3 sm:p-4 md:p-6",
-              "overflow-auto",
-              "min-h-0 min-w-0",
-              hand ? "cursor-grab" : "",
-            ].join(" ")}
-            onMouseDown={onBayMouseDown}
-          >
-            <div className="relative w-full h-full min-w-0 min-h-0">
-              {/* Lightweight CSS rulers (top/left) */}
-              <div className="absolute left-6 top-0 right-0 h-6 z-20 pointer-events-none">
-                <div
-                  className="w-full h-full"
-                  style={{
-                    background:
-                      "repeating-linear-gradient(to right, rgba(0,0,0,0.12), rgba(0,0,0,0.12) 1px, transparent 1px, transparent 10px)",
-                  }}
-                />
-              </div>
-              <div className="absolute left-0 top-6 bottom-0 w-6 z-20 pointer-events-none">
-                <div
-                  className="w-full h-full"
-                  style={{
-                    background:
-                      "repeating-linear-gradient(to bottom, rgba(0,0,0,0.12), rgba(0,0,0,0.12) 1px, transparent 1px, transparent 10px)",
-                  }}
-                />
-              </div>
-
-              {/* Stage container inset to leave room for rulers */}
-              <div
-                ref={containerRef}
-                className="absolute inset-[24px_0_0_24px] flex items-center justify-center min-w-0 min-h-0"
+            <Button
+              size="sm"
+              variant={hand ? "secondary" : "ghost"}
+              onClick={() => setHand((v) => !v)}
+              title={hand ? "Disable Hand" : "Enable Hand"}
+            >
+              <Hand className="h-3.5 w-3.5 mr-1.5" /> Hand
+            </Button>
+            <Button
+              size="sm"
+              variant={showGrid ? "secondary" : "ghost"}
+              onClick={() => setShowGrid((v) => !v)}
+              title="Toggle Grid"
+            >
+              <GridIcon className="h-4 w-4 mr-1.5" /> Grid
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit full screen" : "Full screen"}
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="h-4 w-4 mr-1.5" /> Exit Full
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="h-4 w-4 mr-1.5" /> Full Screen
+                </>
+              )}
+            </Button>
+            {onAiVariant && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onAiVariant}
+                title="Generate Variant (AI)"
               >
+                <MagicIcon className="h-4 w-4 mr-1.5" /> AI Variant
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={async () => {
+                await exitFullscreen();
+                onClose();
+              }}
+              title="Exit editor"
+            >
+              <ExitIcon className="h-4 w-4 mr-1.5" /> Exit
+            </Button>
+          </div>
+        </div>
+
+        {/* ==== Row 1: EditBar (zoom/fit) ==== */}
+        <EditBar
+          zoomPercent={zoomPercent}
+          onZoomInAction={() =>
+            setZoomPercent((z) => Math.min(ZOOM_MAX, +(z * 1.1).toFixed(3)))
+          }
+          onZoomOutAction={() =>
+            setZoomPercent((z) => Math.max(ZOOM_MIN, +(z / 1.1).toFixed(3)))
+          }
+          onZoomToAction={(n) =>
+            setZoomPercent(() => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, n)))
+          }
+          onFitAction={() => setZoomPercent(1)}
+          className="border-t-0"
+        />
+
+        {/* ==== Main area grid ==== */}
+        <div
+          className="w-full"
+          style={{
+            height: "calc(100vh - 5rem)", // 2.5rem top + 2.5rem editbar
+            display: "grid",
+            gridTemplateColumns: gridTemplateColumns,
+          }}
+        >
+          {/* ===== LEFT (desktop only) ===== */}
+          <div className="hidden lg:flex border-r bg-muted/20 relative overflow-visible transition-[width] duration-200 ease-in-out">
+            <LeftPanel
+              open={leftOpen}
+              onToggleAction={setLeftOpen}
+              assets={assets}
+              activeAssetId={activeAssetId}
+              onSelectAssetAction={onSelectAssetAction}
+              openWidth={LEFT_OPEN_WIDTH}
+              railWidth={LEFT_RAIL_WIDTH}
+            />
+          </div>
+
+          {/* ===== CENTER: Canvas bay ===== */}
+          <div className="relative min-w-0 min-h-0">
+            <div
+              ref={bayRef}
+              className={[
+                "flex h-full w-full items-center justify-center p-3 sm:p-4 md:p-6",
+                "overflow-auto",
+                "min-h-0 min-w-0",
+                hand ? "cursor-grab" : "",
+              ].join(" ")}
+              onMouseDown={onBayMouseDown}
+            >
+              <div className="relative w-full h-full min-w-0 min-h-0">
+                {/* Lightweight CSS rulers (top/left) */}
+                <div className="absolute left-6 top-0 right-0 h-6 z-20 pointer-events-none">
+                  <div
+                    className="w-full h-full"
+                    style={{
+                      background:
+                        "repeating-linear-gradient(to right, rgba(0,0,0,0.12), rgba(0,0,0,0.12) 1px, transparent 1px, transparent 10px)",
+                    }}
+                  />
+                </div>
+                <div className="absolute left-0 top-6 bottom-0 w-6 z-20 pointer-events-none">
+                  <div
+                    className="w-full h-full"
+                    style={{
+                      background:
+                        "repeating-linear-gradient(to bottom, rgba(0,0,0,0.12), rgba(0,0,0,0.12) 1px, transparent 1px, transparent 10px)",
+                    }}
+                  />
+                </div>
+
+                {/* Stage container inset to leave room for rulers */}
                 <div
-                  className="inline-block border rounded-sm shadow-sm bg-neutral-900 relative"
-                  style={{
-                    lineHeight: 0,
-                    width: stageWidth,
-                    height: stageHeight,
-                  }}
+                  ref={containerRef}
+                  className="absolute inset-[24px_0_0_24px] flex items-center justify-center min-w-0 min-h-0"
                 >
-                  {/* Optional grid overlay (CSS) */}
-                  {showGrid && (
-                    <div
-                      className="absolute inset-0 pointer-events-none"
-                      style={{
-                        backgroundImage: `
+                  <div
+                    className="inline-block border rounded-sm shadow-sm bg-neutral-900 relative"
+                    style={{
+                      lineHeight: 0,
+                      width: stageWidth,
+                      height: stageHeight,
+                    }}
+                  >
+                    {/* Optional grid overlay (CSS) */}
+                    {showGrid && (
+                      <div
+                        className="absolute inset-0 pointer-events-none"
+                        style={{
+                          backgroundImage: `
                           linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
                           linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)
                         `,
-                        backgroundSize: `${Math.max(
-                          8,
-                          Math.round(50 * totalScale)
-                        )}px ${Math.max(8, Math.round(50 * totalScale))}px`,
+                          backgroundSize: `${Math.max(
+                            8,
+                            Math.round(50 * totalScale)
+                          )}px ${Math.max(8, Math.round(50 * totalScale))}px`,
+                        }}
+                      />
+                    )}
+
+                    {/* Konva Stage */}
+                    <Stage
+                      width={stageWidth}
+                      height={stageHeight}
+                      ref={stageRef}
+                      onMouseDown={(e) => {
+                        if (e.target === e.target.getStage())
+                          setSelectedId(null);
                       }}
-                    />
-                  )}
-
-                  {/* Konva Stage */}
-                  <Stage
-                    width={stageWidth}
-                    height={stageHeight}
-                    ref={stageRef}
-                    onMouseDown={(e) => {
-                      if (e.target === e.target.getStage()) setSelectedId(null);
-                    }}
-                    onTap={(e) => {
-                      if (e.target === e.target.getStage()) setSelectedId(null);
-                    }}
-                  >
-                    <Layer scaleX={totalScale} scaleY={totalScale}>
-                      {/* Frame */}
-                      <Rect
-                        x={0}
-                        y={0}
-                        width={preset.width || 1}
-                        height={preset.height || 1}
-                        fill={canvasBg === "white" ? "#fff" : "#000"}
-                        listening={false}
-                      />
-
-                      {/* Background image (respect hidden) */}
-                      {imageElement && !hiddenIds.has("bg") && (
-                        <KonvaImage
-                          id="bg"
-                          image={imageElement}
-                          x={imageOffsetX}
-                          y={imageOffsetY}
-                          scaleX={imageScale}
-                          scaleY={imageScale}
-                          draggable
-                          onClick={() => setSelectedId("bg")}
-                          onTap={() => setSelectedId("bg")}
-                          onDragEnd={(e) => {
-                            setImageOffsetX(e.target.x());
-                            setImageOffsetY(e.target.y());
-                          }}
+                      onTap={(e) => {
+                        if (e.target === e.target.getStage())
+                          setSelectedId(null);
+                      }}
+                    >
+                      <Layer scaleX={totalScale} scaleY={totalScale}>
+                        {/* Frame */}
+                        <Rect
+                          x={0}
+                          y={0}
+                          width={preset.width || 1}
+                          height={preset.height || 1}
+                          fill={canvasBg === "white" ? "#fff" : "#000"}
+                          listening={false}
                         />
-                      )}
 
-                      {/* Boxes */}
-                      {boxes.map((b) =>
-                        hiddenIds.has(b.id) ? null : (
-                          <Rect
-                            key={b.id}
-                            id={b.id}
-                            x={b.x}
-                            y={b.y}
-                            width={b.w}
-                            height={b.h}
-                            fill="#00000088"
-                            stroke="#ffffff"
-                            strokeWidth={2}
+                        {/* Background image (respect hidden) */}
+                        {imageElement && !hiddenIds.has("bg") && (
+                          <KonvaImage
+                            id="bg"
+                            image={imageElement}
+                            x={imageOffsetX}
+                            y={imageOffsetY}
+                            scaleX={imageScale}
+                            scaleY={imageScale}
                             draggable
-                            onClick={() => setSelectedId(b.id)}
-                            onTap={() => setSelectedId(b.id)}
+                            onClick={() => setSelectedId("bg")}
+                            onTap={() => setSelectedId("bg")}
                             onDragEnd={(e) => {
-                              const { x, y } = e.target.position();
-                              setBoxes((arr) =>
-                                arr.map((it) =>
-                                  it.id === b.id ? { ...it, x, y } : it
-                                )
-                              );
-                            }}
-                            onTransformEnd={(
-                              e: Konva.KonvaEventObject<Event>
-                            ) => {
-                              const node = e.target;
-                              const scaleX = node.scaleX();
-                              const scaleY = node.scaleY();
-                              node.scaleX(1);
-                              node.scaleY(1);
-                              setBoxes((arr) =>
-                                arr.map((it) =>
-                                  it.id === b.id
-                                    ? {
-                                        ...it,
-                                        x: node.x(),
-                                        y: node.y(),
-                                        w: Math.max(2, b.w * scaleX),
-                                        h: Math.max(2, b.h * scaleY),
-                                      }
-                                    : it
-                                )
-                              );
+                              setImageOffsetX(e.target.x());
+                              setImageOffsetY(e.target.y());
                             }}
                           />
-                        )
-                      )}
+                        )}
 
-                      {/* Texts */}
-                      {texts.map((t) =>
-                        hiddenIds.has(t.id) ? null : (
-                          <KonvaText
-                            key={t.id}
-                            id={t.id}
-                            text={t.text}
-                            fill="#ffffff"
-                            fontSize={t.size}
-                            x={t.x}
-                            y={t.y}
-                            draggable
-                            onClick={() => setSelectedId(t.id)}
-                            onTap={() => setSelectedId(t.id)}
-                            onDragEnd={(e) => {
-                              const { x, y } = e.target.position();
-                              setTexts((arr) =>
-                                arr.map((it) =>
-                                  it.id === t.id ? { ...it, x, y } : it
-                                )
-                              );
-                            }}
-                            onTransformEnd={(
-                              e: Konva.KonvaEventObject<Event>
-                            ) => {
-                              const node = e.target;
-                              const scaleY = node.scaleY();
-                              node.scaleY(1);
-                              const nextSize = Math.max(
-                                4,
-                                Math.round(t.size * scaleY)
-                              );
-                              setTexts((arr) =>
-                                arr.map((it) =>
-                                  it.id === t.id
-                                    ? { ...it, size: nextSize }
-                                    : it
-                                )
-                              );
-                            }}
-                          />
-                        )
-                      )}
+                        {/* Boxes */}
+                        {boxes.map((b) =>
+                          hiddenIds.has(b.id) ? null : (
+                            <Rect
+                              key={b.id}
+                              id={b.id}
+                              x={b.x}
+                              y={b.y}
+                              width={b.w}
+                              height={b.h}
+                              fill="#00000088"
+                              stroke="#ffffff"
+                              strokeWidth={2}
+                              draggable
+                              onClick={() => setSelectedId(b.id)}
+                              onTap={() => setSelectedId(b.id)}
+                              onDragEnd={(e) => {
+                                const { x, y } = e.target.position();
+                                setBoxes((arr) =>
+                                  arr.map((it) =>
+                                    it.id === b.id ? { ...it, x, y } : it
+                                  )
+                                );
+                              }}
+                              onTransformEnd={(
+                                e: Konva.KonvaEventObject<Event>
+                              ) => {
+                                const node = e.target;
+                                const scaleX = node.scaleX();
+                                const scaleY = node.scaleY();
+                                node.scaleX(1);
+                                node.scaleY(1);
+                                setBoxes((arr) =>
+                                  arr.map((it) =>
+                                    it.id === b.id
+                                      ? {
+                                          ...it,
+                                          x: node.x(),
+                                          y: node.y(),
+                                          w: Math.max(2, b.w * scaleX),
+                                          h: Math.max(2, b.h * scaleY),
+                                        }
+                                      : it
+                                  )
+                                );
+                              }}
+                            />
+                          )
+                        )}
 
-                      {/* Transformer */}
-                      <Transformer
-                        ref={transformerRef}
-                        rotateEnabled
-                        keepRatio
-                      />
-                    </Layer>
-                  </Stage>
+                        {/* Texts */}
+                        {texts.map((t) =>
+                          hiddenIds.has(t.id) ? null : (
+                            <KonvaText
+                              key={t.id}
+                              id={t.id}
+                              text={t.text}
+                              fill="#ffffff"
+                              fontSize={t.size}
+                              x={t.x}
+                              y={t.y}
+                              draggable
+                              onClick={() => setSelectedId(t.id)}
+                              onTap={() => setSelectedId(t.id)}
+                              onDragEnd={(e) => {
+                                const { x, y } = e.target.position();
+                                setTexts((arr) =>
+                                  arr.map((it) =>
+                                    it.id === t.id ? { ...it, x, y } : it
+                                  )
+                                );
+                              }}
+                              onTransformEnd={(
+                                e: Konva.KonvaEventObject<Event>
+                              ) => {
+                                const node = e.target;
+                                const scaleY = node.scaleY();
+                                node.scaleY(1);
+                                const nextSize = Math.max(
+                                  4,
+                                  Math.round(t.size * scaleY)
+                                );
+                                setTexts((arr) =>
+                                  arr.map((it) =>
+                                    it.id === t.id
+                                      ? { ...it, size: nextSize }
+                                      : it
+                                  )
+                                );
+                              }}
+                            />
+                          )
+                        )}
+
+                        {/* Transformer */}
+                        <Transformer
+                          ref={transformerRef}
+                          rotateEnabled
+                          keepRatio
+                        />
+                      </Layer>
+                    </Stage>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* ===== RIGHT (desktop only) ===== */}
-        <div className="hidden lg:flex border-l bg-muted/10 relative overflow-visible transition-[width] duration-200 ease-in-out">
-          <RightPanel
-            open={rightOpen}
-            onToggleAction={setRightOpen}
-            width={RIGHT_OPEN_WIDTH}
-            railWidth={RIGHT_RAIL_WIDTH}
-          >
-            <RightSidebar
-              layers={layers}
-              hidden={hiddenIds}
-              selectedId={selectedId}
-              onSelectAction={setSelectedId}
-              onToggleVisibleAction={(id) =>
-                setHiddenIds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  return next;
-                })
-              }
-            />
-          </RightPanel>
-        </div>
-      </div>
-
-      {/* === MOBILE: Left sheet (under lg) === */}
-      <div className="lg:hidden">
-        {/* Custom overlay to dim/close (high z to beat page overlay) */}
-        {leftMobileOpen && (
-          <div
-            className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
-            onClick={() => setLeftMobileOpen(false)}
-          />
-        )}
-        <button
-          type="button"
-          title="Open left panel"
-          aria-label="Open left panel"
-          onClick={() => {
-            setRightMobileOpen(false);
-            setLeftMobileOpen(true);
-          }}
-          className="cursor-pointer lg:hidden absolute left-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
-        >
-          <PanelLeft className="h-4 w-4" />
-        </button>
-
-        <button
-          type="button"
-          title="Open right panel"
-          aria-label="Open right panel"
-          onClick={() => {
-            setLeftMobileOpen(false);
-            setRightMobileOpen(true);
-          }}
-          className="cursor-pointer lg:hidden fixed right-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
-        >
-          <PanelRight className="h-4 w-4" />
-        </button>
-        <Sheet open={leftMobileOpen} onOpenChange={setLeftMobileOpen}>
-          <SheetContent side="left" className="z-[1000] p-0 w-[85vw] max-w-sm">
-            <SheetHeader className="sr-only">
-              <SheetTitle>Left panel</SheetTitle>
-            </SheetHeader>
-            <LeftSidebar
-              assets={assets}
-              activeAssetId={activeAssetId ?? undefined}
-              onSelectAction={(id) => {
-                onSelectAssetAction?.(id);
-                setLeftMobileOpen(false);
-              }}
-            />
-          </SheetContent>
-        </Sheet>
-      </div>
-
-      {/* === MOBILE: Right sheet (under lg) === */}
-      <div className="lg:hidden">
-        {rightMobileOpen && (
-          <div className="cursor-pointer fixed top-2 right-2 z-[5000] rounded bg-blue-600 text-white text-xs px-2 py-1">
-            MOBILE RIGHT OPEN (debug)
+          {/* ===== RIGHT (desktop only) ===== */}
+          <div className="hidden lg:flex border-l bg-muted/10 relative overflow-visible transition-[width] duration-200 ease-in-out">
+            <RightPanel
+              open={rightOpen}
+              onToggleAction={setRightOpen}
+              width={RIGHT_OPEN_WIDTH}
+              railWidth={RIGHT_RAIL_WIDTH}
+            >
+              <RightSidebar
+                layers={layers}
+                hidden={hiddenIds}
+                selectedId={selectedId}
+                onSelectAction={setSelectedId}
+                onToggleVisibleAction={(id) =>
+                  setHiddenIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  })
+                }
+              />
+            </RightPanel>
           </div>
-        )}
-        {rightMobileOpen && (
-          <div
-            className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
-            onClick={() => setRightMobileOpen(false)}
-          />
-        )}
-        <Sheet open={rightMobileOpen} onOpenChange={setRightMobileOpen}>
-          <SheetContent
-            side="right"
-            className="z-[1000] p-0 w-[90vw] max-w-md border-blue-500"
-          >
-            <SheetHeader className="sr-only">
-              <SheetTitle>Right panel</SheetTitle>
-            </SheetHeader>
-            <RightSidebar
-              layers={layers}
-              hidden={hiddenIds}
-              selectedId={selectedId ?? null}
-              onSelectAction={(id) => {
-                setSelectedId(id);
-                setRightMobileOpen(false);
-              }}
-              onToggleVisibleAction={(id) => {
-                setHiddenIds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(id)) {
-                    next.delete(id);
-                  } else {
-                    next.add(id);
-                  }
-                  return next;
-                });
-              }}
+        </div>
+
+        {/* === MOBILE: Left sheet (under lg) === */}
+        <div className="lg:hidden">
+          {/* Custom overlay to dim/close (high z to beat page overlay) */}
+          {leftMobileOpen && (
+            <div
+              className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
+              onClick={() => setLeftMobileOpen(false)}
             />
-          </SheetContent>
-        </Sheet>
+          )}
+          <button
+            type="button"
+            title="Open left panel"
+            aria-label="Open left panel"
+            onClick={() => {
+              setRightMobileOpen(false);
+              setLeftMobileOpen(true);
+            }}
+            className="cursor-pointer lg:hidden absolute left-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
+          >
+            <PanelLeft className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            title="Open right panel"
+            aria-label="Open right panel"
+            onClick={() => {
+              setLeftMobileOpen(false);
+              setRightMobileOpen(true);
+            }}
+            className="cursor-pointer lg:hidden fixed right-1 top-28 -translate-y-1/2 z-[1200] rounded-md border bg-background shadow px-1.5 py-1 hover:bg-muted"
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+          <Sheet open={leftMobileOpen} onOpenChange={setLeftMobileOpen}>
+            <SheetContent
+              side="left"
+              className="z-[1000] p-0 w-[85vw] max-w-sm"
+            >
+              <SheetHeader className="sr-only">
+                <SheetTitle>Left panel</SheetTitle>
+              </SheetHeader>
+              <LeftSidebar
+                assets={assets}
+                activeAssetId={activeAssetId ?? undefined}
+                onSelectAction={(id) => {
+                  onSelectAssetAction?.(id);
+                  setLeftMobileOpen(false);
+                }}
+              />
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {/* === MOBILE: Right sheet (under lg) === */}
+        <div className="lg:hidden">
+          {rightMobileOpen && (
+            <div className="cursor-pointer fixed top-2 right-2 z-[5000] rounded bg-blue-600 text-white text-xs px-2 py-1">
+              MOBILE RIGHT OPEN (debug)
+            </div>
+          )}
+          {rightMobileOpen && (
+            <div
+              className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
+              onClick={() => setRightMobileOpen(false)}
+            />
+          )}
+          <Sheet open={rightMobileOpen} onOpenChange={setRightMobileOpen}>
+            <SheetContent
+              side="right"
+              className="z-[1000] p-0 w-[90vw] max-w-md border-blue-500"
+            >
+              <SheetHeader className="sr-only">
+                <SheetTitle>Right panel</SheetTitle>
+              </SheetHeader>
+              <RightSidebar
+                layers={layers}
+                hidden={hiddenIds}
+                selectedId={selectedId ?? null}
+                onSelectAction={(id) => {
+                  setSelectedId(id);
+                  setRightMobileOpen(false);
+                }}
+                onToggleVisibleAction={(id) => {
+                  setHiddenIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) {
+                      next.delete(id);
+                    } else {
+                      next.add(id);
+                    }
+                    return next;
+                  });
+                }}
+              />
+            </SheetContent>
+          </Sheet>
+        </div>
       </div>
-    </div>
+    </EditorToolsProvider>
   );
 }
