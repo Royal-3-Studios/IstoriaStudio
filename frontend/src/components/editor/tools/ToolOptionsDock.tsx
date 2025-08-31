@@ -43,7 +43,7 @@ export function ToolOptionsDock({
       ].join(" ")}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b">
+      {/* <div className="flex items-center gap-2 px-3 py-2 border-b">
         <span className="text-xs font-medium text-muted-foreground">
           {label} optionsss
         </span>
@@ -58,10 +58,10 @@ export function ToolOptionsDock({
         >
           <X className="h-4 w-4" />
         </Button>
-      </div>
+      </div> */}
 
       {/* Body: route to per-tool options */}
-      <div className="px-3 py-2">
+      <div className="px-2 py-1 max-w-765">
         {tool === "brush" && (
           <BrushOptions options={options} onChangeAction={onChangeAction} />
         )}
