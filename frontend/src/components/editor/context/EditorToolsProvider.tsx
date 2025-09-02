@@ -28,8 +28,17 @@ function reducer(state: ToolsState, action: ToolsAction): ToolsState {
     }
     case "CLOSE":
       return { ...state, open: false };
-    case "PATCH_OPTIONS":
-      return { ...state, options: { ...state.options, ...action.patch } };
+      type Opts = Partial<ToolOptions>;
+
+    case "PATCH_OPTIONS": {
+      const next: Opts = { ...state.options, ...action.patch };
+      const changed = (Object.keys(action.patch) as (keyof ToolOptions)[]).some(
+        (k) => next[k] !== state.options?.[k]
+      );
+      if (!changed) return state;
+      return { ...state, options: next };
+    }
+
     default:
       return state;
   }

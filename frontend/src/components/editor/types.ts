@@ -66,4 +66,5 @@ export interface ToolOptions {
   alpha?: number; // 0-100
   pressure?: boolean; // pressure sensitivity
   smoothing?: number; // 0-100 path smoothing
+  brushId?: string;
 }

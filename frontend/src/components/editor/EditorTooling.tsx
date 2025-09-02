@@ -19,7 +19,7 @@ import {
   Palette,
   X,
 } from "lucide-react";
-
+import type { ToolOptions } from "@/components/editor/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -64,26 +64,6 @@ export type PathAlign =
   | "top"
   | "middle"
   | "bottom";
-
-export interface ToolOptions {
-  // common
-  stroke?: string; // hex or rgba
-  strokeWidth?: number; // px
-  strokeStyle?: StrokeStyle;
-  fill?: string; // hex or rgba
-  opacity?: number; // 0..100
-  blendMode?: BlendMode;
-
-  // text
-  fontFamily?: string;
-  fontSize?: number; // px
-  fontWeight?: number; // 100..900
-  textAlign?: TextAlignX;
-
-  // path/line
-  lineCap?: LineCap;
-  lineJoin?: LineJoin;
-}
 
 /* =============================================================
    Icons + metadata
@@ -134,14 +114,14 @@ export const getToolLabel = (id: ToolId | null) =>
 export function ToolsToolbar({
   tool,
   open,
-  onToggle,
+  onToggleAction,
   orientation = "horizontal",
   compact = false,
   className,
 }: {
   tool: ToolId | null;
   open: boolean;
-  onToggle: (next: ToolId) => void; // clicking same tool toggles dock open/close
+  onToggleAction: (next: ToolId) => void; // clicking same tool toggles dock open/close
   orientation?: "horizontal" | "vertical";
   compact?: boolean;
   className?: string;
@@ -168,7 +148,7 @@ export function ToolsToolbar({
             aria-pressed={active}
             aria-expanded={active ? open : false}
             title={label}
-            onClick={() => onToggle(id)}
+            onClick={() => onToggleAction(id)}
             className={(compact ? "h-8 w-8" : "h-9 w-9") + " cursor-pointer"}
           >
             <Icon className={compact ? "h-4 w-4" : "h-5 w-5"} />
@@ -186,8 +166,8 @@ export function ToolOptionsDock({
   open,
   tool,
   options,
-  onChange,
-  onClose,
+  onChangeAction,
+  onCloseAction,
   onBooleanOp,
   onPathAlign,
   className,
@@ -195,8 +175,8 @@ export function ToolOptionsDock({
   open: boolean;
   tool: ToolId | null;
   options: Partial<ToolOptions>;
-  onChange: (patch: Partial<ToolOptions>) => void;
-  onClose: () => void;
+  onChangeAction: (patch: Partial<ToolOptions>) => void;
+  onCloseAction: () => void;
   onBooleanOp?: (op: BooleanOp) => void;
   onPathAlign?: (align: PathAlign) => void;
   className?: string;
@@ -242,7 +222,7 @@ export function ToolOptionsDock({
           <Button
             size="icon"
             variant="ghost"
-            onClick={onClose}
+            onClick={onCloseAction}
             className="h-8 w-8 cursor-pointer"
             aria-label="Close tool options"
             title="Close"
@@ -257,7 +237,7 @@ export function ToolOptionsDock({
         <ToolOptionsBar
           tool={tool}
           options={options}
-          onChange={onChange}
+          onChangeAction={onChangeAction}
           onBooleanOp={onBooleanOp}
           onPathAlign={onPathAlign}
         />
@@ -272,14 +252,14 @@ export function ToolOptionsDock({
 export function ToolOptionsBar({
   tool,
   options,
-  onChange,
+  onChangeAction,
   onBooleanOp,
   onPathAlign,
   className,
 }: {
   tool: ToolId;
   options: Partial<ToolOptions>;
-  onChange: (patch: Partial<ToolOptions>) => void;
+  onChangeAction: (patch: Partial<ToolOptions>) => void;
   onBooleanOp?: (op: BooleanOp) => void;
   onPathAlign?: (align: PathAlign) => void;
   className?: string;
@@ -295,7 +275,7 @@ export function ToolOptionsBar({
         <Block title="Stroke">
           <ColorField
             value={options.stroke ?? "#ffffff"}
-            onChange={(v) => onChange({ stroke: v })}
+            onChangeAction={(v) => onChangeAction({ stroke: v })}
           />
           <NumberField
             label="W"
@@ -303,13 +283,15 @@ export function ToolOptionsBar({
             min={0}
             max={200}
             step={1}
-            onChange={(n) => onChange({ strokeWidth: n })}
+            onChangeAction={(n) => onChangeAction({ strokeWidth: n })}
             className="w-20"
           />
           <SelectField
             label="Style"
             value={options.strokeStyle ?? "solid"}
-            onChange={(v) => onChange({ strokeStyle: v as StrokeStyle })}
+            onChangeAction={(v) =>
+              onChangeAction({ strokeStyle: v as StrokeStyle })
+            }
             options={[
               { label: "Solid", value: "solid" },
               { label: "Dashed", value: "dashed" },
@@ -323,7 +305,7 @@ export function ToolOptionsBar({
         <Block title="Fill">
           <ColorField
             value={options.fill ?? "#000000"}
-            onChange={(v) => onChange({ fill: v })}
+            onChangeAction={(v) => onChangeAction({ fill: v })}
           />
         </Block>
       )}
@@ -335,7 +317,7 @@ export function ToolOptionsBar({
             min={0}
             max={100}
             step={1}
-            onChange={(n) => onChange({ opacity: n })}
+            onChangeAction={(n) => onChangeAction({ opacity: n })}
             className="w-32"
           />
         </Block>
@@ -345,7 +327,9 @@ export function ToolOptionsBar({
         <Block title="Blend">
           <SelectField
             value={options.blendMode ?? "normal"}
-            onChange={(v) => onChange({ blendMode: v as BlendMode })}
+            onChangeAction={(v) =>
+              onChangeAction({ blendMode: v as BlendMode })
+            }
             options={[
               { label: "Normal", value: "normal" },
               { label: "Multiply", value: "multiply" },
@@ -365,7 +349,7 @@ export function ToolOptionsBar({
             <Input
               placeholder="Font family"
               value={options.fontFamily ?? "Inter"}
-              onChange={(e) => onChange({ fontFamily: e.target.value })}
+              onChange={(e) => onChangeAction({ fontFamily: e.target.value })}
               className="h-8 w-40"
             />
             <NumberField
@@ -374,7 +358,7 @@ export function ToolOptionsBar({
               min={4}
               max={512}
               step={1}
-              onChange={(n) => onChange({ fontSize: n })}
+              onChangeAction={(n) => onChangeAction({ fontSize: n })}
               className="w-24"
             />
             <NumberField
@@ -383,14 +367,16 @@ export function ToolOptionsBar({
               min={100}
               max={900}
               step={100}
-              onChange={(n) => onChange({ fontWeight: n })}
+              onChangeAction={(n) => onChangeAction({ fontWeight: n })}
               className="w-28"
             />
           </Block>
           <Block title="Align">
             <SelectField
               value={options.textAlign ?? "left"}
-              onChange={(v) => onChange({ textAlign: v as TextAlignX })}
+              onChangeAction={(v) =>
+                onChangeAction({ textAlign: v as TextAlignX })
+              }
               options={[
                 { label: "Left", value: "left" },
                 { label: "Center", value: "center" },
@@ -408,7 +394,7 @@ export function ToolOptionsBar({
           <Block title="Line caps">
             <SelectField
               value={options.lineCap ?? "round"}
-              onChange={(v) => onChange({ lineCap: v as LineCap })}
+              onChangeAction={(v) => onChangeAction({ lineCap: v as LineCap })}
               options={[
                 { label: "Butt", value: "butt" },
                 { label: "Round", value: "round" },
@@ -419,7 +405,9 @@ export function ToolOptionsBar({
           <Block title="Line joins">
             <SelectField
               value={options.lineJoin ?? "round"}
-              onChange={(v) => onChange({ lineJoin: v as LineJoin })}
+              onChangeAction={(v) =>
+                onChangeAction({ lineJoin: v as LineJoin })
+              }
               options={[
                 { label: "Miter", value: "miter" },
                 { label: "Round", value: "round" },
@@ -640,7 +628,7 @@ function Block({
 function NumberField({
   label,
   value,
-  onChange,
+  onChangeAction,
   min = 0,
   max = 1000,
   step = 1,
@@ -648,7 +636,7 @@ function NumberField({
 }: {
   label?: string;
   value: number;
-  onChange: (n: number) => void;
+  onChangeAction: (n: number) => void;
   min?: number;
   max?: number;
   step?: number;
@@ -660,7 +648,7 @@ function NumberField({
       <Input
         type="number"
         value={Number.isFinite(value) ? String(value) : ""}
-        onChange={(e) => onChange(Number(e.target.value || 0))}
+        onChange={(e) => onChangeAction(Number(e.target.value || 0))}
         min={min}
         max={max}
         step={step}
@@ -672,14 +660,14 @@ function NumberField({
 
 function RangeField({
   value,
-  onChange,
+  onChangeAction,
   min = 0,
   max = 100,
   step = 1,
   className,
 }: {
   value: number;
-  onChange: (n: number) => void;
+  onChangeAction: (n: number) => void;
   min?: number;
   max?: number;
   step?: number;
@@ -692,7 +680,7 @@ function RangeField({
       max={max}
       step={step}
       value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
+      onChange={(e) => onChangeAction(Number(e.target.value))}
       className={[
         "h-8 w-28 cursor-pointer appearance-none bg-transparent",
         "[&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-muted",
@@ -705,10 +693,10 @@ function RangeField({
 
 function ColorField({
   value,
-  onChange,
+  onChangeAction,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  onChangeAction: (v: string) => void;
 }) {
   const SWATCHES = [
     "#000000",
@@ -726,7 +714,7 @@ function ColorField({
       <input
         type="color"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChangeAction(e.target.value)}
         className="h-8 w-8 cursor-pointer rounded-md border p-0"
         aria-label="Pick color"
       />
@@ -739,7 +727,7 @@ function ColorField({
             aria-label={`Set color ${c}`}
             className="h-5 w-5 rounded-sm border cursor-pointer"
             style={{ backgroundColor: c }}
-            onClick={() => onChange(c)}
+            onClick={() => onChangeAction(c)}
           />
         ))}
       </div>
@@ -749,13 +737,13 @@ function ColorField({
 
 function SelectField({
   value,
-  onChange,
+  onChangeAction,
   options,
   label,
   className,
 }: {
   value: string;
-  onChange: (v: string) => void;
+  onChangeAction: (v: string) => void;
   options: Array<{ label: string; value: string }>;
   label?: string;
   className?: string;
@@ -770,7 +758,7 @@ function SelectField({
           className ?? "",
         ].join(" ")}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChangeAction(e.target.value)}
       >
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>

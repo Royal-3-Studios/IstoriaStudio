@@ -4,11 +4,8 @@
 // =============================================================
 "use client";
 import * as React from "react";
-import { Button } from "@/components/ui/button";
-import { X } from "lucide-react";
 import type { ToolId, ToolOptions, BooleanOp, PathAlign } from "../types";
-import { TOOL_META } from "./registry";
-import { BrushOptions } from "./options/BrushOptions";
+import BrushOptions from "./options/BrushOptions";
 import { TextOptions } from "./options/TextOptions";
 import { ShapeOptions } from "./options/ShapeOptions";
 
@@ -17,7 +14,6 @@ export function ToolOptionsDock({
   tool,
   options,
   onChangeAction,
-  onCloseAction,
   onBooleanOp,
   onPathAlign,
   className = "",
@@ -32,12 +28,11 @@ export function ToolOptionsDock({
   className?: string;
 }) {
   if (!open || !tool) return null;
-  const label = TOOL_META[tool].label;
 
   return (
     <div
       className={[
-        "w-full rounded-md border bg-card shadow-xl",
+        "w-full rounded-md border bg-card shadow-xl mx",
         "animate-in fade-in slide-in-from-top-1 duration-150",
         className,
       ].join(" ")}
@@ -61,7 +56,7 @@ export function ToolOptionsDock({
       </div> */}
 
       {/* Body: route to per-tool options */}
-      <div className="px-2 py-1 max-w-765">
+      <div className="px-6 py-2 max-w-765">
         {tool === "brush" && (
           <BrushOptions options={options} onChangeAction={onChangeAction} />
         )}
