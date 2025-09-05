@@ -85,7 +85,7 @@ export function BrushSettings({
     drawStrokeToCanvas(el, {
       engine: preset.engine,
       baseSizePx,
-      color: "#6b7280",
+      color: "#000000",
       width: 112,
       height: 28,
       seed: 42,

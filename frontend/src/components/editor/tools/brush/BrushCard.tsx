@@ -5,7 +5,7 @@ import type { BrushPreset } from "@/data/brushPresets";
 import { Sun, Moon } from "lucide-react";
 import { drawStrokeToCanvas } from "@/lib/brush/engine";
 
-const DEFAULT_CHARCOAL = "#1a1a1a";
+const DEFAULT_CHARCOAL = "#000000";
 
 export const BrushCard = React.memo(function BrushCard({
   preset,
@@ -20,7 +20,7 @@ export const BrushCard = React.memo(function BrushCard({
 }) {
   const [bgMode, setBgMode] = React.useState<"light" | "dark">(initialBg);
 
-  // Base size from the preset (kept small for cards so we don't overflow)
+  // Base size from the preset (kept small for cards)
   const sizeParam = preset.params.find((p) => p.type === "size");
   const baseSizePx = Math.max(
     2,
@@ -31,7 +31,7 @@ export const BrushCard = React.memo(function BrushCard({
     )
   );
 
-  // --- Measure preview area (no ML/MR hacks) ---
+  // --- Measure preview area ---
   const previewRef = React.useRef<HTMLDivElement | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const [previewSize, setPreviewSize] = React.useState({ w: 0, h: 0 });
@@ -41,56 +41,49 @@ export const BrushCard = React.memo(function BrushCard({
     const el = previewRef.current;
     const ro = new ResizeObserver(() => {
       const w = Math.floor(el.clientWidth);
-      // nice aspect for a stroke strip; tall enough for big tips
-      const h = Math.max(60, Math.floor(w * 0.55));
+      // Flatter aspect so stroke reads longer
+      const h = Math.max(56, Math.floor(w * 0.34));
       setPreviewSize({ w, h });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  // Build a path with SAFE INSET so stamps never hit the edges
+  // Longer, flatter S-curve; very small X insets so it spans the card.
   const path = React.useMemo(() => {
     const { w, h } = previewSize;
     if (!w || !h) return null;
 
-    // Estimate worst-case outward reach:
-    // - radius ~ baseSize/2
-    // - scatter adds up to ~0.6 * baseSize
-    // - a little jitter + anti-aliased soft edge safety
-    // Estimate worst-case outward reach
     const scatterPct = (preset.engine.strokePath.scatter ?? 0) / 100;
-    const worstScatter = baseSizePx * 0.6 * scatterPct;
-    const radius = baseSizePx * 0.6; // slightly conservative
-    const INSET = Math.ceil(radius + worstScatter + 8);
+    const radius = baseSizePx * 0.5;
+    const worstScatter = baseSizePx * 0.5 * scatterPct;
 
-    // --- add a display shrink of ~10% (5% each side) ---
-    const SHRINK = 0.1;
-    const extraX = Math.round(previewSize.w * SHRINK * 0.5);
-    const extraY = Math.round(previewSize.h * SHRINK * 0.5);
+    // Smaller, but safe insets
+    const INSET_X = Math.ceil(
+      Math.max(8, radius * 0.8 + worstScatter * 0.6 + 4)
+    );
+    const INSET_Y = Math.ceil(Math.max(8, radius * 0.5 + 4));
 
-    // use let so we can add extra padding
-    const left = Math.max(6, INSET) + extraX;
-    const right = Math.max(6, INSET) + extraX;
-    // if your right side still nudges the edge, add +1 here:  + extraX + 1
-    const top = Math.max(6, INSET) + extraY;
-    const bottom = Math.max(6, INSET) + extraY;
+    const x0 = INSET_X;
+    const x1 = Math.max(x0 + 1, w - INSET_X);
 
-    const x0 = left;
-    const x1 = Math.max(x0 + 1, w - right);
-    const midY = Math.floor(h * 0.55);
+    const usableH = Math.max(1, h - INSET_Y * 2);
+    const midY = Math.floor(h * 0.58);
+    const amp = Math.min(usableH * 0.26, 22); // flatter
 
-    // amplitude respects the new vertical insets
-    const amp = Math.max(6, Math.min((h - top - bottom) * 0.38, 32));
+    const freq = 5.2; // stretched S
+    const wiggle = 0.34;
+    const steps = 60;
 
     const pts: { x: number; y: number; angle: number }[] = [];
-    const STEPS = 44;
-    for (let i = 0; i <= STEPS; i++) {
-      const t = i / STEPS;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
       const x = x0 + (x1 - x0) * t;
-      const y = midY - amp * t + amp * 0.45 * Math.sin(6.5 * t);
-      const dx = (x1 - x0) / STEPS;
-      const dy = -amp / STEPS + (amp * 0.45 * 6.5 * Math.cos(6.5 * t)) / STEPS;
+      const y = midY - amp * (t - 0.5) + amp * wiggle * Math.sin(freq * t);
+
+      const dx = (x1 - x0) / steps;
+      const dy =
+        -amp / steps + (amp * wiggle * freq * Math.cos(freq * t)) / steps;
       pts.push({ x, y, angle: Math.atan2(dy, dx) });
     }
     return pts;
@@ -102,6 +95,9 @@ export const BrushCard = React.memo(function BrushCard({
     [preset.id]
   );
 
+  const spacingOverride =
+    (preset.engine.strokePath.spacing ?? 6) / Math.max(1, baseSizePx * 0.5);
+
   // Draw whenever size, bg, or preset changes
   React.useEffect(() => {
     const el = canvasRef.current;
@@ -109,24 +105,21 @@ export const BrushCard = React.memo(function BrushCard({
     drawStrokeToCanvas(el, {
       engine: preset.engine,
       baseSizePx,
-      // color: userPickedColorHex || DEFAULT_CHARCOAL,
-      color: DEFAULT_CHARCOAL,
+      // color: DEFAULT_CHARCOAL,
+      color: "#000000",
       width: previewSize.w,
       height: previewSize.h,
       seed,
-      path, // <- use our safe-inset path
-      colorJitter: { h: 2, s: 2, l: 1, perStamp: true },
-      overrides: { centerlinePencil: true },
+      path,
+      // colorJitter: { h: 2, s: 2, l: 1, perStamp: true },
+      colorJitter: undefined,
+      overrides: {
+        centerlinePencil: true,
+        flow: 100,
+        spacing: spacingOverride,
+      },
     });
-  }, [
-    preset.engine,
-    baseSizePx,
-    bgMode,
-    seed,
-    path,
-    previewSize.w,
-    previewSize.h,
-  ]);
+  }, [preset.engine, baseSizePx, seed, path, previewSize.w, previewSize.h]);
 
   const title = preset.name;
   const subtitle = preset.subtitle ?? "";
@@ -149,20 +142,18 @@ export const BrushCard = React.memo(function BrushCard({
       onKeyDown={(e) => e.key === "Enter" && onSelect?.(preset.id)}
       tabIndex={0}
       aria-label={subtitle ? `${title} — ${subtitle}` : title}
-      style={{ width: 160, height: 120 }}
+      // Fill the grid column; only height is fixed
+      style={{ width: "100%", height: 132 }}
       title={title}
     >
       {/* background */}
       <div className="absolute inset-0" style={bgStyle} />
 
-      {/* preview area: padded; we measure THIS box */}
-      <div
-        ref={previewRef}
-        className="absolute left-2 right-0 top-0 p-0 ml-[-10px]"
-      >
+      {/* preview area: full width of card */}
+      <div ref={previewRef} className="absolute inset-x-0 top-0 p-0">
         <div
           className="relative w-full"
-          style={{ height: previewSize.h || 64 }}
+          style={{ height: previewSize.h || 56 }}
         >
           <canvas ref={canvasRef} className="absolute inset-0 block" />
         </div>

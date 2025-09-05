@@ -1,3 +1,4 @@
+// src/components/editor/tools/BrushGallery.tsx
 "use client";
 import * as React from "react";
 import { BRUSH_CATEGORIES, type BrushCategory } from "@/data/brushPresets";
@@ -27,7 +28,6 @@ export function BrushGallery({
     }
   }, [categories, catId]);
 
-  // md+ : Tabs; sm : Select dropdown
   return (
     <div className="w-full">
       {/* Mobile (sm): category select */}
@@ -98,13 +98,9 @@ function CategoryGrid({
 
   return (
     <div
-      className="
-      grid gap-12
-      grid-cols-2
-      sm:grid-cols-3
-      lg:grid-cols-4
-      xl:grid-cols-5
-    "
+      className="grid gap-6"
+      // Wider cards with auto-fit; each card >= 240px
+      style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}
     >
       {category.brushes.map((b) => (
         <BrushCard
