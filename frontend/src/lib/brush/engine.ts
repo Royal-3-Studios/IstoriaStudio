@@ -40,7 +40,7 @@ export type RenderOptions = {
   }>;
 };
 
-const DEFAULT_COLOR = "#202020";
+const DEFAULT_COLOR = "#000000";
 const PREVIEW_MIN = { width: 352, height: 128 };
 
 /** Tuned toward the Procreate 6B sample */
@@ -52,20 +52,20 @@ const PENCIL_TUNING = {
 
   // hairline rim (baseline; per-stamp thickness scales with radius)
   rimPx: 0.5, // ↑ a touch wider
-  rimAlpha: 0.32, // ↑ brighter sheen
+  rimAlpha: 0.11, // ↑ brighter sheen
   rimRGB: "255,255,255",
 
   // crisp AA band
-  edgeBandPx: 0.46, // slightly crisper than 0.48
+  edgeBandPx: 0.44, // slightly crisper than 0.48
 
   // darker middle, almost no flank lift (lighten core a bit)
-  coreDarken: 0.36, // ↓ was 0.42
+  coreDarken: 0.5, // ↓ was 0.42
   flankLighten: 0.0,
-  centerDarkenAlpha: 0.5, // ↓ was 0.62
+  centerDarkenAlpha: 0.88, // ↓ was 0.62
 
   // grain (avoid mottled near-black)
-  grainDepthDefault: 0.14, // ↓ subtler grain
-  grainScaleDefault: 1.85,
+  grainDepthDefault: 0.22, // ↓ subtler grain
+  grainScaleDefault: 1.6,
   grainAnisoX: 0.65,
   grainAnisoY: 1.4,
 
@@ -78,7 +78,7 @@ type StampKey = string;
 
 /** Cache + schema bump to force rebuilds when shading logic changes */
 const STAMP_CACHE = new Map<StampKey, StampSource>();
-const STAMP_SCHEMA = 8; // bumped
+const STAMP_SCHEMA = 18; // bumped
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -252,7 +252,10 @@ async function makePencilStampBitmap(
   const g = ctx.createLinearGradient(-radius, 0, radius, 0);
   g.addColorStop(0.0, coreLite);
   g.addColorStop(0.35, core);
-  g.addColorStop(0.5, "rgba(0,0,0,1)");
+  const plateauHalfPx = 0.1;
+  const plateauHalf = Math.min(0.04, plateauHalfPx / (radius * 2)); // convert px → [0..1]
+  g.addColorStop(0.5 - plateauHalf, "rgba(0,0,0,1)");
+  g.addColorStop(0.5 + plateauHalf, "rgba(0,0,0,1)");
   g.addColorStop(0.65, core);
   g.addColorStop(1.0, coreLite);
   ctx.fillStyle = g;
@@ -273,11 +276,23 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "multiply";
   {
     const spine = ctx.createLinearGradient(-radius, 0, radius, 0);
+
+    // Half-width of the spine in *pixels* (try 0.08–0.12 px)
+    const spineHalfPx = 0.08;
+
+    // Convert px → gradient-stop fraction of the full width (2*radius)
+    // Clamp so stops stay ordered even at tiny radii.
+    const spineHalf = Math.max(
+      0.002,
+      Math.min(0.05, spineHalfPx / (radius * 2))
+    );
+
     spine.addColorStop(0.0, "rgba(0,0,0,0)");
-    spine.addColorStop(0.49, "rgba(0,0,0,0)");
-    spine.addColorStop(0.5, "rgba(0,0,0,0.7)"); // peak at center
-    spine.addColorStop(0.51, "rgba(0,0,0,0)");
+    spine.addColorStop(0.5 - spineHalf, "rgba(0,0,0,0)");
+    spine.addColorStop(0.5, "rgba(0,0,0,0.94)"); // near-black seam
+    spine.addColorStop(0.5 + spineHalf, "rgba(0,0,0,0)");
     spine.addColorStop(1.0, "rgba(0,0,0,0)");
+
     ctx.fillStyle = spine;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
   }
@@ -287,8 +302,8 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "multiply";
   {
     const floor = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.9);
-    floor.addColorStop(0.0, "rgba(0,0,0,0.12)");
-    floor.addColorStop(0.85, "rgba(0,0,0,0.05)");
+    floor.addColorStop(0.0, "rgba(0,0,0,0.045)");
+    floor.addColorStop(0.85, "rgba(0,0,0,0.015)");
     floor.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = floor;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -298,8 +313,8 @@ async function makePencilStampBitmap(
   // 1e) Center plate — small radial deepen so the core reads near-black
   ctx.globalCompositeOperation = "multiply";
   {
-    const plate = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.55);
-    plate.addColorStop(0, "rgba(0,0,0,0.34)");
+    const plate = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.7);
+    plate.addColorStop(0, "rgba(0,0,0,0.64)");
     plate.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = plate;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -313,7 +328,7 @@ async function makePencilStampBitmap(
     const endR = Math.max(0, radius - 0.1);
     const rgTrough = ctx.createRadialGradient(0, 0, startR, 0, 0, endR);
     rgTrough.addColorStop(0, "rgba(0,0,0,0)");
-    rgTrough.addColorStop(1, "rgba(0,0,0,0.36)");
+    rgTrough.addColorStop(1, "rgba(0,0,0,0.34)");
     ctx.fillStyle = rgTrough;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
   }
@@ -338,8 +353,8 @@ async function makePencilStampBitmap(
     const r0 = Math.max(0, radius - 1.6);
     const r1 = radius + 0.2;
     const sheen = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
-    sheen.addColorStop(0.0, "rgba(255,255,255,0.10)");
-    sheen.addColorStop(0.6, "rgba(255,255,255,0.06)");
+    sheen.addColorStop(0.0, "rgba(255,255,255,0.045)");
+    sheen.addColorStop(0.6, "rgba(255,255,255,0.02)");
     sheen.addColorStop(1.0, "rgba(255,255,255,0)");
     ctx.fillStyle = sheen;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -365,6 +380,25 @@ async function makePencilStampBitmap(
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
     ctx.globalAlpha = 1;
   }
+
+  // 3b) Re-enforce center seam after grain so noise doesn't gray it
+  ctx.globalCompositeOperation = "multiply";
+  {
+    const spine2 = ctx.createLinearGradient(-radius, 0, radius, 0);
+    const spineHalfPx = 0.08; // same micro width as your first seam
+    const spineHalf = Math.max(
+      0.002,
+      Math.min(0.05, spineHalfPx / (radius * 2))
+    );
+    spine2.addColorStop(0.0, "rgba(0,0,0,0)");
+    spine2.addColorStop(0.5 - spineHalf, "rgba(0,0,0,0)");
+    spine2.addColorStop(0.5, "rgba(0,0,0,0.955)"); // tiny boost to guarantee near-black
+    spine2.addColorStop(0.5 + spineHalf, "rgba(0,0,0,0)");
+    spine2.addColorStop(1.0, "rgba(0,0,0,0)");
+    ctx.fillStyle = spine2;
+    ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
+  }
+  ctx.globalCompositeOperation = "source-over";
 
   // 4) Tight feather: push fade outward for airy rim / crisp silhouette
   const band = opts.edgeBandPx; // ~0.46
@@ -563,7 +597,7 @@ export async function drawStrokeToCanvas(
     : baseRadiusRaw;
 
   // Spacing: fraction of radius — a bit tighter to remove stepping
-  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.47) * baseRadius;
+  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.44) * baseRadius;
 
   // Build or use provided path
   const rawPath =

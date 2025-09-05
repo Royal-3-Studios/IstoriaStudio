@@ -281,13 +281,13 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         params: [
           p("size", "Size", "size", 8, 1, 80, 1, true), // was 10
           p("hardness", "Hardness", "hardness", 45),
-          p("flow", "Flow", "flow", 80), // was 85
+          p("flow", "Flow", "flow", 100), // was 85
           p("spacing", "Spacing", "spacing", 5), // was 7
           p("smoothing", "Smoothing", "smoothing", 22),
           p("jitterSize", "Size Jitter", "jitterSize", 3, 0, 100, 1, false), // was 6
           p("jitterAngle", "Angle Jitter", "jitterAngle", 4, 0, 100, 1, false), // was 8
           p("grain", "Grain", "grain", 55),
-          p("opacity", "Opacity", "opacity", 90),
+          p("opacity", "Opacity", "opacity", 100),
         ],
         engine: {
           strokePath: {
@@ -305,7 +305,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
             sizeScale: 1.0,
           }, // leaner oval
           grain: { kind: "paper", depth: 55, scale: 1.08 },
-          rendering: { mode: "blended", wetEdges: false, flow: 80 },
+          rendering: { mode: "blended", wetEdges: false, flow: 100 },
         },
       },
     ],
