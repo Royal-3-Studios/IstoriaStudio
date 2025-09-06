@@ -37,7 +37,7 @@ export type RenderOptions = {
     angle: number; // radians
     count: number; // unused
     grainRotate: number; // degrees
-    /** NEW: overall rim brightness, 100 = default, 150 = +50% */
+    /** overall rim brightness, 100 = default, 150 = +50% */
     edgeHotness: number; // 0..300
   }>;
 };
@@ -53,12 +53,12 @@ const PENCIL_TUNING = {
   taperRadiusFactor: 12,
 
   // hairline rim (baseline; per-stamp thickness scales with radius)
-  rimPx: 0.46, // a hair wider
-  rimAlpha: 1, // base energy; final passes scale this
+  rimPx: 0.46,
+  rimAlpha: 1,
   rimRGB: "255,255,255",
 
   // crisp AA band
-  edgeBandPx: 0.16,
+  edgeBandPx: 0.17,
 
   // darker middle, almost no flank lift
   coreDarken: 0.94,
@@ -80,7 +80,7 @@ type StampKey = string;
 
 /** Cache + schema bump to force rebuilds when shading logic changes */
 const STAMP_CACHE = new Map<StampKey, StampSource>();
-const STAMP_SCHEMA = 31; // bumped
+const STAMP_SCHEMA = 37; // bumped
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -248,8 +248,15 @@ async function makePencilStampBitmap(
   ctx.save();
   ctx.translate(d / 2, d / 2);
 
-  // Base color shaping
-  const rgbBase = darkenRGB(hexToRgb(colorHex), opts.coreDarken);
+  // --- derived tints (graphite highlight shouldn't be pure white)
+  const baseRGB = hexToRgb(colorHex);
+  const Lcol = luminanceOfHex(colorHex); // 0..1
+  const lightenAmt = 0.7 + 0.2 * (1 - Lcol); // 0.70–0.90
+  const rimRGB = lightenRGB(baseRGB, lightenAmt);
+  const rimCss = rgbToCss(rimRGB, 1);
+
+  // Base color shaping (dark core + gentle flanks)
+  const rgbBase = darkenRGB(baseRGB, opts.coreDarken);
   const core = rgbToCss(rgbBase, 1);
   const coreLite = rgbToCss(lightenRGB(rgbBase, opts.flankLighten), 1);
 
@@ -259,30 +266,41 @@ async function makePencilStampBitmap(
   ctx.arc(0, 0, radius, 0, Math.PI * 2);
   ctx.clip();
 
+  const tipKPlateau = clamp01((radius - 1.0) / 2.4); // 0 at tiny → 1 by ~3.4px
+  const plateauA = 1.0 * tipKPlateau; // was hard 1.0
+
   const g = ctx.createLinearGradient(-radius, 0, radius, 0);
   g.addColorStop(0.0, coreLite);
   g.addColorStop(0.35, core);
   const plateauHalfPx = 0.1;
   const plateauHalf = Math.min(0.04, plateauHalfPx / (radius * 2));
-  g.addColorStop(0.5 - plateauHalf, "rgba(0,0,0,1)");
-  g.addColorStop(0.5 + plateauHalf, "rgba(0,0,0,1)");
+  g.addColorStop(0.5 - plateauHalf, `rgba(0,0,0,${plateauA})`); // was 1
+  g.addColorStop(0.5 + plateauHalf, `rgba(0,0,0,${plateauA})`); // was 1
   g.addColorStop(0.65, core);
   g.addColorStop(1.0, coreLite);
   ctx.fillStyle = g;
   ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
 
-  // 1b) Center darken so rims pop
+  // 1b) Center darken so rims pop (tip-aware)
   if (opts.centerDarkenAlpha > 0) {
     ctx.globalCompositeOperation = "multiply";
     const rgCenter = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.9);
-    rgCenter.addColorStop(0, `rgba(0,0,0,${opts.centerDarkenAlpha})`);
+
+    // tipK: 0 at tiny radii, 1 by ~3.4 px
+    const tipK = clamp01((radius - 1.0) / 2.4);
+
+    // was: 0.72 + 0.28*tipK  (always dark at the tip)
+    // now: 0 → 0.72 across small→normal, scaled by user alpha
+    const centerA = opts.centerDarkenAlpha * (0.72 * tipK);
+
+    rgCenter.addColorStop(0, `rgba(0,0,0,${centerA})`);
     rgCenter.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = rgCenter;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
     ctx.globalCompositeOperation = "source-over";
   }
 
-  // 1d) Center spine
+  // 1d) Center spine (slightly softer to avoid “crease” look)
   ctx.globalCompositeOperation = "multiply";
   {
     const spine = ctx.createLinearGradient(-radius, 0, radius, 0);
@@ -293,7 +311,7 @@ async function makePencilStampBitmap(
     );
     spine.addColorStop(0.0, "rgba(0,0,0,0)");
     spine.addColorStop(0.5 - spineHalf, "rgba(0,0,0,0)");
-    spine.addColorStop(0.5, "rgba(0,0,0,0.92)");
+    spine.addColorStop(0.5, "rgba(0,0,0,0.88)"); // was 0.92
     spine.addColorStop(0.5 + spineHalf, "rgba(0,0,0,0)");
     spine.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = spine;
@@ -316,24 +334,22 @@ async function makePencilStampBitmap(
   // 1e) Small plate to ensure near-black core
   ctx.globalCompositeOperation = "multiply";
   {
+    const tipK = clamp01((radius - 1.0) / 2.4);
     const plate = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.7);
-    plate.addColorStop(0, "rgba(0,0,0,0.74)");
+    plate.addColorStop(0, `rgba(0,0,0,${0.72 * tipK})`); // was fixed 0.72
     plate.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = plate;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
   }
   ctx.globalCompositeOperation = "source-over";
 
-  // 1c) Inner trough — radius-aware contrast ring (inside the rim)
+  // 1c) Inner trough — (a little gentler at big radii)
   ctx.globalCompositeOperation = "multiply";
   {
-    const startR = Math.max(0, radius - 1.05); // nearer the rim
+    const startR = Math.max(0, radius - 1.05);
     const endR = Math.max(0, radius - 0.12);
-
-    // Bigger stamps need a deeper trough to preserve edge contrast
-    const k = clamp01((radius - 1.1) / 4.2); // 0 at small tips → 1 as radius grows
-    const depth = 0.8 + 0.22 * k; // ~0.78–1.02
-
+    const k = clamp01((radius - 1.1) / 4.2);
+    const depth = 0.5 + 0.35 * k; // was 0.8 + 0.22*k
     const rgTrough = ctx.createRadialGradient(0, 0, startR, 0, 0, endR);
     rgTrough.addColorStop(0, "rgba(0,0,0,0)");
     rgTrough.addColorStop(1, `rgba(0,0,0,${depth})`);
@@ -342,42 +358,45 @@ async function makePencilStampBitmap(
   }
   ctx.globalCompositeOperation = "source-over";
 
-  // Tip-aware boost: small radii need much hotter rims.
-  const tipBoost = 1 + 0.9 * clamp01((3.2 - radius) / 3.2); // up to ~1.9× at tiny tips
+  // Tip-aware boost for first-pass rims
+  const tipBoost = 1 + 0.9 * clamp01((3.2 - radius) / 3.2);
 
   // 2) Rims — first pass (SCREEN)
   ctx.globalCompositeOperation = "screen";
-  ctx.fillStyle = `rgba(${PENCIL_TUNING.rimRGB},1)`;
+  ctx.fillStyle = rimCss; // tinted, not pure white
   const rim = Math.max(0.28, Math.min(opts.rimPx, radius * 0.4));
 
-  // top rim (left before rotation)
+  // top rim (brighter)
   ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.7 * tipBoost);
   ctx.fillRect(-radius + rim * 0.25, -radius, rim * 0.9, radius * 2);
-  // bottom rim (right before rotation)
+
+  // bottom rim
   ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.46 * tipBoost);
   ctx.fillRect(+radius - rim * 1.25, -radius, rim * 0.9, radius * 2);
 
-  // 2a) Micro-rim — second, even narrower pass (SCREEN) for sparkle
-  ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.55 * tipBoost);
-  ctx.fillRect(-radius + rim * 0.35, -radius, rim * 0.55, radius * 2);
-  ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.38 * tipBoost);
-  ctx.fillRect(+radius - rim * 1.35, -radius, rim * 0.55, radius * 2);
+  // 2a) Micro-rim — narrower & tinted
+  ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.52 * tipBoost);
+  ctx.fillRect(-radius + rim * 0.35, -radius, rim * 0.48, radius * 2);
+  ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.35 * tipBoost);
+  ctx.fillRect(+radius - rim * 1.35, -radius, rim * 0.48, radius * 2);
   ctx.globalAlpha = 1;
 
-  // 2b) Sheen ring — slightly stronger
+  // 2b) Sheen ring — tinted + slightly dimmer
   {
     const r0 = Math.max(0, radius - 0.85);
     const r1 = radius + 0.08;
+    const sheen0 = rgbToCss(rimRGB, 0.05); // was 0.055 white
+    const sheen1 = rgbToCss(rimRGB, 0.012); // was 0.014 white
     const sheen = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
-    sheen.addColorStop(0.0, "rgba(255,255,255,0.07)");
-    sheen.addColorStop(0.6, "rgba(255,255,255,0.018)");
-    sheen.addColorStop(1.0, "rgba(255,255,255,0)");
+    sheen.addColorStop(0.0, sheen0);
+    sheen.addColorStop(0.6, sheen1);
+    sheen.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = sheen;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
   }
   ctx.globalCompositeOperation = "source-over";
 
-  // 3) Grain on the core only (multiply), slightly longitudinal
+  // 3) Grain (core only)
   if (opts.grainDepth > 0.001) {
     ctx.globalCompositeOperation = "multiply";
     const tile = makeNoiseTile(64, 31 * opts.seed + 7);
@@ -386,6 +405,7 @@ async function makePencilStampBitmap(
     ctx.save();
     ctx.rotate(opts.grainRotateRad);
     ctx.scale(opts.grainAnisoX, opts.grainAnisoY);
+
     ctx.drawImage(tile, 0, 0, tile.width, tile.height, -radius, -radius, w, w);
     ctx.restore();
 
@@ -396,7 +416,7 @@ async function makePencilStampBitmap(
     ctx.globalAlpha = 1;
   }
 
-  // 3b) Re-enforce center seam after grain
+  // 3b) Re-enforce center seam (softer)
   ctx.globalCompositeOperation = "multiply";
   {
     const spine2 = ctx.createLinearGradient(-radius, 0, radius, 0);
@@ -405,9 +425,11 @@ async function makePencilStampBitmap(
       0.002,
       Math.min(0.05, spineHalfPx / (radius * 2))
     );
+    const seamK = clamp01((radius - 1.0) / 2.0); // 0 at tiny tips → 1 normal
+    const seamA = 0.18 + 0.7 * seamK;
     spine2.addColorStop(0.0, "rgba(0,0,0,0)");
     spine2.addColorStop(0.5 - spineHalf, "rgba(0,0,0,0)");
-    spine2.addColorStop(0.5, "rgba(0,0,0,0.955)");
+    spine2.addColorStop(0.5, `rgba(0,0,0,${seamA})`); // was 0.955
     spine2.addColorStop(0.5 + spineHalf, "rgba(0,0,0,0)");
     spine2.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = spine2;
@@ -427,28 +449,25 @@ async function makePencilStampBitmap(
   ctx.fillRect(-radius - 2, -radius - 2, radius * 2 + 4, radius * 2 + 4);
   ctx.globalCompositeOperation = "source-over";
 
-  // 5) Longitudinal squash for ribbon blending
+  // 5) Longitudinal squash — radius-aware (rounder at tiny tips)
+  const squashLocal = lerp(1.0, opts.squashY, clamp01((radius - 1.2) / 2.8));
   ctx.globalCompositeOperation = "destination-in";
   ctx.beginPath();
-  ctx.ellipse(0, 0, radius, radius * opts.squashY, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, radius, radius * squashLocal, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalCompositeOperation = "source-over";
 
-  // 6) Post-feather rim reheat — thin annulus so AA won’t soften again
+  // 6) Post-feather rim reheat (donut clip)
   {
     ctx.save();
-
-    // ring thickness in px (scales with size but stays hairline)
     const ringPx = 0.4 + 0.32 * clamp01((radius - 1.0) / 3.2);
-
-    // donut clip (even-odd) using the same ellipse shape
     ctx.beginPath();
-    ctx.ellipse(0, 0, radius, radius * opts.squashY, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, radius, radius * squashLocal, 0, 0, Math.PI * 2);
     ctx.ellipse(
       0,
       0,
       Math.max(0, radius - ringPx),
-      radius * opts.squashY,
+      radius * squashLocal,
       0,
       0,
       Math.PI * 2,
@@ -456,32 +475,30 @@ async function makePencilStampBitmap(
     );
     ctx.clip("evenodd");
 
-    // much hotter at tiny tips
-    const tipBoost = 1 + 1.8 * clamp01((3.0 - radius) / 3.0);
+    const tipBoost2 = 1 + 1.5 * clamp01((3.0 - radius) / 3.0);
     const rim2 = Math.max(0.26, Math.min(opts.rimPx, radius * 0.4));
 
-    // primary highlight (SCREEN). Slightly closer to silhouette and a hair wider.
+    // primary highlight (SCREEN) — slightly farther from silhouette
     ctx.globalCompositeOperation = "screen";
-    ctx.fillStyle = "rgba(255,255,255,1)";
+    ctx.fillStyle = rimCss;
 
-    // top (brighter)
-    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 1.25 * tipBoost);
-    ctx.fillRect(-radius + rim2 * 0.14, -radius, rim2 * 0.98, radius * 2);
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 1.18 * tipBoost2);
+    ctx.fillRect(-radius + rim2 * 0.2, -radius, rim2 * 0.9, radius * 2);
 
-    // bottom (slightly dimmer)
-    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.98 * tipBoost);
-    ctx.fillRect(+radius - rim2 * 1.14, -radius, rim2 * 0.98, radius * 2);
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.94 * tipBoost2);
+    ctx.fillRect(+radius - rim2 * 1.2, -radius, rim2 * 0.9, radius * 2);
 
-    // micro-sparkle: prefer color-dodge, fall back to lighter
+    // micro-sparkle — attenuate at tiny tips & narrower
     const prev = ctx.globalCompositeOperation;
     ctx.globalCompositeOperation = "color-dodge" as GlobalCompositeOperation;
     if (ctx.globalCompositeOperation !== "color-dodge")
       ctx.globalCompositeOperation = "lighter";
 
-    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.34 * tipBoost);
-    ctx.fillRect(-radius + rim2 * 0.44, -radius, rim2 * 0.34, radius * 2);
-    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.26 * tipBoost);
-    ctx.fillRect(+radius - rim2 * 1.44, -radius, rim2 * 0.34, radius * 2);
+    const sparkleTipAtten = clamp01((radius - 1.1) / 2.2);
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.24 * sparkleTipAtten);
+    ctx.fillRect(-radius + rim2 * 0.46, -radius, rim2 * 0.24, radius * 2);
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.18 * sparkleTipAtten);
+    ctx.fillRect(+radius - rim2 * 1.46, -radius, rim2 * 0.24, radius * 2);
 
     ctx.globalCompositeOperation = prev;
     ctx.restore();
@@ -666,7 +683,7 @@ export async function drawStrokeToCanvas(
     : baseRadiusRaw;
 
   // Spacing: fraction of radius — a bit tighter to remove stepping
-  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.3) * baseRadius;
+  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.28) * baseRadius;
 
   // Build or use provided path
   const rawPath =
@@ -732,8 +749,14 @@ export async function drawStrokeToCanvas(
     const tStart = clamp01(smp.s / taperLen);
     const tEnd = clamp01((totalLen - smp.s) / taperLen);
     const taper = Math.min(easePow(tStart), easePow(tEnd));
+    const endFade = easeOutCubic(Math.min(tStart, tEnd));
 
     const radius = Math.max(0.5, baseRadius * taper);
+    const radiusFade = 0.65 + 0.35 * clamp01((radius - 0.9) / 1.2); // 0.65→1
+
+    const tinyK = clamp01((1.2 - radius) / 1.2); // 1 at ≤1.2px → 0 by ~2.4px
+    const edgeBandLocal = PENCIL_TUNING.edgeBandPx * (1 + 0.18 * tinyK);
+
     const bmp = await getPencilStamp(radius, color, {
       rimPx,
       rimAlpha, // already includes hotness
@@ -741,7 +764,7 @@ export async function drawStrokeToCanvas(
       grainDepth,
       grainAnisoX: PENCIL_TUNING.grainAnisoX,
       grainAnisoY: PENCIL_TUNING.grainAnisoY,
-      edgeBandPx: PENCIL_TUNING.edgeBandPx,
+      edgeBandPx: edgeBandLocal, // fixed band (restored)
       coreDarken: PENCIL_TUNING.coreDarken,
       flankLighten: PENCIL_TUNING.flankLighten,
       centerDarkenAlpha: PENCIL_TUNING.centerDarkenAlpha,
@@ -757,10 +780,14 @@ export async function drawStrokeToCanvas(
     ctx.save();
     ctx.translate(smp.x + jx, smp.y + jy);
     ctx.rotate((opt.overrides?.angle ?? 0) + smp.angle + Math.PI / 2);
+
+    // constant flow (restored)
     ctx.globalAlpha = flow;
 
     const w = bmp.width,
       h = bmp.height;
+    const alphaJitter = 0.96 + 0.06 * (rnd() * 2 - 1); // ~±3%
+    ctx.globalAlpha = flow * endFade * radiusFade * alphaJitter;
     ctx.drawImage(bmp, -w / 2, -h / 2);
 
     ctx.restore();
