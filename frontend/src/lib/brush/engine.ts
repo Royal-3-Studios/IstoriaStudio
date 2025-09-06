@@ -25,7 +25,7 @@ export type RenderOptions = {
   colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
   overrides?: Partial<{
     centerlinePencil: boolean;
-    spacing: number; // fraction of radius (e.g. 0.28)
+    spacing: number; // fraction of radius (e.g. 0.36)
     jitter: number; // px
     scatter: number; // deg (unused here)
     flow: number; // 0..100
@@ -51,20 +51,20 @@ const PENCIL_TUNING = {
   taperRadiusFactor: 10,
 
   // hairline rim (baseline; per-stamp thickness scales with radius)
-  rimPx: 0.5, // ↑ a touch wider
-  rimAlpha: 0.11, // ↑ brighter sheen
+  rimPx: 0.32,
+  rimAlpha: 1,
   rimRGB: "255,255,255",
 
   // crisp AA band
-  edgeBandPx: 0.44, // slightly crisper than 0.48
+  edgeBandPx: 0.28,
 
-  // darker middle, almost no flank lift (lighten core a bit)
-  coreDarken: 0.5, // ↓ was 0.42
+  // darker middle, almost no flank lift
+  coreDarken: 0.95,
   flankLighten: 0.0,
-  centerDarkenAlpha: 0.88, // ↓ was 0.62
+  centerDarkenAlpha: 1,
 
   // grain (avoid mottled near-black)
-  grainDepthDefault: 0.22, // ↓ subtler grain
+  grainDepthDefault: 0.18,
   grainScaleDefault: 1.6,
   grainAnisoX: 0.65,
   grainAnisoY: 1.4,
@@ -78,7 +78,7 @@ type StampKey = string;
 
 /** Cache + schema bump to force rebuilds when shading logic changes */
 const STAMP_CACHE = new Map<StampKey, StampSource>();
-const STAMP_SCHEMA = 18; // bumped
+const STAMP_SCHEMA = 20; // bumped
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -277,11 +277,10 @@ async function makePencilStampBitmap(
   {
     const spine = ctx.createLinearGradient(-radius, 0, radius, 0);
 
-    // Half-width of the spine in *pixels* (try 0.08–0.12 px)
-    const spineHalfPx = 0.08;
+    // Half-width of the spine in *pixels*
+    const spineHalfPx = 0.12;
 
     // Convert px → gradient-stop fraction of the full width (2*radius)
-    // Clamp so stops stay ordered even at tiny radii.
     const spineHalf = Math.max(
       0.002,
       Math.min(0.05, spineHalfPx / (radius * 2))
@@ -302,8 +301,8 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "multiply";
   {
     const floor = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.9);
-    floor.addColorStop(0.0, "rgba(0,0,0,0.045)");
-    floor.addColorStop(0.85, "rgba(0,0,0,0.015)");
+    floor.addColorStop(0.0, "rgba(0,0,0,0.03)");
+    floor.addColorStop(0.85, "rgba(0,0,0,0.01)");
     floor.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = floor;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -314,7 +313,7 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "multiply";
   {
     const plate = ctx.createRadialGradient(0, 0, 0, 0, 0, radius * 0.7);
-    plate.addColorStop(0, "rgba(0,0,0,0.64)");
+    plate.addColorStop(0, "rgba(0,0,0,0.8)");
     plate.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = plate;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -324,37 +323,37 @@ async function makePencilStampBitmap(
   // 1c) Inner trough — dark ring just inside the rim (contrast for rim)
   ctx.globalCompositeOperation = "multiply";
   {
-    const startR = Math.max(0, radius - 0.9);
-    const endR = Math.max(0, radius - 0.1);
+    const startR = Math.max(0, radius - 0.62);
+    const endR = Math.max(0, radius - 0.17);
     const rgTrough = ctx.createRadialGradient(0, 0, startR, 0, 0, endR);
     rgTrough.addColorStop(0, "rgba(0,0,0,0)");
-    rgTrough.addColorStop(1, "rgba(0,0,0,0.34)");
+    rgTrough.addColorStop(1, "rgba(0,0,0,0.62)");
     ctx.fillStyle = rgTrough;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
   }
   ctx.globalCompositeOperation = "source-over";
 
-  // 2) Dual bright rims (hairline), airy — thickness scales with radius
+  // 2) Dual bright rims (hairline), airy — first pass
   ctx.globalCompositeOperation = "screen";
   ctx.fillStyle = `rgba(${PENCIL_TUNING.rimRGB},1)`;
   // keep rim truly hairline at tips
-  const rim = Math.max(0.42, Math.min(opts.rimPx, radius * 0.4));
+  const rim = Math.max(0.28, Math.min(opts.rimPx, radius * 0.4));
   // “Left” bar (top rim after rotation)
   ctx.globalAlpha = Math.min(1, opts.rimAlpha * 1.25);
-  ctx.fillRect(-radius + rim * 0.5, -radius, rim, radius * 2);
+  ctx.fillRect(-radius + rim * 0.25, -radius, rim, radius * 2);
   // “Right” bar (bottom rim)
   ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.85);
-  ctx.fillRect(+radius - rim * 1.5, -radius, rim, radius * 2);
+  ctx.fillRect(+radius - rim * 1.25, -radius, rim, radius * 2);
   ctx.globalAlpha = 1;
 
   // 2b) Soft sheen ring just inside rim (adds Procreate-like edge brightening)
   {
     ctx.globalCompositeOperation = "screen";
-    const r0 = Math.max(0, radius - 1.6);
-    const r1 = radius + 0.2;
+    const r0 = Math.max(0, radius - 0.95);
+    const r1 = radius + 0.05;
     const sheen = ctx.createRadialGradient(0, 0, r0, 0, 0, r1);
-    sheen.addColorStop(0.0, "rgba(255,255,255,0.045)");
-    sheen.addColorStop(0.6, "rgba(255,255,255,0.02)");
+    sheen.addColorStop(0.0, "rgba(255,255,255,0.07)");
+    sheen.addColorStop(0.6, "rgba(255,255,255,0.015)");
     sheen.addColorStop(1.0, "rgba(255,255,255,0)");
     ctx.fillStyle = sheen;
     ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
@@ -385,14 +384,14 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "multiply";
   {
     const spine2 = ctx.createLinearGradient(-radius, 0, radius, 0);
-    const spineHalfPx = 0.08; // same micro width as your first seam
+    const spineHalfPx = 0.08; // micro width
     const spineHalf = Math.max(
       0.002,
       Math.min(0.05, spineHalfPx / (radius * 2))
     );
     spine2.addColorStop(0.0, "rgba(0,0,0,0)");
     spine2.addColorStop(0.5 - spineHalf, "rgba(0,0,0,0)");
-    spine2.addColorStop(0.5, "rgba(0,0,0,0.955)"); // tiny boost to guarantee near-black
+    spine2.addColorStop(0.5, "rgba(0,0,0,0.955)");
     spine2.addColorStop(0.5 + spineHalf, "rgba(0,0,0,0)");
     spine2.addColorStop(1.0, "rgba(0,0,0,0)");
     ctx.fillStyle = spine2;
@@ -401,9 +400,9 @@ async function makePencilStampBitmap(
   ctx.globalCompositeOperation = "source-over";
 
   // 4) Tight feather: push fade outward for airy rim / crisp silhouette
-  const band = opts.edgeBandPx; // ~0.46
+  const band = opts.edgeBandPx;
   const innerR2 = Math.max(0, radius - band * 0.0); // keep inside intact
-  const outerR2 = radius + band * 1.16; // tiny outer halo → crisp edge
+  const outerR2 = radius + band * 0.58; // tiny outer halo → crisp edge
   ctx.globalCompositeOperation = "destination-in";
   const rg = ctx.createRadialGradient(0, 0, innerR2, 0, 0, outerR2);
   rg.addColorStop(0, "rgba(0,0,0,1)");
@@ -418,6 +417,30 @@ async function makePencilStampBitmap(
   ctx.ellipse(0, 0, radius, radius * opts.squashY, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalCompositeOperation = "source-over";
+
+  // 6) Post-feather rim "reheat" (lifts highlight after AA mask)
+  {
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, radius, radius * opts.squashY, 0, 0, Math.PI * 2);
+    ctx.clip();
+
+    ctx.globalCompositeOperation = "screen";
+    const rim2 = Math.max(0.26, Math.min(opts.rimPx, radius * 0.4));
+    ctx.fillStyle = `rgba(${PENCIL_TUNING.rimRGB},1)`;
+
+    // top (left after rotation) — a touch brighter
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.64); // was 0.58
+    ctx.fillRect(-radius + rim2 * 0.25, -radius, rim2 * 0.9, radius * 2); // 0.98 → 0.94
+
+    // bottom (right) — a touch dimmer
+    ctx.globalAlpha = Math.min(1, opts.rimAlpha * 0.38); // was 0.42
+    ctx.fillRect(+radius - rim2 * 1.25, -radius, rim2 * 0.9, radius * 2);
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.restore();
+  }
 
   ctx.restore();
   return toBitmapOrCanvas(c);
@@ -597,7 +620,7 @@ export async function drawStrokeToCanvas(
     : baseRadiusRaw;
 
   // Spacing: fraction of radius — a bit tighter to remove stepping
-  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.44) * baseRadius;
+  const spacing = Math.max(0.1, opt.overrides?.spacing ?? 0.36) * baseRadius;
 
   // Build or use provided path
   const rawPath =

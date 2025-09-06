@@ -24,13 +24,13 @@ export type BrushParam = {
   max?: number;
   step?: number;
   defaultValue: number;
-  show?: boolean; // ← optional visibility hint for your settings UI
+  show?: boolean; // optional visibility hint for your settings UI
 };
 
 export type StrokePathCfg = {
-  spacing: number; // px between stamps
-  jitter: number; // 0..100 path jitter
-  scatter: number; // 0..100 radial scatter per stamp
+  spacing: number; // px between stamps (UI)
+  jitter: number; // 0..100 path jitter (UI)
+  scatter: number; // 0..100 radial scatter per stamp (UI)
   streamline: number; // 0..100 (used by preview curve feel)
   count: number; // stamps per step (e.g. spray)
 };
@@ -47,8 +47,8 @@ export type GrainKind = "none" | "paper" | "canvas" | "noise";
 
 export type GrainCfg = {
   kind: GrainKind;
-  depth: number; // 0..100
-  scale: number; // texture scale for preview
+  depth: number; // 0..100 (UI)
+  scale: number; // texture scale for preview/UI
 };
 
 export type RenderingMode =
@@ -62,14 +62,33 @@ export type RenderingMode =
 export type RenderingCfg = {
   mode: RenderingMode;
   wetEdges: boolean;
-  flow: number; // 0..100
+  flow: number; // 0..100 (UI)
 };
+
+// === NEW === Keep this in sync with RenderOptions["overrides"] used by the engine
+export type BrushOverrides = Partial<{
+  centerlinePencil: boolean;
+  spacing: number; // fraction of radius (engine uses factor * baseRadius)
+  jitter: number; // px
+  scatter: number; // deg (not used by pencil)
+  flow: number; // 0..100
+  softness: number; // 0..100
+  wetEdges: boolean;
+  grainKind: GrainKind;
+  grainScale: number; // 0.25..4
+  grainDepth: number; // 0..100
+  angle: number; // radians for stamp orientation bias
+  count: number; // unused by pencil
+  grainRotate: number; // degrees
+}>;
 
 export type BrushEngine = {
   strokePath: StrokePathCfg;
   shape: ShapeCfg;
   grain: GrainCfg;
   rendering: RenderingCfg;
+  // Allow presets to carry through engine-level overrides into RenderOptions
+  overrides?: BrushOverrides;
 };
 
 export type BrushPreset = {
@@ -278,34 +297,45 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         id: "pencil-6b",
         name: "Pencil 6B",
         subtitle: "soft, dark graphite",
+        // UI params (some are inert for the pencil engine, but fine for panel)
         params: [
-          p("size", "Size", "size", 8, 1, 80, 1, true), // was 10
-          p("hardness", "Hardness", "hardness", 45),
-          p("flow", "Flow", "flow", 100), // was 85
-          p("spacing", "Spacing", "spacing", 5), // was 7
+          p("size", "Size", "size", 8, 1, 80, 1, true),
+          p("flow", "Flow", "flow", 100),
+          p("spacing", "Spacing", "spacing", 4),
           p("smoothing", "Smoothing", "smoothing", 22),
-          p("jitterSize", "Size Jitter", "jitterSize", 3, 0, 100, 1, false), // was 6
-          p("jitterAngle", "Angle Jitter", "jitterAngle", 4, 0, 100, 1, false), // was 8
-          p("grain", "Grain", "grain", 55),
+          p("grain", "Grain", "grain", 52),
           p("opacity", "Opacity", "opacity", 100),
         ],
         engine: {
+          // Path sampling for preview; actual stamp spacing is in overrides.spacing
           strokePath: {
-            spacing: 5,
-            jitter: 2,
-            scatter: 1,
+            spacing: 4,
+            jitter: 0.5,
+            scatter: 0,
             streamline: 30,
             count: 1,
-          }, // calmer path
+          },
           shape: {
             type: "oval",
             angle: 8,
             softness: 50,
             roundness: 28,
             sizeScale: 1.0,
-          }, // leaner oval
-          grain: { kind: "paper", depth: 55, scale: 1.08 },
+          },
+          grain: { kind: "paper", depth: 52, scale: 1.18 },
           rendering: { mode: "blended", wetEdges: false, flow: 100 },
+          // >>> Engine-level overrides passed through to RenderOptions.overrides
+          overrides: {
+            centerlinePencil: true,
+            spacing: 0.36, // effective sample spacing factor (× baseRadius)
+            jitter: 0.5, // px
+            flow: 100,
+            grainKind: "paper",
+            grainScale: 1.18,
+            grainDepth: 52,
+            grainRotate: 8,
+            angle: 0,
+          },
         },
       },
     ],
