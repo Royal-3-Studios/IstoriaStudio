@@ -80,6 +80,7 @@ export type BrushOverrides = Partial<{
   angle: number; // radians for stamp orientation bias
   count: number; // unused by pencil
   grainRotate: number; // degrees
+  edgeHotness?: number;
 }>;
 
 export type BrushEngine = {
@@ -327,7 +328,8 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           // >>> Engine-level overrides passed through to RenderOptions.overrides
           overrides: {
             centerlinePencil: true,
-            spacing: 0.36, // effective sample spacing factor (× baseRadius)
+            // edgeHotness: 300,
+            spacing: 0.3, // effective sample spacing factor (× baseRadius)
             jitter: 0.5, // px
             flow: 100,
             grainKind: "paper",
