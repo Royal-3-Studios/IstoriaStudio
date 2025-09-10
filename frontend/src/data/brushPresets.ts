@@ -81,6 +81,8 @@ export type BrushOverrides = Partial<{
   count: number; // unused by pencil
   grainRotate: number; // degrees
   edgeHotness?: number;
+  coreStrength?: number;
+  disableEdgeTrough?: boolean;
 }>;
 
 export type BrushEngine = {
@@ -298,17 +300,14 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         id: "pencil-6b",
         name: "Pencil 6B",
         subtitle: "soft, dark graphite",
-        // UI params (some are inert for the pencil engine, but fine for panel)
         params: [
           p("size", "Size", "size", 8, 1, 80, 1, true),
           p("flow", "Flow", "flow", 100),
-          p("spacing", "Spacing", "spacing", 4),
           p("smoothing", "Smoothing", "smoothing", 22),
           p("grain", "Grain", "grain", 52),
           p("opacity", "Opacity", "opacity", 100),
         ],
         engine: {
-          // Path sampling for preview; actual stamp spacing is in overrides.spacing
           strokePath: {
             spacing: 4,
             jitter: 0.5,
@@ -323,20 +322,18 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
             roundness: 28,
             sizeScale: 1.0,
           },
-          grain: { kind: "paper", depth: 52, scale: 1.18 },
+          grain: { kind: "paper", depth: 56, scale: 1.15 },
           rendering: { mode: "blended", wetEdges: false, flow: 100 },
-          // >>> Engine-level overrides passed through to RenderOptions.overrides
           overrides: {
             centerlinePencil: true,
-            // edgeHotness: 300,
-            spacing: 0.3, // effective sample spacing factor (× baseRadius)
-            jitter: 0.5, // px
+            // spacing/jitter are ignored by the ribbon engine
             flow: 100,
             grainKind: "paper",
-            grainScale: 1.18,
-            grainDepth: 52,
+            grainScale: 1.35,
+            grainDepth: 66,
             grainRotate: 8,
             angle: 0,
+            coreStrength: 300,
           },
         },
       },

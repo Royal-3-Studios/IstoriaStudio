@@ -1,3 +1,5 @@
+// src/components/editor/toos/brush/BrushSettings.tsx
+
 "use client";
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";

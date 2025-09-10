@@ -1,6 +1,14 @@
 // =============================================================
 // src/components/editor/types.ts
 // =============================================================
+
+// Re-export engine-facing types so existing UI imports still work
+export type { BrushBackend, RenderingMode, BlendMode } from "@/lib/brush/types";
+
+// in src/lib/brush/engine.ts (or backends)
+import type { BrushBackend, RenderingMode, BlendMode } from "@/lib/brush/types";
+
+// --- Everything below stays exactly as you have it ---
 export type ToolId =
   | "move"
   | "select"
@@ -16,14 +24,6 @@ export type ToolId =
   | "line"
   | "pen"
   | "eyedropper";
-
-export type BlendMode =
-  | "normal"
-  | "multiply"
-  | "screen"
-  | "overlay"
-  | "darken"
-  | "lighten";
 
 export type StrokeStyle = "solid" | "dashed" | "dotted";
 export type LineCap = "butt" | "round" | "square";
@@ -52,19 +52,19 @@ export interface ToolOptions {
   strokeStyle?: StrokeStyle;
   fill?: string;
   opacity?: number;
-  blendMode?: BlendMode;
+  blendMode?: BlendMode; // ← still available via re-export
   fontFamily?: string;
   fontSize?: number;
   fontWeight?: number;
   textAlign?: TextAlignX;
   lineCap?: LineCap;
   lineJoin?: LineJoin;
-  brushStyle?: BrushStyle; // NEW: advanced brush style
-  hardness?: number; // 0-100
-  spacing?: number; // 1-100 (% of diameter)
-  flow?: number; // 1-100
-  alpha?: number; // 0-100
-  pressure?: boolean; // pressure sensitivity
-  smoothing?: number; // 0-100 path smoothing
+  brushStyle?: BrushStyle;
+  hardness?: number; // UI -> engine converts to softness
+  spacing?: number;
+  flow?: number;
+  alpha?: number; // (you can remove later if redundant with opacity)
+  pressure?: boolean;
+  smoothing?: number;
   brushId?: string;
 }
