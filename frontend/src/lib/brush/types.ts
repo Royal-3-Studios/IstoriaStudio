@@ -1,16 +1,8 @@
 // src/lib/brush/types.ts
-
 // Engine-facing types — shared by engine & UI
 
-export type BrushBackend = "ribbon" | "stamping" | "spray" | "wet" | "auto";
-
-export type RenderingMode =
-  | "LightGlaze"
-  | "UniformedGlaze"
-  | "IntenseGlaze"
-  | "HeavyGlaze"
-  | "UniformBlending"
-  | "IntenseBlending";
+export type BrushBackend = import("@/lib/brush/engine").BrushBackend;
+export type RenderingMode = import("@/lib/brush/engine").RenderingMode;
 
 export type BlendMode =
   | "normal"
@@ -41,9 +33,3 @@ export type BlendMode =
   | "divide"
   | "behind"
   | "clear";
-
-// (Optional, add later if you want Apple Pencil mappings baked in here)
-// export type InputSignal = 'pressure' | 'tilt' | 'azimuth' | 'speed' | 'barrel' | 'squeeze';
-// export type TargetParam = 'size' | 'opacity' | 'flow' | 'spacing' | 'scatter' | 'rotation' | 'grainDepth' | 'grainScale';
-// export type CurveKind = 'linear' | 'expo' | 'inv' | 'ease';
-// export interface DynamicMap { input: InputSignal; target: TargetParam; curve?: CurveKind; min: number; max: number; }

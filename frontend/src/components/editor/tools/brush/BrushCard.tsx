@@ -5,7 +5,8 @@ import type { BrushPreset } from "@/data/brushPresets";
 import { Sun, Moon } from "lucide-react";
 import { drawStrokeToCanvas } from "@/lib/brush/engine";
 
-const DEFAULT_CHARCOAL = "#000000";
+const PREVIEW_W = 352;
+const PREVIEW_H = 127;
 
 export const BrushCard = React.memo(function BrushCard({
   preset,
@@ -20,45 +21,28 @@ export const BrushCard = React.memo(function BrushCard({
 }) {
   const [bgMode, setBgMode] = React.useState<"light" | "dark">(initialBg);
 
-  // Base size from the preset (kept small for cards)
+  // Base size from the preset (kept modest for cards)
   const sizeParam = preset.params.find((p) => p.type === "size");
   const baseSizePx = Math.max(
     2,
     Math.min(
       28,
       Number(sizeParam?.defaultValue ?? 12) *
-        (preset.engine.shape.sizeScale ?? 1)
+        (preset.engine.shape?.sizeScale ?? 1) // <- optional chaining
     )
   );
 
-  // --- Measure preview area ---
-  const previewRef = React.useRef<HTMLDivElement | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
-  const [previewSize, setPreviewSize] = React.useState({ w: 0, h: 0 });
 
-  React.useLayoutEffect(() => {
-    if (!previewRef.current) return;
-    const el = previewRef.current;
-    const ro = new ResizeObserver(() => {
-      const w = Math.floor(el.clientWidth);
-      // Flatter aspect so stroke reads longer
-      const h = Math.max(56, Math.floor(w * 0.34));
-      setPreviewSize({ w, h });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Longer, flatter S-curve; very small X insets so it spans the card.
+  // Fixed-dimension S curve like Procreate preview
   const path = React.useMemo(() => {
-    const { w, h } = previewSize;
-    if (!w || !h) return null;
+    const w = PREVIEW_W;
+    const h = PREVIEW_H;
 
-    const scatterPct = (preset.engine.strokePath.scatter ?? 0) / 100;
+    const scatterPct = (preset.engine.strokePath?.scatter ?? 0) / 100; // <- optional chaining
     const radius = baseSizePx * 0.5;
     const worstScatter = baseSizePx * 0.5 * scatterPct;
 
-    // Smaller, but safe insets
     const INSET_X = Math.ceil(
       Math.max(8, radius * 0.8 + worstScatter * 0.6 + 4)
     );
@@ -66,12 +50,11 @@ export const BrushCard = React.memo(function BrushCard({
 
     const x0 = INSET_X;
     const x1 = Math.max(x0 + 1, w - INSET_X);
-
     const usableH = Math.max(1, h - INSET_Y * 2);
-    const midY = Math.floor(h * 0.58);
-    const amp = Math.min(usableH * 0.26, 22); // flatter
 
-    const freq = 5.2; // stretched S
+    const midY = Math.floor(h * 0.58);
+    const amp = Math.min(usableH * 0.26, 22);
+    const freq = 5.2;
     const wiggle = 0.34;
     const steps = 60;
 
@@ -80,14 +63,13 @@ export const BrushCard = React.memo(function BrushCard({
       const t = i / steps;
       const x = x0 + (x1 - x0) * t;
       const y = midY - amp * (t - 0.5) + amp * wiggle * Math.sin(freq * t);
-
       const dx = (x1 - x0) / steps;
       const dy =
         -amp / steps + (amp * wiggle * freq * Math.cos(freq * t)) / steps;
       pts.push({ x, y, angle: Math.atan2(dy, dx) });
     }
     return pts;
-  }, [previewSize, baseSizePx, preset.engine.strokePath.scatter]);
+  }, [baseSizePx, preset.engine.strokePath?.scatter]); // <- safe dep
 
   // Deterministic seed per brush id
   const seed = React.useMemo(
@@ -96,22 +78,21 @@ export const BrushCard = React.memo(function BrushCard({
   );
 
   const spacingOverride =
-    (preset.engine.strokePath.spacing ?? 6) / Math.max(1, baseSizePx * 0.5);
+    (preset.engine.strokePath?.spacing ?? 6) / Math.max(1, baseSizePx * 0.5); // <- optional chaining
 
-  // Draw whenever size, bg, or preset changes
+  // Draw on change
   React.useEffect(() => {
     const el = canvasRef.current;
     if (!el || !path) return;
     drawStrokeToCanvas(el, {
       engine: preset.engine,
       baseSizePx,
-      // color: DEFAULT_CHARCOAL,
       color: "#000000",
-      width: previewSize.w,
-      height: previewSize.h,
+      width: 352,
+      height: 127,
+      pixelRatio: 2,
       seed,
       path,
-      // colorJitter: { h: 2, s: 2, l: 1, perStamp: true },
       colorJitter: undefined,
       overrides: {
         centerlinePencil: true,
@@ -119,7 +100,7 @@ export const BrushCard = React.memo(function BrushCard({
         spacing: spacingOverride,
       },
     });
-  }, [preset.engine, baseSizePx, seed, path, previewSize.w, previewSize.h]);
+  }, [preset.engine, baseSizePx, seed, path, spacingOverride]);
 
   const title = preset.name;
   const subtitle = preset.subtitle ?? "";
@@ -142,21 +123,19 @@ export const BrushCard = React.memo(function BrushCard({
       onKeyDown={(e) => e.key === "Enter" && onSelect?.(preset.id)}
       tabIndex={0}
       aria-label={subtitle ? `${title} — ${subtitle}` : title}
-      // Fill the grid column; only height is fixed
       style={{ width: "100%", height: 132 }}
       title={title}
     >
       {/* background */}
       <div className="absolute inset-0" style={bgStyle} />
 
-      {/* preview area: full width of card */}
-      <div ref={previewRef} className="absolute inset-x-0 top-0 p-0">
-        <div
-          className="relative w-full"
-          style={{ height: previewSize.h || 56 }}
-        >
-          <canvas ref={canvasRef} className="absolute inset-0 block" />
-        </div>
+      {/* fixed-size preview centered at top */}
+      <div className="absolute inset-x-0 top-0 flex justify-center pt-0">
+        <canvas
+          ref={canvasRef}
+          className="block"
+          style={{ width: PREVIEW_W, height: PREVIEW_H }}
+        />
       </div>
 
       {/* text footer */}

@@ -1,530 +1,171 @@
 // src/lib/brush/engine.ts
 /**
- * 6B pencil — ribbon silhouette (no stamping).
- * - Dark core: base fill + opacity spine (source-over) + 2 glazes + narrow spine glaze (multiply)
- * - No explicit rim; edges stay naturally lighter
- * - Long, thin tapers; slight mid-body fullness
- * - Axial micro-jitter for organic feel
- * - Dual-scale grain inside the core only
- * - DPR safe
+ * Brush engine orchestrator:
+ * - Unifies types used by UI (BrushSettings) and presets
+ * - Picks a backend: ribbon | stamping | spray | wet | auto
+ * - Forwards RenderOptions unchanged to the selected backend
  */
 
-export type BrushEngineConfig = {
-  shape?: { sizeScale?: number };
-  strokePath?: { scatter?: number };
+import { drawRibbonToCanvas } from "./backends/ribbon";
+import { drawStampingToCanvas } from "./backends/stamping";
+import { drawSprayToCanvas } from "./backends/spray";
+import { drawWetToCanvas } from "./backends/wet";
+
+/* ============================== Types =============================== */
+
+export type BrushBackend = "ribbon" | "stamping" | "spray" | "wet" | "auto";
+
+/** Canonical rendering modes (no legacy names) */
+export type RenderingMode = "blended" | "glazed" | "marker" | "spray" | "wet";
+
+export type EngineShape = {
+  /** Tip semantics; backends may ignore some fields */
+  type?:
+    | "oval"
+    | "round"
+    | "nib"
+    | "image"
+    | "chisel"
+    | "square"
+    | "spray"
+    | "charcoal";
+  angle?: number; // deg
+  softness?: number; // 0..100
+  roundness?: number; // 0..100
+  sizeScale?: number; // scalar
 };
 
+export type EngineStrokePath = {
+  spacing?: number; // % of diameter for stamping/spray
+  jitter?: number; // % of spacing for stamping/spray
+  scatter?: number; // px normal to path
+  streamline?: number; // % path smoothing
+  count?: number; // stamps per step (1+)
+};
+
+export type EngineGrain = {
+  kind?: "none" | "paper" | "canvas" | "noise";
+  depth?: number; // 0..100
+  scale?: number; // 0.5..3 (bigger => finer look)
+  rotate?: number; // deg
+};
+
+export type EngineRendering = {
+  mode?: RenderingMode; // high-level intent; backends can ignore
+  wetEdges?: boolean;
+  flow?: number; // 0..100; high-level flow hint
+};
+
+export type RenderOverrides = {
+  centerlinePencil?: boolean;
+
+  // path placement (stamping/spray)
+  spacing?: number; // %
+  jitter?: number; // %
+  scatter?: number; // px
+  count?: number; // integer
+
+  // tip & orientation
+  angle?: number; // deg
+  softness?: number; // 0..100
+
+  // dynamics/feel
+  flow?: number; // 0..100
+  coreStrength?: number; // ribbon core intensity (60..300 OK)
+
+  // grain
+  grainKind?: "none" | "paper" | "canvas" | "noise";
+  grainScale?: number; // 0.5..3
+  grainDepth?: number; // 0..100
+  grainRotate?: number; // deg
+
+  // wet
+  wetEdges?: boolean;
+};
+
+export type EngineConfig = {
+  backend?: BrushBackend; // if omitted/auto, we pick via heuristics
+  shape?: EngineShape;
+  strokePath?: EngineStrokePath;
+  grain?: EngineGrain;
+  rendering?: EngineRendering;
+  /** Engine-local defaults; UI may still override via RenderOptions.overrides */
+  overrides?: Partial<RenderOverrides>;
+};
+
+/** Back-compat alias if other files still import this name */
+export type BrushEngineConfig = EngineConfig;
+
 export type RenderOptions = {
-  engine: BrushEngineConfig;
-  baseSizePx: number; // diameter in CSS px
+  engine: EngineConfig;
+  baseSizePx: number; // diameter in CSS px (UI "size")
   color?: string;
   width: number; // CSS px
   height: number; // CSS px
   seed?: number;
-  path?: Array<{ x: number; y: number; angle?: number }>;
-  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
-  overrides?: Partial<{
-    centerlinePencil: boolean;
-    spacing: number;
-    jitter: number;
-    flow: number; // 0..100
-    grainKind: "none" | "paper" | "canvas" | "noise";
-    grainScale: number; // 0.5..3 (bigger => finer)
-    grainDepth: number; // 0..100
-    grainRotate: number; // deg
-    angle: number; // global rotation (radians)
-    coreStrength: number; // 60..300 (effective)
-    scatter: number;
-    count: number;
-    softness: number;
-    wetEdges: boolean;
+  pixelRatio?: number;
+
+  /** Optional path with angles & stylus signals */
+  path?: Array<{
+    x: number;
+    y: number;
+    angle?: number;
+    pressure?: number;
+    tilt?: number;
   }>;
+
+  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
+  overrides?: Partial<RenderOverrides>;
 };
 
-const DEFAULT_COLOR = "#000000";
-const PREVIEW_MIN = { width: 352, height: 128 };
+/* ========================== Backend selection ======================= */
 
-/** Tuned toward Procreate 6B — long taper + solid/dark core (last-mile) */
-const PENCIL_TUNING = {
-  // geometry
-  bodyWidthScale: 0.44,
-  taperMin: 240,
-  taperMax: 770, // +3% vs previous
-  taperRadiusFactor: 23.6,
-  tipSharpenBoost: 0.251,
-  midBoostAmt: 0.15,
+function pickBackend(opt: RenderOptions): Exclude<BrushBackend, "auto"> {
+  const cfg = opt.engine ?? {};
+  const ov = cfg.overrides ?? {};
+  const ui = opt.overrides ?? {};
 
-  // curvature response (kept for potential future use)
-  curvatureDarken: 0.22,
-  curvatureWidthTrim: 0.14,
+  const chosen = cfg.backend ?? "auto";
+  if (chosen !== "auto") return chosen;
 
-  // glazes (multiply)
-  glazeBlurPx: 0.46,
-  glaze1Alpha: 0.58,
-  glaze2Alpha: 0.31,
-  plateAlpha: 0.141, // slightly slimmer body
-  spineAlpha: 0.2, // tighter, darker spine
+  const wet = Boolean(
+    (ui.wetEdges ?? cfg.rendering?.wetEdges ?? false) ||
+      cfg.rendering?.mode === "wet"
+  );
 
-  // opacity spine (source-over) — raises alpha (real solidity)
-  opacitySpineAlpha: 0.33, // 0..1 ; scaled by coreK below
-  opacitySpineBlurK: 0.55, // fraction of glazeBlurPx
-  opacitySpineWidth: 1.55, // × mean radius
+  const scatter = Math.max(ui.scatter ?? cfg.strokePath?.scatter ?? 0, 0);
+  const count = Math.max(Math.round(ui.count ?? cfg.strokePath?.count ?? 1), 1);
 
-  // micro jitter
-  microJitterPx: 0.28,
-  microJitterFreq: 0.18,
-
-  // grain
-  grainDepthDefault: 0.32,
-  grainScaleDefault: 1.45, // slightly finer tooth
-  grainAnisoX: 0.7,
-  grainAnisoY: 1.35,
-
-  // fine dust
-  fineDustAlphaK: 0.13,
-  fineDustScaleDiv: 4,
-  fineDustRotateK: 1.2,
-} as const;
-
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
-const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-const clamp = (v: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, v));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const easePow = (t: number) => 1 - Math.pow(1 - clamp01(t), 2.3);
-
-function seededRand(seed: number) {
-  let x = seed || 123456789;
-  return () => {
-    x ^= x << 13;
-    x ^= x >>> 17;
-    x ^= x << 5;
-    return ((x >>> 0) % 1_000_000) / 1_000_000;
-  };
+  if (wet) return "wet";
+  if (scatter >= 12 || count >= 12) return "spray";
+  if (ui.centerlinePencil || ov.centerlinePencil) return "ribbon";
+  return "stamping";
 }
 
-function makeCanvas(w: number, h: number): OffscreenCanvas | HTMLCanvasElement {
-  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
-  if (typeof document !== "undefined") {
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    return c;
-  }
-  throw new Error("No canvas implementation available.");
-}
-function is2DContext(ctx: unknown): ctx is Ctx2D {
-  if (!ctx || typeof ctx !== "object") return false;
-  const c = ctx as Record<string, unknown>;
-  return typeof c.drawImage === "function" && "canvas" in c;
-}
-function get2DContext(c: OffscreenCanvas | HTMLCanvasElement): Ctx2D {
-  const ctx = c.getContext("2d");
-  if (!is2DContext(ctx)) throw new Error("2D context not available.");
-  return ctx;
-}
-
-function makeNoiseTile(size = 64, seed = 1) {
-  const c = makeCanvas(size, size);
-  const ctx = get2DContext(c);
-  const img = ctx.createImageData(size, size);
-  const rnd = seededRand(seed);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = (rnd() * 0.6 + rnd() * 0.4) * 255;
-    img.data[i] = v;
-    img.data[i + 1] = v;
-    img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  return c;
-}
-
-// ----------------------------- path utils ---------------------------------
-
-function defaultPath(w: number, h: number) {
-  const pts: Array<{ x: number; y: number; angle: number }> = [];
-  const x0 = Math.max(6, Math.floor(w * 0.06));
-  const x1 = Math.min(w - 6, Math.floor(w * 0.94));
-  const midY = Math.floor(h * 0.6);
-  const amp = Math.max(6, Math.min(h * 0.35, 32));
-  const steps = 72;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const x = x0 + (x1 - x0) * t;
-    const y = midY - amp * t + amp * 0.45 * Math.sin(6.5 * t);
-    const dx = (x1 - x0) / steps;
-    const dy = -amp / steps + (amp * 0.45 * 6.5 * Math.cos(6.5 * t)) / steps;
-    pts.push({ x, y, angle: Math.atan2(dy, dx) });
-  }
-  return pts;
-}
-
-type Sample = { x: number; y: number; angle: number; s: number; k?: number };
-
-function resampleUniform(
-  path: Array<{ x: number; y: number; angle?: number }>,
-  step: number
-): Sample[] {
-  if (!path.length) return [];
-  const segs: number[] = [0];
-  for (let i = 1; i < path.length; i++) {
-    const dx = path[i].x - path[i - 1].x;
-    const dy = path[i].y - path[i - 1].y;
-    segs[i] = segs[i - 1] + Math.hypot(dx, dy);
-  }
-  const L = segs[segs.length - 1];
-  if (L <= 0) return [];
-
-  const out: Sample[] = [];
-  for (let d = 0; d <= L; d += step) {
-    let i = 1;
-    while (i < segs.length && segs[i] < d) i++;
-    const s0 = segs[i - 1],
-      s1 = segs[i];
-    const t = Math.min(1, Math.max(0, (d - s0) / Math.max(1e-6, s1 - s0)));
-    const p0 = path[i - 1],
-      p1 = path[i];
-    const x = lerp(p0.x, p1.x, t),
-      y = lerp(p0.y, p1.y, t);
-    const ang =
-      p0.angle != null && p1.angle != null
-        ? lerp(p0.angle, p1.angle, t)
-        : Math.atan2(p1.y - p0.y, p1.x - p0.x);
-    out.push({ x, y, angle: ang, s: d });
-  }
-
-  // simple curvature estimate (0..1) via angle second-difference (kept for future use)
-  for (let i = 1; i < out.length - 1; i++) {
-    const a0 = out[i - 1].angle,
-      a1 = out[i].angle,
-      a2 = out[i + 1].angle;
-    const da1 = wrapAngle(a1 - a0);
-    const da2 = wrapAngle(a2 - a1);
-    const k = Math.min(1, Math.abs(da2 - da1) * 1.2);
-    out[i].k = k;
-  }
-  if (out.length) {
-    out[0].k = out[1]?.k ?? 0;
-    out[out.length - 1].k = out[out.length - 2]?.k ?? 0;
-  }
-  return out;
-}
-function wrapAngle(a: number) {
-  while (a > Math.PI) a -= 2 * Math.PI;
-  while (a < -Math.PI) a += 2 * Math.PI;
-  return a;
-}
-
-function buildRibbonPath(
-  samples: Sample[],
-  radiusAt: (s: number) => number
-): Path2D {
-  const left: Array<{ x: number; y: number }> = [];
-  const right: Array<{ x: number; y: number }> = [];
-
-  const n = samples.length;
-  for (let i = 0; i < n; i++) {
-    const aPrev = i > 0 ? samples[i - 1].angle : samples[i].angle;
-    const aNext = i < n - 1 ? samples[i + 1].angle : samples[i].angle;
-    const ang = (aPrev + aNext) * 0.5;
-    const nx = -Math.sin(ang),
-      ny = Math.cos(ang);
-    const r = Math.max(0, radiusAt(samples[i].s));
-    left.push({ x: samples[i].x - nx * r, y: samples[i].y - ny * r });
-    right.push({ x: samples[i].x + nx * r, y: samples[i].y + ny * r });
-  }
-
-  const path = new Path2D();
-  path.moveTo(left[0].x, left[0].y);
-  for (let i = 1; i < n; i++) path.lineTo(left[i].x, left[i].y);
-  for (let i = n - 1; i >= 0; i--) path.lineTo(right[i].x, right[i].y);
-  path.closePath();
-  return path;
-}
-
-// ------------------------------- main draw --------------------------------
+/* ============================== Orchestrator ======================== */
 
 export async function drawStrokeToCanvas(
   canvas: HTMLCanvasElement,
   opt: RenderOptions
 ): Promise<void> {
-  const dpr =
-    typeof window !== "undefined"
-      ? Math.max(1, window.devicePixelRatio || 1)
-      : 1;
-
-  const minW = opt.overrides?.centerlinePencil ? PREVIEW_MIN.width : 1;
-  const minH = opt.overrides?.centerlinePencil ? PREVIEW_MIN.height : 1;
-  const targetW = Math.max(minW, Math.floor(opt.width || PREVIEW_MIN.width));
-  const targetH = Math.max(minH, Math.floor(opt.height || PREVIEW_MIN.height));
-
-  if (
-    typeof HTMLCanvasElement !== "undefined" &&
-    canvas instanceof HTMLCanvasElement
-  ) {
-    canvas.style.width = `${targetW}px`;
-    canvas.style.height = `${targetH}px`;
+  const backend = pickBackend(opt);
+  switch (backend) {
+    case "ribbon":
+      await drawRibbonToCanvas(canvas, opt);
+      break;
+    case "spray":
+      await drawSprayToCanvas(canvas, opt);
+      break;
+    case "wet":
+      await drawWetToCanvas(canvas, opt);
+      break;
+    case "stamping":
+    default:
+      await drawStampingToCanvas(canvas, opt);
+      break;
   }
-  canvas.width = Math.max(1, Math.floor(targetW * dpr));
-  canvas.height = Math.max(1, Math.floor(targetH * dpr));
-
-  const ctx = canvas.getContext("2d");
-  if (!is2DContext(ctx)) throw new Error("2D context not available.");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, targetW, targetH);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const color = opt.color ?? DEFAULT_COLOR;
-  void color;
-
-  // CSS units
-  const baseRadiusRaw = Math.max(0.5, (opt.baseSizePx || 8) * 0.5);
-  const baseRadius = opt.overrides?.centerlinePencil
-    ? Math.max(0.5, baseRadiusRaw * PENCIL_TUNING.bodyWidthScale)
-    : baseRadiusRaw;
-
-  const flow = clamp01((opt.overrides?.flow ?? 100) / 100);
-
-  // strong default core (your preset can override, e.g. 280–310)
-  const coreK = clamp((opt.overrides?.coreStrength ?? 300) / 100, 0.6, 3.0);
-
-  const grainScale =
-    opt.overrides?.grainScale ?? PENCIL_TUNING.grainScaleDefault;
-  const grainDepth =
-    opt.overrides?.grainKind === "none"
-      ? 0
-      : clamp01(
-          (opt.overrides?.grainDepth ?? PENCIL_TUNING.grainDepthDefault * 100) /
-            100
-        );
-  const grainRotateDeg = opt.overrides?.grainRotate ?? 8;
-  const grainRotateRad = (grainRotateDeg * Math.PI) / 180;
-
-  // path + samples
-  const rawPath =
-    opt.path && opt.path.length > 1 ? opt.path : defaultPath(targetW, targetH);
-  const step = Math.max(0.6, baseRadius * 0.18);
-  const samples = resampleUniform(rawPath, step);
-  if (!samples.length) return;
-
-  // taper logic (distance-based)
-  const totalLen = samples[samples.length - 1].s;
-  const taperLen = clamp(
-    baseRadius * PENCIL_TUNING.taperRadiusFactor,
-    PENCIL_TUNING.taperMin,
-    PENCIL_TUNING.taperMax
-  );
-  const radiusAt = (s: number) => {
-    const tStart = clamp01(s / taperLen);
-    const tEnd = clamp01((totalLen - s) / taperLen);
-    const baseTaper = Math.min(easePow(tStart), easePow(tEnd));
-
-    const edge = Math.min(tStart, tEnd);
-    const sharpen = 1 - PENCIL_TUNING.tipSharpenBoost * Math.pow(1 - edge, 1.6);
-
-    const u = clamp01(s / Math.max(1e-6, totalLen));
-    const bell = 1 - 4 * Math.pow(u - 0.5, 2);
-    const midBoost =
-      1 + PENCIL_TUNING.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
-
-    return baseRadius * clamp01(baseTaper * sharpen) * midBoost;
-  };
-
-  // micro-jitter that peaks mid-stroke, fades toward tips
-  const jitterAt = (s: number, ang: number) => {
-    const tip = Math.min(s / taperLen, (totalLen - s) / taperLen);
-    const fadeTips = clamp01(1 - tip * 1.5);
-    const u = clamp01(s / Math.max(1e-6, totalLen));
-    const bell = 1 - 4 * Math.pow(u - 0.5, 2); // peaks at center
-    const amp = PENCIL_TUNING.microJitterPx * fadeTips * (0.7 + 0.3 * bell);
-    const j = amp * Math.sin(s * PENCIL_TUNING.microJitterFreq);
-    return { ox: Math.cos(ang) * j, oy: Math.sin(ang) * j };
-  };
-
-  const ribbon = buildRibbonPath(samples, radiusAt);
-
-  // ----------------- paint inside ribbon -----------------
-  ctx.save();
-  ctx.clip(ribbon);
-
-  // (A) Base fill — DARK & opaque enough to be visible on white
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = `rgba(0,0,0,${(0.75 * flow).toFixed(3)})`;
-  ctx.fill(ribbon, "nonzero");
-
-  // (A2) Opacity spine — source-over stroke to increase ALPHA in the core
-  {
-    const meanR = baseRadius * 0.95;
-    const blurPx = PENCIL_TUNING.glazeBlurPx * PENCIL_TUNING.opacitySpineBlurK;
-    ctx.filter = `blur(${blurPx}px)`;
-    ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.opacitySpineAlpha * coreK).toFixed(3)})`;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      const j = jitterAt(s.s, s.angle);
-      if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
-      else ctx.lineTo(s.x + j.ox, s.y + j.oy);
-    }
-    ctx.lineWidth = Math.max(0.9, meanR * PENCIL_TUNING.opacitySpineWidth);
-    ctx.stroke();
-    ctx.filter = "none";
-  }
-
-  // (B) Plate — multiply (broad body weight), slightly slimmer
-  ctx.globalCompositeOperation = "multiply";
-  {
-    const meanR = baseRadius * 0.95;
-    const plateW = Math.max(1.0, meanR * 2.14); // was 2.2
-    ctx.filter = `blur(${(PENCIL_TUNING.glazeBlurPx * 1.15).toFixed(3)}px)`;
-    ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.plateAlpha * coreK).toFixed(3)})`;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      const j = jitterAt(s.s, s.angle);
-      if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
-      else ctx.lineTo(s.x + j.ox, s.y + j.oy);
-    }
-    ctx.lineWidth = plateW;
-    ctx.stroke();
-    ctx.filter = "none";
-  }
-
-  // (C) Core glazes — multiply
-  ctx.filter = `blur(${PENCIL_TUNING.glazeBlurPx}px)`;
-  {
-    const meanR = baseRadius * 0.95;
-
-    // Glaze 1 (slightly narrower)
-    ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.glaze1Alpha * coreK).toFixed(3)})`;
-    ctx.beginPath();
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      const j = jitterAt(s.s, s.angle);
-      if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
-      else ctx.lineTo(s.x + j.ox, s.y + j.oy);
-    }
-    ctx.lineWidth = Math.max(
-      0.9,
-      meanR * (1.34 - PENCIL_TUNING.curvatureWidthTrim * 0.5)
-    ); // was 1.36
-    ctx.stroke();
-
-    // Glaze 2 (also a hair narrower)
-    ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.glaze2Alpha * coreK).toFixed(3)})`;
-    ctx.beginPath();
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      const j = jitterAt(s.s, s.angle);
-      if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
-      else ctx.lineTo(s.x + j.ox, s.y + j.oy);
-    }
-    ctx.lineWidth = Math.max(
-      1.0,
-      meanR * (1.58 - PENCIL_TUNING.curvatureWidthTrim)
-    ); // was 1.62
-    ctx.stroke();
-  }
-
-  // (C3) Narrow spine glaze — multiply, tighter
-  ctx.filter = `blur(${(PENCIL_TUNING.glazeBlurPx * 0.85).toFixed(3)}px)`;
-  {
-    const meanR = baseRadius * 0.95;
-    ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.spineAlpha * coreK).toFixed(3)})`;
-    ctx.beginPath();
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      const j = jitterAt(s.s, s.angle);
-      if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
-      else ctx.lineTo(s.x + j.ox, s.y + j.oy);
-    }
-    ctx.lineWidth = Math.max(0.8, meanR * 0.96); // was ~1.02
-    ctx.stroke();
-  }
-  ctx.filter = "none";
-
-  // (D) Grain — inside only
-  if (grainDepth > 0.001) {
-    const tile = makeNoiseTile(64, 31 * ((opt.seed ?? 7) % 997) + 7);
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.translate(samples[0].x, samples[0].y);
-    ctx.rotate(grainRotateRad);
-    ctx.scale(PENCIL_TUNING.grainAnisoX, PENCIL_TUNING.grainAnisoY);
-    const w = Math.max(
-      32,
-      Math.ceil((targetW + targetH) / Math.max(0.5, grainScale))
-    );
-    ctx.globalAlpha = grainDepth * 0.22;
-    ctx.drawImage(tile, -w / 2, -w / 2, w, w);
-    ctx.restore();
-
-    // mask: narrower than ribbon so grain never hits rim
-    ctx.globalCompositeOperation = "destination-in";
-    const meanR = baseRadius * 0.95;
-    ctx.strokeStyle = "rgba(0,0,0,1)";
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = Math.max(0.8, meanR * 1.24);
-    ctx.beginPath();
-    ctx.moveTo(samples[0].x, samples[0].y);
-    for (let i = 1; i < samples.length; i++)
-      ctx.lineTo(samples[i].x, samples[i].y);
-    ctx.stroke();
-
-    ctx.globalCompositeOperation = "source-over";
-
-    // fine dust
-    const fineTile = makeNoiseTile(32, 101 * ((opt.seed ?? 7) % 997) + 13);
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.translate(samples[0].x, samples[0].y);
-    ctx.rotate(grainRotateRad * PENCIL_TUNING.fineDustRotateK);
-    ctx.scale(1.08, 1.08);
-    const wf = Math.max(
-      16,
-      Math.ceil((targetW + targetH) / PENCIL_TUNING.fineDustScaleDiv)
-    );
-    ctx.globalAlpha = grainDepth * PENCIL_TUNING.fineDustAlphaK;
-    ctx.drawImage(fineTile, -wf / 2, -wf / 2, wf, wf);
-    ctx.restore();
-
-    // fade dust toward the ends along the stroke direction (belly strongest)
-    ctx.globalCompositeOperation = "destination-in";
-    const g = ctx.createLinearGradient(
-      samples[0].x,
-      samples[0].y,
-      samples[samples.length - 1].x,
-      samples[samples.length - 1].y
-    );
-    g.addColorStop(0.0, "rgba(0,0,0,0.50)");
-    g.addColorStop(0.5, "rgba(0,0,0,1.00)");
-    g.addColorStop(1.0, "rgba(0,0,0,0.50)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, targetW, targetH);
-
-    // mask again (keep dust inside the core)
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.strokeStyle = "rgba(0,0,0,1)";
-    ctx.lineWidth = Math.max(0.7, baseRadius * 1.16);
-    ctx.beginPath();
-    ctx.moveTo(samples[0].x, samples[0].y);
-    for (let i = 1; i < samples.length; i++)
-      ctx.lineTo(samples[i].x, samples[i].y);
-    ctx.stroke();
-
-    ctx.globalCompositeOperation = "source-over";
-  }
-
-  ctx.restore(); // end ribbon clip
 }
 
-/** Back-compat alias */
+/** Back-compat alias used elsewhere */
 export const renderBrushPreview = drawStrokeToCanvas;
 export default drawStrokeToCanvas;

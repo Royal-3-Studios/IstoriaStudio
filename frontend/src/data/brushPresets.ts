@@ -1,7 +1,9 @@
 // src/data/brushPresets.ts
 
+import type { EngineConfig, RenderingMode } from "@/lib/brush/engine";
+
 /* ============================
-   Types
+   UI Param Types
    ============================ */
 
 export type BrushParamType =
@@ -24,74 +26,7 @@ export type BrushParam = {
   max?: number;
   step?: number;
   defaultValue: number;
-  show?: boolean; // optional visibility hint for your settings UI
-};
-
-export type StrokePathCfg = {
-  spacing: number; // px between stamps (UI)
-  jitter: number; // 0..100 path jitter (UI)
-  scatter: number; // 0..100 radial scatter per stamp (UI)
-  streamline: number; // 0..100 (used by preview curve feel)
-  count: number; // stamps per step (e.g. spray)
-};
-
-export type ShapeCfg = {
-  type: "round" | "oval" | "chisel" | "square" | "spray" | "charcoal";
-  angle?: number; // deg (for chisel/oval)
-  softness?: number; // 0..100; affects alpha/edge
-  roundness?: number; // 0..100; oval squish
-  sizeScale?: number; // preview size multiplier
-};
-
-export type GrainKind = "none" | "paper" | "canvas" | "noise";
-
-export type GrainCfg = {
-  kind: GrainKind;
-  depth: number; // 0..100 (UI)
-  scale: number; // texture scale for preview/UI
-};
-
-export type RenderingMode =
-  | "uniformGlaze"
-  | "lightGlaze"
-  | "heavyGlaze"
-  | "wetMix"
-  | "blended"
-  | "intenseGlaze";
-
-export type RenderingCfg = {
-  mode: RenderingMode;
-  wetEdges: boolean;
-  flow: number; // 0..100 (UI)
-};
-
-// === NEW === Keep this in sync with RenderOptions["overrides"] used by the engine
-export type BrushOverrides = Partial<{
-  centerlinePencil: boolean;
-  spacing: number; // fraction of radius (engine uses factor * baseRadius)
-  jitter: number; // px
-  scatter: number; // deg (not used by pencil)
-  flow: number; // 0..100
-  softness: number; // 0..100
-  wetEdges: boolean;
-  grainKind: GrainKind;
-  grainScale: number; // 0.25..4
-  grainDepth: number; // 0..100
-  angle: number; // radians for stamp orientation bias
-  count: number; // unused by pencil
-  grainRotate: number; // degrees
-  edgeHotness?: number;
-  coreStrength?: number;
-  disableEdgeTrough?: boolean;
-}>;
-
-export type BrushEngine = {
-  strokePath: StrokePathCfg;
-  shape: ShapeCfg;
-  grain: GrainCfg;
-  rendering: RenderingCfg;
-  // Allow presets to carry through engine-level overrides into RenderOptions
-  overrides?: BrushOverrides;
+  show?: boolean;
 };
 
 export type BrushPreset = {
@@ -99,7 +34,7 @@ export type BrushPreset = {
   name: string;
   subtitle?: string;
   params: BrushParam[];
-  engine: BrushEngine;
+  engine: EngineConfig;
 };
 
 export type BrushCategory = {
@@ -132,9 +67,10 @@ const p = (
   ...(show === false ? { show } : {}),
 });
 
-/* Distinct engine “templates” so previews/cards look unique */
+/* Engine templates (consistent, canonical modes only) */
 const engines = {
-  technical: (): BrushEngine => ({
+  technical: (): EngineConfig => ({
+    backend: "stamping",
     strokePath: {
       spacing: 1.5,
       jitter: 2,
@@ -144,15 +80,19 @@ const engines = {
     },
     shape: { type: "round", softness: 5, sizeScale: 1.0 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "uniformGlaze", wetEdges: false, flow: 100 },
+    rendering: { mode: "glazed", wetEdges: false, flow: 100 },
   }),
-  calligraphy: (angle = 32): BrushEngine => ({
+
+  calligraphy: (angle = 32): EngineConfig => ({
+    backend: "stamping",
     strokePath: { spacing: 3, jitter: 3, scatter: 0, streamline: 70, count: 1 },
     shape: { type: "chisel", angle, softness: 10, sizeScale: 1.1 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "uniformGlaze", wetEdges: false, flow: 90 },
+    rendering: { mode: "glazed", wetEdges: false, flow: 90 },
   }),
-  graphite: (): BrushEngine => ({
+
+  graphite: (): EngineConfig => ({
+    backend: "ribbon",
     strokePath: {
       spacing: 5,
       jitter: 12,
@@ -168,9 +108,12 @@ const engines = {
       sizeScale: 1.0,
     },
     grain: { kind: "paper", depth: 40, scale: 1.2 },
-    rendering: { mode: "lightGlaze", wetEdges: false, flow: 70 },
+    rendering: { mode: "glazed", wetEdges: false, flow: 70 },
+    overrides: { centerlinePencil: true },
   }),
-  charcoal: (): BrushEngine => ({
+
+  charcoal: (): EngineConfig => ({
+    backend: "stamping",
     strokePath: {
       spacing: 7,
       jitter: 24,
@@ -180,9 +123,11 @@ const engines = {
     },
     shape: { type: "charcoal", softness: 55, sizeScale: 1.1 },
     grain: { kind: "noise", depth: 60, scale: 1.3 },
-    rendering: { mode: "lightGlaze", wetEdges: false, flow: 85 },
+    rendering: { mode: "glazed", wetEdges: false, flow: 85 },
   }),
-  spray: (): BrushEngine => ({
+
+  spray: (): EngineConfig => ({
+    backend: "spray",
     strokePath: {
       spacing: 9,
       jitter: 8,
@@ -192,9 +137,11 @@ const engines = {
     },
     shape: { type: "spray", softness: 40, sizeScale: 1.0 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "blended", wetEdges: false, flow: 55 },
+    rendering: { mode: "spray", wetEdges: false, flow: 55 },
   }),
-  watercolor: (): BrushEngine => ({
+
+  watercolor: (): EngineConfig => ({
+    backend: "wet",
     strokePath: {
       spacing: 6,
       jitter: 10,
@@ -204,9 +151,11 @@ const engines = {
     },
     shape: { type: "round", softness: 70, sizeScale: 1.2 },
     grain: { kind: "paper", depth: 35, scale: 1.1 },
-    rendering: { mode: "wetMix", wetEdges: true, flow: 60 },
+    rendering: { mode: "wet", wetEdges: true, flow: 60 },
   }),
-  oil: (): BrushEngine => ({
+
+  oil: (): EngineConfig => ({
+    backend: "stamping",
     strokePath: { spacing: 6, jitter: 8, scatter: 6, streamline: 30, count: 1 },
     shape: {
       type: "oval",
@@ -216,15 +165,19 @@ const engines = {
       sizeScale: 1.3,
     },
     grain: { kind: "canvas", depth: 55, scale: 1.0 },
-    rendering: { mode: "heavyGlaze", wetEdges: false, flow: 75 },
+    rendering: { mode: "blended", wetEdges: false, flow: 75 },
   }),
-  glow: (): BrushEngine => ({
+
+  glow: (): EngineConfig => ({
+    backend: "stamping",
     strokePath: { spacing: 2, jitter: 2, scatter: 0, streamline: 75, count: 1 },
     shape: { type: "round", softness: 20, sizeScale: 0.8 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "uniformGlaze", wetEdges: false, flow: 90 },
+    rendering: { mode: "glazed", wetEdges: false, flow: 90 },
   }),
-  membrane: (): BrushEngine => ({
+
+  membrane: (): EngineConfig => ({
+    backend: "stamping",
     strokePath: {
       spacing: 8,
       jitter: 18,
@@ -308,6 +261,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("opacity", "Opacity", "opacity", 100),
         ],
         engine: {
+          backend: "ribbon",
           strokePath: {
             spacing: 4,
             jitter: 0.5,
@@ -323,10 +277,9 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
             sizeScale: 1.0,
           },
           grain: { kind: "paper", depth: 56, scale: 1.15 },
-          rendering: { mode: "blended", wetEdges: false, flow: 100 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
           overrides: {
             centerlinePencil: true,
-            // spacing/jitter are ignored by the ribbon engine
             flow: 100,
             grainKind: "paper",
             grainScale: 1.35,
@@ -390,7 +343,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("spacing", "Spacing", "spacing", 20),
           p("smoothing", "Smoothing", "smoothing", 15),
         ],
-        engine: engines.watercolor(), // softer edge feel for preview
+        engine: engines.watercolor(),
       },
       {
         id: "watercolor",
@@ -434,7 +387,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("spacing", "Spacing", "spacing", 35),
           p("opacity", "Opacity", "opacity", 50),
         ],
-        engine: engines.spray(), // uses spray dots in preview for uniqueness
+        engine: engines.spray(),
       },
       {
         id: "hard-air",
@@ -595,6 +548,6 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
 ];
 
 /* Lookup by id */
-export const BRUSH_BY_ID = Object.fromEntries(
+export const BRUSH_BY_ID: Record<string, BrushPreset> = Object.fromEntries(
   BRUSH_CATEGORIES.flatMap((c) => c.brushes.map((b) => [b.id, b]))
-) as Record<string, BrushPreset>;
+);

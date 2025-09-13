@@ -7,60 +7,7 @@
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-type EngineShape = {
-  type?: "oval" | "round" | "nib" | "image";
-  roundness?: number; // 0..100
-  softness?: number; // 0..100
-  angle?: number; // deg
-  sizeScale?: number; // scalar
-};
-
-type EngineStrokePath = {
-  spacing?: number; // %
-  jitter?: number; // %
-  scatter?: number; // px
-  count?: number; // stamps per step
-  streamline?: number; // %
-};
-
-type EngineGrain = {
-  kind?: "none" | "paper" | "canvas" | "noise";
-  depth?: number; // 0..100
-  scale?: number; // 0.5..3
-  rotate?: number; // deg
-};
-
-type EngineConfig = {
-  shape?: EngineShape;
-  strokePath?: EngineStrokePath;
-  grain?: EngineGrain;
-};
-
-type RenderOverrides = Partial<{
-  spacing: number;
-  jitter: number;
-  scatter: number;
-  count: number;
-  angle: number; // deg
-  softness: number; // 0..100
-  flow: number; // 0..100
-  grainKind: "none" | "paper" | "canvas" | "noise";
-  grainScale: number; // 0.5..3
-  grainDepth: number; // 0..100
-  grainRotate: number; // deg
-}>;
-
-type RenderOptions = {
-  engine: EngineConfig;
-  baseSizePx: number;
-  color?: string;
-  width: number;
-  height: number;
-  seed?: number;
-  path?: Array<{ x: number; y: number; angle?: number }>;
-  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
-  overrides?: RenderOverrides;
-};
+import type { RenderOptions } from "../engine";
 
 const DEFAULT_COLOR = "#000000";
 const PREVIEW_MIN = { width: 352, height: 128 };
@@ -212,8 +159,8 @@ export async function drawStampingToCanvas(
 ): Promise<void> {
   const dpr =
     typeof window !== "undefined"
-      ? Math.max(1, window.devicePixelRatio || 1)
-      : 1;
+      ? Math.min(opt.pixelRatio ?? window.devicePixelRatio ?? 1, 2)
+      : Math.max(1, opt.pixelRatio ?? 1);
 
   const targetW = Math.max(1, Math.floor(opt.width || PREVIEW_MIN.width));
   const targetH = Math.max(1, Math.floor(opt.height || PREVIEW_MIN.height));

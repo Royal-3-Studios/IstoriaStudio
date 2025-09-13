@@ -6,67 +6,7 @@
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-type EngineShape = {
-  type?: "oval" | "round" | "nib" | "image";
-  angle?: number; // deg
-  softness?: number; // 0..100
-  roundness?: number; // 0..100
-  sizeScale?: number; // scalar
-};
-
-type EngineStrokePath = {
-  spacing?: number; // %
-  jitter?: number; // %
-  scatter?: number; // px
-  streamline?: number; // %
-  count?: number; // stamps per step (ignored in ribbon)
-};
-
-type EngineGrain = {
-  kind?: "none" | "paper" | "canvas" | "noise";
-  depth?: number; // 0..100
-  scale?: number; // ~0.5..3
-  rotate?: number; // deg
-};
-
-export type EngineConfig = {
-  shape?: EngineShape;
-  strokePath?: EngineStrokePath;
-  grain?: EngineGrain;
-};
-
-type RenderOverrides = Partial<{
-  centerlinePencil: boolean;
-  // path/stamping (ignored by ribbon, kept for compatibility)
-  spacing: number;
-  jitter: number;
-  scatter: number;
-  count: number;
-  // shape & feel
-  angle: number; // deg
-  softness: number; // 0..100
-  flow: number; // 0..100
-  coreStrength: number; // 60..300 effective
-  // grain
-  grainKind: "none" | "paper" | "canvas" | "noise";
-  grainScale: number;
-  grainDepth: number; // 0..100
-  grainRotate: number; // deg
-  // wet look flag (ignored by ribbon)
-  wetEdges: boolean;
-}>;
-
-type RenderOptions = {
-  engine: EngineConfig;
-  baseSizePx: number; // diameter in CSS px
-  color?: string;
-  width: number; // CSS px
-  height: number; // CSS px
-  seed?: number;
-  path?: Array<{ x: number; y: number; angle?: number }>;
-  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
-  overrides?: RenderOverrides;
-};
+import type { RenderOptions } from "../engine";
 
 const DEFAULT_COLOR = "#000000";
 const PREVIEW_MIN = { width: 352, height: 128 };
@@ -74,28 +14,29 @@ const PREVIEW_MIN = { width: 352, height: 128 };
 /** Tuned toward Procreate 6B — long taper + solid/dark core */
 const PENCIL_TUNING = {
   // geometry
-  bodyWidthScale: 0.44,
+  bodyWidthScale: 0.42, // was 0.44 → a hair slimmer
   taperMin: 240,
   taperMax: 770,
-  taperRadiusFactor: 23.6,
+  taperRadiusFactor: 26.0, // was 23.6 → slightly longer tip
+
   tipSharpenBoost: 0.251,
   midBoostAmt: 0.15,
 
   // glaze stack
-  glazeBlurPx: 0.46,
-  glaze1Alpha: 0.58,
-  glaze2Alpha: 0.31,
-  plateAlpha: 0.141,
-  spineAlpha: 0.2,
+  glazeBlurPx: 0.52, // was 0.46 → smoother layering
+  glaze1Alpha: 0.62, // your new value kept
+  glaze2Alpha: 0.34, // your new value kept
+  plateAlpha: 0.155, // your new value kept
+  spineAlpha: 0.23, // your new value kept
 
   // opacity spine (source-over)
-  opacitySpineAlpha: 0.33,
+  opacitySpineAlpha: 0.36, // your new value kept
   opacitySpineBlurK: 0.55,
-  opacitySpineWidth: 1.55,
+  opacitySpineWidth: 1.65, // was 1.55 → slightly tighter/darker core
 
-  // micro jitter
-  microJitterPx: 0.28,
-  microJitterFreq: 0.18,
+  // micro jitter (slightly calmer so rim reads cleaner)
+  microJitterPx: 0.24, // was 0.28
+  microJitterFreq: 0.16, // was 0.18
 
   // grain
   grainDepthDefault: 0.32,
@@ -245,8 +186,12 @@ export async function drawRibbonToCanvas(
 ): Promise<void> {
   const dpr =
     typeof window !== "undefined"
-      ? Math.max(1, window.devicePixelRatio || 1)
-      : 1;
+      ? Math.min(opt.pixelRatio ?? window.devicePixelRatio ?? 1, 2) // cap if you want
+      : Math.max(1, opt.pixelRatio ?? 1);
+  // Stabilizers for low DPR rendering
+  const LOW_DPR = dpr <= 1.05;
+  const MIN_BLUR = LOW_DPR ? 0.9 : 0.6; // avoid sub-pixel blur speckle
+  const MIN_STROKE = LOW_DPR ? 1.0 : 0.8; // avoid sub-px core strokes
 
   const minW = opt.overrides?.centerlinePencil ? PREVIEW_MIN.width : 1;
   const minH = opt.overrides?.centerlinePencil ? PREVIEW_MIN.height : 1;
@@ -304,7 +249,7 @@ export async function drawRibbonToCanvas(
   // path + samples
   const rawPath =
     opt.path && opt.path.length > 1 ? opt.path : defaultPath(targetW, targetH);
-  const step = Math.max(0.6, baseRadius * 0.18);
+  const step = Math.max(0.45, baseRadius * 0.15);
   const samples = resampleUniform(rawPath, step);
   if (!samples.length) return;
 
@@ -345,13 +290,16 @@ export async function drawRibbonToCanvas(
 
   // base fill
   ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = `rgba(0,0,0,${(0.75 * flow).toFixed(3)})`;
+  ctx.fillStyle = `rgba(0,0,0,${(0.62 * flow).toFixed(3)})`;
   ctx.fill(ribbon, "nonzero");
 
   // opacity spine
   {
     const meanR = baseRadius * 0.95;
-    const blurPx = PENCIL_TUNING.glazeBlurPx * PENCIL_TUNING.opacitySpineBlurK;
+    const blurPx = Math.max(
+      MIN_BLUR,
+      PENCIL_TUNING.glazeBlurPx * PENCIL_TUNING.opacitySpineBlurK
+    );
     ctx.filter = `blur(${blurPx}px)`;
     ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.opacitySpineAlpha * coreK).toFixed(3)})`;
     ctx.lineCap = "round";
@@ -363,7 +311,10 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(0.9, meanR * PENCIL_TUNING.opacitySpineWidth);
+    ctx.lineWidth = Math.max(
+      MIN_STROKE,
+      meanR * PENCIL_TUNING.opacitySpineWidth
+    );
     ctx.stroke();
     ctx.filter = "none";
   }
@@ -372,8 +323,8 @@ export async function drawRibbonToCanvas(
   ctx.globalCompositeOperation = "multiply";
   {
     const meanR = baseRadius * 0.95;
-    const plateW = Math.max(1.0, meanR * 2.14);
-    ctx.filter = `blur(${(PENCIL_TUNING.glazeBlurPx * 1.15).toFixed(3)}px)`;
+    const plateW = Math.max(1.0, meanR * 1.96);
+    ctx.filter = `blur(${Math.max(MIN_BLUR, PENCIL_TUNING.glazeBlurPx * 1.15).toFixed(3)}px)`;
     ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.plateAlpha * coreK).toFixed(3)})`;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -384,13 +335,13 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = plateW;
+    ctx.lineWidth = Math.max(MIN_STROKE, plateW);
     ctx.stroke();
     ctx.filter = "none";
   }
 
   // glazes
-  ctx.filter = `blur(${PENCIL_TUNING.glazeBlurPx}px)`;
+  ctx.filter = `blur(${Math.max(MIN_BLUR, PENCIL_TUNING.glazeBlurPx).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
 
@@ -402,7 +353,7 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(0.9, meanR * 1.34);
+    ctx.lineWidth = Math.max(MIN_STROKE, meanR * 1.34);
     ctx.stroke();
 
     ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.glaze2Alpha * coreK).toFixed(3)})`;
@@ -413,12 +364,12 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(1.0, meanR * 1.58);
+    ctx.lineWidth = Math.max(MIN_STROKE, meanR * 1.58);
     ctx.stroke();
   }
 
   // spine glaze
-  ctx.filter = `blur(${(PENCIL_TUNING.glazeBlurPx * 0.85).toFixed(3)}px)`;
+  ctx.filter = `blur(${Math.max(MIN_BLUR, PENCIL_TUNING.glazeBlurPx * 0.85).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
     ctx.strokeStyle = `rgba(0,0,0,${(PENCIL_TUNING.spineAlpha * coreK).toFixed(3)})`;
@@ -429,10 +380,43 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(0.8, meanR * 0.96);
+    ctx.lineWidth = Math.max(MIN_STROKE, meanR * 0.96);
     ctx.stroke();
   }
   ctx.filter = "none";
+
+  // Tip fade: make ends lighter like Procreate
+  {
+    ctx.globalCompositeOperation = "destination-in";
+    const g = ctx.createLinearGradient(
+      samples[0].x,
+      samples[0].y,
+      samples[samples.length - 1].x,
+      samples[samples.length - 1].y
+    );
+    // lighter at extreme ends, full through the belly
+    g.addColorStop(0.0, "rgba(0,0,0,0.30)");
+    g.addColorStop(0.1, "rgba(0,0,0,0.75)");
+    g.addColorStop(0.5, "rgba(0,0,0,1.00)");
+    g.addColorStop(0.9, "rgba(0,0,0,0.75)");
+    g.addColorStop(1.0, "rgba(0,0,0,0.30)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  // Edge polish: very slight inner erode to soften the rim
+  {
+    ctx.globalCompositeOperation = "destination-out";
+    (ctx as CanvasRenderingContext2D).filter = "blur(0.35px)";
+    ctx.strokeStyle = "rgba(0,0,0,0.18)";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 0.7; // thin band along the inside rim
+    ctx.stroke(ribbon);
+    (ctx as CanvasRenderingContext2D).filter = "none";
+    ctx.globalCompositeOperation = "source-over";
+  }
 
   // grain inside only (uses precomputed grainScale/rotate/depth)
   if (grainDepth > 0.001) {
@@ -506,6 +490,24 @@ export async function drawRibbonToCanvas(
 
     ctx.globalCompositeOperation = "source-over";
   }
+
+  // Tip fade along the stroke (lighten ends a bit)
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  const fade = ctx.createLinearGradient(
+    samples[0].x,
+    samples[0].y,
+    samples[samples.length - 1].x,
+    samples[samples.length - 1].y
+  );
+  // keep 100% through the middle, ease to ~25% at the tips
+  fade.addColorStop(0.0, "rgba(0,0,0,0.25)");
+  fade.addColorStop(0.08, "rgba(0,0,0,1.0)");
+  fade.addColorStop(0.92, "rgba(0,0,0,1.0)");
+  fade.addColorStop(1.0, "rgba(0,0,0,0.25)");
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, targetW, targetH);
+  ctx.restore();
 
   ctx.restore();
 }

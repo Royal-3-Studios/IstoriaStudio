@@ -4,32 +4,8 @@
  * and smaller tips. Keeps code small while unlocking airbrush behavior.
  */
 
-import { EngineConfig } from "./ribbon";
+import type { RenderOptions } from "../engine";
 import { drawStampingToCanvas as drawStamping } from "./stamping";
-
-type RenderOptions = {
-  engine: EngineConfig;
-  baseSizePx: number;
-  color?: string;
-  width: number;
-  height: number;
-  seed?: number;
-  path?: Array<{ x: number; y: number; angle?: number }>;
-  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
-  overrides?: Partial<{
-    spacing: number;
-    jitter: number;
-    scatter: number;
-    count: number;
-    angle: number;
-    softness: number;
-    flow: number;
-    grainKind: "none" | "paper" | "canvas" | "noise";
-    grainScale: number;
-    grainDepth: number;
-    grainRotate: number;
-  }>;
-};
 
 export async function drawSprayToCanvas(
   canvas: HTMLCanvasElement,

@@ -6,7 +6,7 @@
 export type { BrushBackend, RenderingMode, BlendMode } from "@/lib/brush/types";
 
 // in src/lib/brush/engine.ts (or backends)
-import type { BrushBackend, RenderingMode, BlendMode } from "@/lib/brush/types";
+import type { BlendMode } from "@/lib/brush/types";
 
 // --- Everything below stays exactly as you have it ---
 export type ToolId =

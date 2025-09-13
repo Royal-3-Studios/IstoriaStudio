@@ -8,35 +8,11 @@
  * Swap with real fluid sim later if desired.
  */
 
-import { EngineConfig } from "./ribbon";
+import type { RenderOptions } from "../engine";
+
 import { drawStampingToCanvas as drawStamping } from "./stamping";
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
-type RenderOptions = {
-  engine: EngineConfig;
-  baseSizePx: number;
-  color?: string;
-  width: number;
-  height: number;
-  seed?: number;
-  path?: Array<{ x: number; y: number; angle?: number }>;
-  colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
-  overrides?: Partial<{
-    spacing: number;
-    jitter: number;
-    scatter: number;
-    count: number;
-    angle: number;
-    softness: number;
-    flow: number;
-    wetEdges: boolean; // stronger dark rim if true
-    grainKind: "none" | "paper" | "canvas" | "noise";
-    grainScale: number;
-    grainDepth: number;
-    grainRotate: number;
-  }>;
-};
 
 function is2DContext(ctx: unknown): ctx is Ctx2D {
   if (!ctx || typeof ctx !== "object") return false;
@@ -61,8 +37,8 @@ export async function drawWetToCanvas(
 ): Promise<void> {
   const dpr =
     typeof window !== "undefined"
-      ? Math.max(1, window.devicePixelRatio || 1)
-      : 1;
+      ? Math.min(opt.pixelRatio ?? window.devicePixelRatio ?? 1, 2)
+      : Math.max(1, opt.pixelRatio ?? 1);
 
   const targetW = Math.max(1, Math.floor(opt.width || 352));
   const targetH = Math.max(1, Math.floor(opt.height || 128));

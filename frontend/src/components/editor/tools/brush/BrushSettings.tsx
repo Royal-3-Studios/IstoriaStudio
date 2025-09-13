@@ -1,5 +1,3 @@
-// src/components/editor/toos/brush/BrushSettings.tsx
-
 "use client";
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
@@ -42,16 +40,22 @@ export function BrushSettings({
     React.useMemo(() => {
       const o: Partial<NonNullable<RenderOptions["overrides"]>> = {};
 
-      if (values.spacing != null) o.spacing = Number(values.spacing);
-      if (values.jitter != null) o.jitter = Number(values.jitter);
-      if (values.scatter != null) o.scatter = Number(values.scatter);
+      // path placement / feel
+      if (values.spacing != null) o.spacing = Number(values.spacing); // % of diameter
+      if (values.jitter != null) o.jitter = Number(values.jitter); // % of spacing
+      if (values.scatter != null) o.scatter = Number(values.scatter); // px
       if (values.count != null)
         o.count = Math.max(1, Math.round(Number(values.count)));
-      if (values.angle != null) o.angle = Number(values.angle);
-      if (values.hardness != null) o.softness = 100 - Number(values.hardness);
-      if (values.flow != null) o.flow = Number(values.flow);
-      if (values.wetEdges != null) o.wetEdges = Boolean(values.wetEdges);
 
+      // tip & orientation
+      if (values.angle != null) o.angle = Number(values.angle); // deg
+      if (values.hardness != null) o.softness = 100 - Number(values.hardness); // UI hardness -> engine softness
+
+      // dynamics
+      if (values.flow != null) o.flow = Number(values.flow);
+      if (values.wetEdges != null) o.wetEdges = !!values.wetEdges;
+
+      // grain
       if (values.grainKind != null) {
         const idx = Math.max(
           0,
@@ -61,7 +65,7 @@ export function BrushSettings({
       }
       if (values.grainDepth != null) o.grainDepth = Number(values.grainDepth);
       if (values.grainScale != null) {
-        // UI uses 100=1.0 convention; convert to engine's 0.25..4 range sensibly
+        // UI uses 100=1.0 convention; engine expects ~0.25..4
         const s = Number(values.grainScale) / 100;
         o.grainScale = Math.max(0.25, Math.min(4, s));
       }
@@ -77,19 +81,21 @@ export function BrushSettings({
     Math.min(
       28,
       ((values.size ?? sizeParam?.defaultValue ?? 12) as number) *
-        (preset.engine.shape.sizeScale ?? 1)
+        (preset.engine.shape?.sizeScale ?? 1)
     )
   );
 
   React.useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
-    drawStrokeToCanvas(el, {
+
+    void drawStrokeToCanvas(el, {
       engine: preset.engine,
       baseSizePx,
       color: "#000000",
-      width: 112,
-      height: 28,
+      width: 352,
+      height: 127,
+      pixelRatio: 2,
       seed: 42,
       colorJitter: {
         h: values.hueJitter ?? 0,
