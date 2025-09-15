@@ -12,43 +12,73 @@ const DEFAULT_COLOR = "#000000";
 const PREVIEW_MIN = { width: 352, height: 128 };
 
 /** Tuned toward Procreate 6B — long taper + solid/dark core */
-const PENCIL_TUNING = {
-  // geometry
-  bodyWidthScale: 0.42, // was 0.44 → a hair slimmer
+// If you have a PencilTuning type, add the fields there too:
+type PencilTuning = {
+  bodyWidthScale: number;
+  taperMin: number;
+  taperMax: number;
+  taperRadiusFactor: number;
+  tipSharpenBoost: number;
+  midBoostAmt: number;
+  glazeBlurPx: number;
+  glaze1Alpha: number;
+  glaze2Alpha: number;
+  plateAlpha: number;
+  spineAlpha: number;
+  opacitySpineAlpha: number;
+  opacitySpineBlurK: number;
+  opacitySpineWidth: number;
+  rimPx: number;
+  rimAlpha: number;
+  sheenAlpha: number;
+  edgeBandPx: number;
+  grainDepthDefault: number;
+  grainScaleDefault: number;
+  grainAnisoX: number;
+  grainAnisoY: number;
+  microJitterPx: number;
+  microJitterFreq: number;
+  tipMinAlpha: number;
+
+  // NEW:
+  fineDustAlphaK: number;
+  fineDustScaleDiv: number;
+  fineDustRotateK: number;
+};
+
+// Then include them in the constant:
+const PENCIL_TUNING: PencilTuning = {
+  bodyWidthScale: 0.42,
   taperMin: 240,
   taperMax: 770,
-  taperRadiusFactor: 26.0, // was 23.6 → slightly longer tip
-
-  tipSharpenBoost: 0.251,
+  taperRadiusFactor: 26,
+  tipSharpenBoost: 0.26,
   midBoostAmt: 0.15,
-
-  // glaze stack
-  glazeBlurPx: 0.52, // was 0.46 → smoother layering
-  glaze1Alpha: 0.62, // your new value kept
-  glaze2Alpha: 0.34, // your new value kept
-  plateAlpha: 0.155, // your new value kept
-  spineAlpha: 0.23, // your new value kept
-
-  // opacity spine (source-over)
-  opacitySpineAlpha: 0.36, // your new value kept
+  glazeBlurPx: 0.52,
+  glaze1Alpha: 0.62,
+  glaze2Alpha: 0.34,
+  plateAlpha: 0.16,
+  spineAlpha: 0.26,
+  opacitySpineAlpha: 0.4,
   opacitySpineBlurK: 0.55,
-  opacitySpineWidth: 1.65, // was 1.55 → slightly tighter/darker core
-
-  // micro jitter (slightly calmer so rim reads cleaner)
-  microJitterPx: 0.24, // was 0.28
-  microJitterFreq: 0.16, // was 0.18
-
-  // grain
-  grainDepthDefault: 0.32,
-  grainScaleDefault: 1.45,
+  opacitySpineWidth: 1.6,
+  rimPx: 1.1,
+  rimAlpha: 0.18,
+  sheenAlpha: 0.1,
+  edgeBandPx: 0.9,
+  grainDepthDefault: 0.34,
+  grainScaleDefault: 1.4,
   grainAnisoX: 0.7,
   grainAnisoY: 1.35,
+  microJitterPx: 0.22,
+  microJitterFreq: 0.16,
+  tipMinAlpha: 0.25,
 
-  // fine dust
-  fineDustAlphaK: 0.13,
-  fineDustScaleDiv: 4,
-  fineDustRotateK: 1.2,
-} as const;
+  // NEW defaults (tweak to taste):
+  fineDustAlphaK: 0.08, // overall opacity of dust overlay
+  fineDustScaleDiv: 3.0, // larger = finer speckle
+  fineDustRotateK: 0.4, // small rotation jitter per stamp
+};
 
 // ------------------ small utils ------------------
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));

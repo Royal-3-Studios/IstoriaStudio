@@ -261,11 +261,11 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("opacity", "Opacity", "opacity", 100),
         ],
         engine: {
-          backend: "ribbon",
+          backend: "stamping",
           strokePath: {
-            spacing: 4,
-            jitter: 0.5,
-            scatter: 0,
+            spacing: 3, // <- as %, baseline for preview UI
+            jitter: 4, // % of spacing
+            scatter: 0.1, // px
             streamline: 30,
             count: 1,
           },
@@ -276,17 +276,20 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
             roundness: 28,
             sizeScale: 1.0,
           },
-          grain: { kind: "paper", depth: 56, scale: 1.15 },
+          grain: { kind: "paper", depth: 68, scale: 1.15 },
           rendering: { mode: "glazed", wetEdges: false, flow: 100 },
           overrides: {
-            centerlinePencil: true,
-            flow: 100,
+            flow: 64,
+            spacing: 0.003, // request ~0.30% (backend also caps)
+            jitter: 0,
+            scatter: 0,
+            softness: 54,
             grainKind: "paper",
-            grainScale: 1.35,
-            grainDepth: 66,
-            grainRotate: 8,
-            angle: 0,
-            coreStrength: 300,
+            grainDepth: 58,
+            grainScale: 1.2,
+            rimMode: "auto",
+            rimStrength: 0.18,
+            bgIsLight: true,
           },
         },
       },

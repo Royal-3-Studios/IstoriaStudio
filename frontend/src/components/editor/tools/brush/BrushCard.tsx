@@ -139,7 +139,7 @@ export const BrushCard = React.memo(function BrushCard({
       </div>
 
       {/* text footer */}
-      <div className="absolute inset-x-0 bottom-0 p-2">
+      {/* <div className="absolute inset-x-0 bottom-0 p-2">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-xs font-medium">{title}</div>
@@ -172,7 +172,7 @@ export const BrushCard = React.memo(function BrushCard({
             )}
           </button>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 });
