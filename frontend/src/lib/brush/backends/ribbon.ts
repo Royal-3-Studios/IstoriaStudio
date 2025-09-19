@@ -1,24 +1,13 @@
 // FILE: src/lib/brush/backends/ribbon.ts
 /**
  * Ribbon backend — continuous polygon silhouette with layered glazes & grain.
- * Produces a strong 6B-pencil look (no stamping): long tapers, dark core,
- * subtle rim clean-up, and controllable grain/dust overlays.
- *
- * Key ideas
- * - Build a ribbon (polygon) from a resampled path and a radius function.
- * - Paint interior with layered "glazes" and a concentrated opacity spine.
- * - Multiply grain and fine dust, masked to the core and faded at tips.
- * - Light tip fade and tiny inner erode pass to polish the rim.
- *
- * Notes
- * - Honors engine overrides like: centerlinePencil, flow, coreStrength,
- *   grainKind/scale/depth/rotate, pixelRatio, etc.
- * - Enforces a minimum preview size when `centerlinePencil` is true
- *   (to stabilize the thumbnail aesthetic).
+ * Two profiles:
+ *  - PENCIL (default): long tapers, mild rim polish, optional grain/dust.
+ *  - INK/MARKER (rendering.mode === "marker"): crisp, opaque, minimal blur,
+ *    no tip fade or inner-rim erode, no grain.
  */
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
 import type { RenderOptions } from "../engine";
 
 /* ========================================================================== *
@@ -71,7 +60,7 @@ type PencilTuning = {
   fineDustRotateK: number; // slight rotation vs grain
 };
 
-const TUNING: PencilTuning = {
+const TUNING_PENCIL: PencilTuning = {
   // geometry / shaping
   bodyWidthScale: 0.42,
   taperMin: 240,
@@ -117,6 +106,34 @@ const TUNING: PencilTuning = {
   fineDustRotateK: 0.4,
 };
 
+// INK profile — crisper, darker, minimal blur, no tip fade/erode/grain
+const TUNING_INK: PencilTuning = {
+  ...TUNING_PENCIL,
+  bodyWidthScale: 0.52,
+  midBoostAmt: 0.0,
+  tipSharpenBoost: 0.18,
+
+  glazeBlurPx: 0.28,
+  glaze1Alpha: 0.42,
+  glaze2Alpha: 0.28,
+  plateAlpha: 0.22,
+  spineAlpha: 0.55,
+
+  opacitySpineAlpha: 0.68,
+  opacitySpineBlurK: 0.42,
+  opacitySpineWidth: 1.1,
+
+  rimAlpha: 0.0, // handled by silhouette; don't erode edges
+
+  tipMinAlpha: 0.96, // keep tips solid for ink
+
+  microJitterPx: 0.06,
+  microJitterFreq: 0.12,
+
+  // disable grain by default for marker look
+  grainDepthDefault: 0.0,
+};
+
 const PREVIEW_MIN_SIZE = { width: 352, height: 128 };
 
 /* ========================================================================== *
@@ -155,17 +172,14 @@ function createCanvas(
 /** Runtime check that a value is a 2D canvas context (HTML or Offscreen). */
 function isCanvas2DContext(ctx: unknown): ctx is Ctx2D {
   if (typeof ctx !== "object" || ctx === null) return false;
-
-  // We only probe for the minimal surface we rely on at runtime.
   const cand = ctx as { drawImage?: unknown; canvas?: unknown };
-  const hasDrawImage = typeof cand.drawImage === "function";
-  const hasCanvasRef = typeof cand.canvas !== "undefined";
-  return hasDrawImage && hasCanvasRef;
+  return (
+    typeof cand.drawImage === "function" && typeof cand.canvas !== "undefined"
+  );
 }
 
 /** Get a 2D drawing context or throw (typed as union Ctx2D). */
 function getCanvas2DContext(c: OffscreenCanvas | HTMLCanvasElement): Ctx2D {
-  // The DOM typings don’t unify these overloads; assert to the union we guard.
   const ctx = c.getContext("2d") as
     | CanvasRenderingContext2D
     | OffscreenCanvasRenderingContext2D
@@ -254,7 +268,6 @@ function resamplePathUniform(path: InputPoint[], step: number): SamplePoint[] {
     const p = arcAt(s);
     out.push({ x: p.x, y: p.y, angle: p.angle, arcLen: s });
   }
-  // ensure last sample hits the end
   if (out[out.length - 1]?.arcLen < totalLen) {
     const p = arcAt(totalLen);
     out.push({ x: p.x, y: p.y, angle: p.angle, arcLen: totalLen });
@@ -296,13 +309,16 @@ export async function drawRibbonToCanvas(
   canvas: HTMLCanvasElement,
   opt: RenderOptions
 ): Promise<void> {
+  // Which profile are we drawing?
+  const isInk = opt.engine?.rendering?.mode === "marker";
+  const TT = isInk ? TUNING_INK : TUNING_PENCIL;
+
   // Resolve DPR (cap slightly for stability) and set canvas backing size.
   const dpr =
     typeof window !== "undefined"
       ? Math.min(opt.pixelRatio ?? window.devicePixelRatio ?? 1, 2)
       : Math.max(1, opt.pixelRatio ?? 1);
 
-  // Stabilizers for low DPR to avoid sub-pixel fuzz
   const IS_LOW_DPR = dpr <= 1.05;
   const MIN_BLUR = IS_LOW_DPR ? 0.9 : 0.6;
   const MIN_STROKE_PX = IS_LOW_DPR ? 1.0 : 0.8;
@@ -334,7 +350,7 @@ export async function drawRibbonToCanvas(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
-  // Pull frequently used override knobs with sensible defaults.
+  // Pull frequently used override knobs.
   const flow01 = clamp01((opt.overrides?.flow ?? 100) / 100);
   const coreStrengthK = clamp(
     (opt.overrides?.coreStrength ?? 300) / 100,
@@ -342,21 +358,30 @@ export async function drawRibbonToCanvas(
     3.0
   );
 
+  // --- NEW: read tip geometry knobs from overrides (optional) -------------
+  const ov = (opt.engine?.overrides ?? {}) as NonNullable<
+    RenderOptions["overrides"]
+  >;
+  const tipScaleStart = clamp01((ov?.tipScaleStart as number) ?? 0.85);
+  const tipScaleEnd = clamp01((ov?.tipScaleEnd as number) ?? 0.85);
+  const tipMinR = Math.max(0, ((ov?.tipMinPx as number) ?? 0) * 0.5);
+
   // Grain configuration — depth in [0..1], scale > 0, rotation in degrees.
   const grainKind =
     opt.overrides?.grainKind ?? opt.engine?.grain?.kind ?? "paper";
-  const grainDepth =
-    grainKind === "none"
+  const grainDepth = isInk
+    ? 0 // disable grain in ink profile
+    : grainKind === "none"
       ? 0
       : clamp01(
           (opt.overrides?.grainDepth ??
             opt.engine?.grain?.depth ??
-            TUNING.grainDepthDefault * 100) / 100
+            TT.grainDepthDefault * 100) / 100
         );
   const grainScale =
     opt.overrides?.grainScale ??
     opt.engine?.grain?.scale ??
-    TUNING.grainScaleDefault;
+    TT.grainScaleDefault;
   const grainRotateDeg =
     opt.overrides?.grainRotate ?? opt.engine?.grain?.rotate ?? 8;
   const grainRotateRad = (grainRotateDeg * Math.PI) / 180;
@@ -364,7 +389,7 @@ export async function drawRibbonToCanvas(
   // Base radius in CSS px (engine passes diameter via baseSizePx).
   const inputRadius = Math.max(0.5, (opt.baseSizePx || 8) * 0.5);
   const baseRadius = opt.overrides?.centerlinePencil
-    ? Math.max(0.5, inputRadius * TUNING.bodyWidthScale)
+    ? Math.max(0.5, inputRadius * TT.bodyWidthScale)
     : inputRadius;
 
   // Prepare path sampling.
@@ -380,60 +405,57 @@ export async function drawRibbonToCanvas(
 
   const totalLen = samples[samples.length - 1].arcLen;
 
+  // NEW: same tip window function used in stamping (soft mask)
+  function tipBlend(tNorm: number, startAmt: number, endAmt: number) {
+    // 0→1 along the stroke
+    const edgeFrac = 0.42;
+    const d = Math.min(tNorm, 1 - tNorm);
+    const a = Math.min(1, Math.max(0, d / edgeFrac));
+    const aPow = Math.pow(a, 2.7);
+    const towardStart = 1 - Math.min(1, tNorm * 2);
+    const towardEnd = 1 - Math.min(1, (1 - tNorm) * 2);
+    const amt = startAmt * towardStart + endAmt * towardEnd;
+    return 1 - amt + amt * aPow;
+  }
+
   /** Radius profile along the stroke (bell + long, shallow taper) */
   const radiusAt = (s: number) => {
     const tipTStart = clamp01(
-      s /
-        clamp(
-          baseRadius * TUNING.taperRadiusFactor,
-          TUNING.taperMin,
-          TUNING.taperMax
-        )
+      s / clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax)
     );
     const tipTEnd = clamp01(
       (totalLen - s) /
-        clamp(
-          baseRadius * TUNING.taperRadiusFactor,
-          TUNING.taperMin,
-          TUNING.taperMax
-        )
+        clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax)
     );
     const baseTaper = Math.min(easePowOut(tipTStart), easePowOut(tipTEnd));
 
     // sharpen tips a touch as we approach ends
     const edge = Math.min(tipTStart, tipTEnd);
-    const sharpen = 1 - TUNING.tipSharpenBoost * Math.pow(1 - edge, 1.6);
+    const sharpen = 1 - TT.tipSharpenBoost * Math.pow(1 - edge, 1.6);
 
-    // mild mid-body boost (graphite belly)
+    // mild mid-body boost (graphite belly) — zeroed for ink profile
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
-    const midBoost = 1 + TUNING.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
+    const midBoost = 1 + TT.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
 
-    return baseRadius * clamp01(baseTaper * sharpen) * midBoost;
+    // --- NEW: apply user tip shaping & min radius -------------------------
+    const blend = tipBlend(u, tipScaleStart, tipScaleEnd);
+    const r = baseRadius * clamp01(baseTaper * sharpen) * midBoost * blend;
+    return Math.max(tipMinR, r);
   };
 
-  /** Microscopic jitter along the tangent direction to avoid "too perfect" digital lines */
+  /** Microscopic jitter to avoid "too perfect" lines (reduced for ink) */
   const computeMicroJitter = (s: number, angle: number) => {
     const tip = Math.min(
-      s /
-        clamp(
-          baseRadius * TUNING.taperRadiusFactor,
-          TUNING.taperMin,
-          TUNING.taperMax
-        ),
+      s / clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax),
       (totalLen - s) /
-        clamp(
-          baseRadius * TUNING.taperRadiusFactor,
-          TUNING.taperMin,
-          TUNING.taperMax
-        )
+        clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax)
     );
     const fadeTowardTips = clamp01(1 - tip * 1.5);
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
-    const amplitude =
-      TUNING.microJitterPx * fadeTowardTips * (0.7 + 0.3 * bell);
-    const j = amplitude * Math.sin(s * TUNING.microJitterFreq);
+    const amplitude = TT.microJitterPx * fadeTowardTips * (0.7 + 0.3 * bell);
+    const j = amplitude * Math.sin(s * TT.microJitterFreq);
     return { ox: Math.cos(angle) * j, oy: Math.sin(angle) * j };
   };
 
@@ -446,7 +468,8 @@ export async function drawRibbonToCanvas(
    * 1) Base fill (sets general darkness)
    * ---------------------------------------------------------------------- */
   ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = `rgba(0,0,0,${(0.62 * flow01).toFixed(3)})`;
+  const baseA = (isInk ? 0.86 : 0.62) * flow01;
+  ctx.fillStyle = `rgba(0,0,0,${baseA.toFixed(3)})`;
   ctx.fill(ribbonPath, "nonzero");
 
   /* ---------------------------------------------------------------------- *
@@ -454,12 +477,9 @@ export async function drawRibbonToCanvas(
    * ---------------------------------------------------------------------- */
   {
     const meanR = baseRadius * 0.95;
-    const blurPx = Math.max(
-      MIN_BLUR,
-      TUNING.glazeBlurPx * TUNING.opacitySpineBlurK
-    );
+    const blurPx = Math.max(MIN_BLUR, TT.glazeBlurPx * TT.opacitySpineBlurK);
     ctx.filter = `blur(${blurPx}px)`;
-    ctx.strokeStyle = `rgba(0,0,0,${(TUNING.opacitySpineAlpha * coreStrengthK).toFixed(3)})`;
+    ctx.strokeStyle = `rgba(0,0,0,${(TT.opacitySpineAlpha * coreStrengthK).toFixed(3)})`;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -469,7 +489,7 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * TUNING.opacitySpineWidth);
+    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * TT.opacitySpineWidth);
     ctx.stroke();
     ctx.filter = "none";
   }
@@ -480,9 +500,9 @@ export async function drawRibbonToCanvas(
   ctx.globalCompositeOperation = "multiply";
   {
     const meanR = baseRadius * 0.95;
-    const plateWidth = Math.max(1.0, meanR * 1.96);
-    ctx.filter = `blur(${Math.max(MIN_BLUR, TUNING.glazeBlurPx * 1.15).toFixed(3)}px)`;
-    ctx.strokeStyle = `rgba(0,0,0,${(TUNING.plateAlpha * coreStrengthK).toFixed(3)})`;
+    const plateWidth = Math.max(1.0, meanR * (isInk ? 1.5 : 1.96));
+    ctx.filter = `blur(${Math.max(MIN_BLUR, TT.glazeBlurPx * (isInk ? 0.9 : 1.15)).toFixed(3)}px)`;
+    ctx.strokeStyle = `rgba(0,0,0,${(TT.plateAlpha * coreStrengthK).toFixed(3)})`;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -500,11 +520,11 @@ export async function drawRibbonToCanvas(
   /* ---------------------------------------------------------------------- *
    * 4) Layered glazes (two passes) — deepen center without crushing rim
    * ---------------------------------------------------------------------- */
-  ctx.filter = `blur(${Math.max(MIN_BLUR, TUNING.glazeBlurPx).toFixed(3)}px)`;
+  ctx.filter = `blur(${Math.max(MIN_BLUR, TT.glazeBlurPx).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
 
-    ctx.strokeStyle = `rgba(0,0,0,${(TUNING.glaze1Alpha * coreStrengthK).toFixed(3)})`;
+    ctx.strokeStyle = `rgba(0,0,0,${(TT.glaze1Alpha * coreStrengthK).toFixed(3)})`;
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
@@ -512,10 +532,10 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * 1.34);
+    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * (isInk ? 1.1 : 1.34));
     ctx.stroke();
 
-    ctx.strokeStyle = `rgba(0,0,0,${(TUNING.glaze2Alpha * coreStrengthK).toFixed(3)})`;
+    ctx.strokeStyle = `rgba(0,0,0,${(TT.glaze2Alpha * coreStrengthK).toFixed(3)})`;
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
@@ -523,17 +543,17 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * 1.58);
+    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * (isInk ? 1.25 : 1.58));
     ctx.stroke();
   }
 
   /* ---------------------------------------------------------------------- *
    * 5) Spine glaze — tight, slightly sharper core enhancement
    * ---------------------------------------------------------------------- */
-  ctx.filter = `blur(${Math.max(MIN_BLUR, TUNING.glazeBlurPx * 0.85).toFixed(3)}px)`;
+  ctx.filter = `blur(${Math.max(MIN_BLUR, TT.glazeBlurPx * 0.85).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
-    ctx.strokeStyle = `rgba(0,0,0,${(TUNING.spineAlpha * coreStrengthK).toFixed(3)})`;
+    ctx.strokeStyle = `rgba(0,0,0,${(TT.spineAlpha * coreStrengthK).toFixed(3)})`;
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
@@ -541,58 +561,58 @@ export async function drawRibbonToCanvas(
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * 0.96);
+    ctx.lineWidth = Math.max(MIN_STROKE_PX, meanR * (isInk ? 0.9 : 0.96));
     ctx.stroke();
   }
   ctx.filter = "none";
 
   /* ---------------------------------------------------------------------- *
-   * 6) Light tip fade (destination-in gradient along the stroke)
+   * 6) Light tip fade — pencils only
    * ---------------------------------------------------------------------- */
-  {
+  if (!isInk) {
     const first = samples[0];
     const last = samples[samples.length - 1];
     ctx.globalCompositeOperation = "destination-in";
     const tipFade = ctx.createLinearGradient(first.x, first.y, last.x, last.y);
-    tipFade.addColorStop(0.0, `rgba(0,0,0,${TUNING.tipMinAlpha.toFixed(2)})`);
+    tipFade.addColorStop(0.0, `rgba(0,0,0,${TT.tipMinAlpha.toFixed(2)})`);
     tipFade.addColorStop(0.08, "rgba(0,0,0,1.0)");
     tipFade.addColorStop(0.92, "rgba(0,0,0,1.0)");
-    tipFade.addColorStop(1.0, `rgba(0,0,0,${TUNING.tipMinAlpha.toFixed(2)})`);
+    tipFade.addColorStop(1.0, `rgba(0,0,0,${TT.tipMinAlpha.toFixed(2)})`);
     ctx.fillStyle = tipFade;
     ctx.fillRect(0, 0, viewW, viewH);
     ctx.globalCompositeOperation = "source-over";
   }
 
   /* ---------------------------------------------------------------------- *
-   * 7) Inner rim polish — slight inner erode to keep rim clean
+   * 7) Inner rim polish — pencils only (avoid edge thinning for ink)
    * ---------------------------------------------------------------------- */
-  {
+  if (!isInk && TT.rimAlpha > 0.01) {
     ctx.globalCompositeOperation = "destination-out";
     (ctx as CanvasRenderingContext2D).filter = "blur(0.35px)";
     ctx.strokeStyle = "rgba(0,0,0,0.18)";
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.lineWidth = 0.7; // thin band inside the outline
+    ctx.lineWidth = 0.7;
     ctx.stroke(ribbonPath);
     (ctx as CanvasRenderingContext2D).filter = "none";
     ctx.globalCompositeOperation = "source-over";
   }
 
   /* ---------------------------------------------------------------------- *
-   * 8) Grain & fine dust (multiply), masked to core and faded at tips
+   * 8) Grain & fine dust (multiply) — disabled for ink
    * ---------------------------------------------------------------------- */
-  if (grainDepth > 0.001) {
+  if (!isInk && grainDepth > 0.001) {
     const seed = (opt.seed ?? 7) % 997;
     const grainTile = createNoiseTile(64, 31 * seed + 7);
     const first = samples[0];
     const last = samples[samples.length - 1];
 
-    // 8a) Multiply grain, rotated/scaled and slightly anisotropic.
+    // 8a) Multiply grain
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
     ctx.translate(first.x, first.y);
     ctx.rotate(grainRotateRad);
-    ctx.scale(TUNING.grainAnisoX, TUNING.grainAnisoY);
+    ctx.scale(TT.grainAnisoX, TT.grainAnisoY);
     const grainExtent = Math.max(
       32,
       Math.ceil((viewW + viewH) / Math.max(0.5, grainScale))
@@ -607,7 +627,7 @@ export async function drawRibbonToCanvas(
     );
     ctx.restore();
 
-    // 8b) Restrict grain to a slightly narrower "core" band.
+    // 8b) Restrict grain to a slightly narrower core band.
     ctx.globalCompositeOperation = "destination-in";
     const meanR = baseRadius * 0.95;
     ctx.strokeStyle = "rgba(0,0,0,1)";
@@ -622,18 +642,18 @@ export async function drawRibbonToCanvas(
 
     ctx.globalCompositeOperation = "source-over";
 
-    // 8c) Fine dust — subtler, scaled differently and lightly rotated
+    // 8c) Fine dust
     const dustTile = createNoiseTile(32, 101 * seed + 13);
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
     ctx.translate(first.x, first.y);
-    ctx.rotate(grainRotateRad * TUNING.fineDustRotateK);
+    ctx.rotate(grainRotateRad * TT.fineDustRotateK);
     ctx.scale(1.08, 1.08);
     const dustExtent = Math.max(
       16,
-      Math.ceil((viewW + viewH) / TUNING.fineDustScaleDiv)
+      Math.ceil((viewW + viewH) / TT.fineDustScaleDiv)
     );
-    ctx.globalAlpha = grainDepth * TUNING.fineDustAlphaK;
+    ctx.globalAlpha = grainDepth * TT.fineDustAlphaK;
     ctx.drawImage(
       dustTile,
       -dustExtent / 2,

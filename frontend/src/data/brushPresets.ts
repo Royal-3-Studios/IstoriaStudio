@@ -256,6 +256,113 @@ const engines = {
     grain: { kind: "none", depth: 0, scale: 1.0 },
     rendering: { mode: "marker", wetEdges: false, flow: 100 },
   }),
+
+  ribbonPen: (opts?: {
+    taper?: number; // 0..1
+    flow?: number; // 0..100
+    smoothing?: number; // 0..100 (UI hint)
+    uniformity?: number; // 0..1
+  }): EngineConfig => ({
+    backend: "ribbon",
+    strokePath: {
+      spacing: 4,
+      jitter: 0,
+      scatter: 0,
+      streamline: opts?.smoothing ?? 32,
+      count: 1,
+    },
+    shape: { type: "nib", softness: 100, sizeScale: 1.0 },
+    grain: { kind: "none", depth: 0, scale: 1.0 },
+    rendering: { mode: "marker", wetEdges: false, flow: opts?.flow ?? 100 },
+    overrides: {
+      tipScaleStart: opts?.taper ?? 0.92,
+      tipScaleEnd: opts?.taper ?? 0.92,
+      tipMinPx: 0.7,
+      uniformity: opts?.uniformity ?? 0.9,
+      bellyGain: 1.0,
+      speedSmoothingMs: 18,
+      speedToWidth: 0.06, // tiny swell at speed (keeps it “technical”)
+      speedToFlow: 0.0,
+      rimMode: "off",
+      toothBody: 0,
+      toothFlank: 0,
+      grainKind: "none",
+    },
+  }),
+
+  /** Ribbon chisel (angled nib, crisp). */
+  ribbonChisel: (
+    angle = 32,
+    opts?: {
+      flow?: number;
+      smoothing?: number;
+      taper?: number;
+      uniformity?: number;
+    }
+  ): EngineConfig => ({
+    backend: "ribbon",
+    strokePath: {
+      spacing: 4,
+      jitter: 0,
+      scatter: 0,
+      streamline: opts?.smoothing ?? 26,
+      count: 1,
+    },
+    shape: { type: "chisel", angle, softness: 100, sizeScale: 1.0 },
+    grain: { kind: "none", depth: 0, scale: 1 },
+    rendering: { mode: "marker", wetEdges: false, flow: opts?.flow ?? 100 },
+    overrides: {
+      tipScaleStart: opts?.taper ?? 0.9,
+      tipScaleEnd: opts?.taper ?? 0.9,
+      tipMinPx: 0.7,
+      uniformity: opts?.uniformity ?? 0.85,
+      bellyGain: 1.0,
+      rimMode: "off",
+      toothBody: 0,
+      toothFlank: 0,
+      grainKind: "none",
+    },
+  }),
+
+  /**
+   * Textured ink (stamping) — darker, smoother, barely any tooth.
+   * Keeps ink vibe without graphite speckle.
+   */
+  inkStamped: (opts?: {
+    flow?: number;
+    smoothing?: number;
+    spacingPct?: number;
+    toothBody?: number;
+    toothFlank?: number;
+    toothScale?: number;
+    softness?: number;
+  }): EngineConfig => ({
+    backend: "stamping",
+    strokePath: {
+      spacing: opts?.spacingPct ?? 2.6, // tighter for smoothness
+      jitter: 1.5,
+      scatter: 0,
+      streamline: opts?.smoothing ?? 30,
+      count: 1,
+    },
+    shape: { type: "round", softness: opts?.softness ?? 12, sizeScale: 1.0 },
+    grain: { kind: "none", depth: 0, scale: 1 },
+    rendering: { mode: "glazed", wetEdges: false, flow: opts?.flow ?? 100 },
+    overrides: {
+      // near-ink: barely-there tooth so it doesn’t gray out
+      toothBody: opts?.toothBody ?? 0.06,
+      toothFlank: opts?.toothFlank ?? 0.1,
+      toothScale: opts?.toothScale ?? 0,
+      rimMode: "off",
+      // crisper center line & less chalkiness
+      uniformity: 0.78,
+      tipScaleStart: 0.92,
+      tipScaleEnd: 0.92,
+      tipMinPx: 0.7,
+      bellyGain: 1.02,
+      edgeNoiseStrength: 0, // no dry fringe for ink
+    },
+  }),
 };
 
 /* ============================
@@ -794,59 +901,253 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
   },
 
   /* ---------- Inking ---------- */
+  /* ---------- Inking ---------- */
   {
     id: "inking",
     name: "Inking",
     brushes: [
+      // 1) Technical Pen — crisp, blunt ends (RIBBON marker)
       {
-        id: "technical-pen",
+        id: "ink-technical-pen",
         name: "Technical Pen",
         subtitle: "crisp",
         params: [
           p("size", "Size", "size", 6, 1, 40),
-          p("hardness", "Hardness", "hardness", 100),
           p("flow", "Flow", "flow", 100),
-          p("spacing", "Spacing", "spacing", 6),
           p("smoothing", "Smoothing", "smoothing", 35),
         ],
-        engine: engines.technical(), // <-- now ribbon
+        engine: {
+          backend: "ribbon",
+          rendering: { mode: "marker" },
+          overrides: {
+            tipScaleStart: 0.08,
+            tipScaleEnd: 0.08,
+            tipMinPx: 1.6,
+            uniformity: 0.98,
+            tipRoundness: 1.0,
+          },
+        },
       },
+
+      // 2) Studio Pen — clean sharp taper (RIBBON marker)
       {
-        id: "calligraphy",
-        name: "Calligraphy",
-        subtitle: "angle nib",
+        id: "ink-studio-pen",
+        name: "Studio Pen",
+        subtitle: "clean with soft taper",
         params: [
-          p("size", "Size", "size", 16, 1, 80),
-          p("flow", "Flow", "flow", 95),
-          p("spacing", "Spacing", "spacing", 10),
-          p("smoothing", "Smoothing", "smoothing", 20),
-          p("angle", "Angle", "angle", 32, 0, 360),
-        ],
-        engine: engines.calligraphy(32), // <-- now ribbon
-      },
-      {
-        id: "marker-chisel",
-        name: "Marker Chisel",
-        subtitle: "broad lettering",
-        params: [
-          p("size", "Size", "size", 18, 1, 120, 1, true),
-          p("flow", "Flow", "flow", 85),
-          p("spacing", "Spacing", "spacing", 8),
-          p("smoothing", "Smoothing", "smoothing", 16),
-          p("angle", "Angle", "angle", 15, 0, 360),
+          p("size", "Size", "size", 10, 1, 80),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 28),
         ],
         engine: {
-          backend: "pattern",
-          strokePath: {
-            spacing: 6,
-            jitter: 4,
-            scatter: 0,
-            streamline: 36,
-            count: 1,
+          backend: "ribbon",
+          rendering: { mode: "marker" },
+          overrides: {
+            tipScaleStart: 0.96,
+            tipScaleEnd: 0.96,
+            tipMinPx: 0,
+            uniformity: 0.25,
+            tipRoundness: 0.15,
+            thicknessCurve: 1.15,
           },
-          shape: { type: "chisel", angle: 15, softness: 8, sizeScale: 1.0 },
-          grain: { kind: "none", depth: 0, scale: 1.0 },
-          rendering: { mode: "marker", wetEdges: false, flow: 100 },
+        },
+      },
+
+      // 3) Mercury — soft felt, dull tip (STAMPING)
+      {
+        id: "ink-mercury",
+        name: "Mercury",
+        subtitle: "soft felt",
+        params: [
+          p("size", "Size", "size", 12, 1, 100),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 24),
+          p("spacing", "Spacing", "spacing", 8),
+        ],
+        engine: {
+          backend: "stamping",
+          overrides: {
+            tipScaleStart: 0.82,
+            tipScaleEnd: 0.82,
+            tipMinPx: 1.2,
+            tipRoundness: 0.65,
+            toothBody: 0.18,
+            toothFlank: 0.24,
+          },
+        },
+      },
+
+      // 4) Baskerville — angled chisel with taper (RIBBON marker)
+      {
+        id: "ink-baskerville",
+        name: "Baskerville",
+        subtitle: "angled chisel",
+        params: [
+          p("size", "Size", "size", 14, 1, 100),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("angle", "Angle", "angle", 32, 0, 360),
+        ],
+        engine: {
+          backend: "ribbon",
+          rendering: { mode: "marker" },
+          overrides: {
+            tipScaleStart: 0.94,
+            tipScaleEnd: 0.94,
+            tipMinPx: 0,
+            uniformity: 0.3,
+            tipRoundness: 0.15,
+            thicknessCurve: 1.15,
+          },
+        },
+      },
+
+      // 5) Inka — draggy tooth, duller tip (STAMPING)
+      {
+        id: "ink-inka",
+        name: "Inka",
+        subtitle: "draggy tooth",
+        params: [
+          p("size", "Size", "size", 12, 1, 100),
+          p("flow", "Flow", "flow", 85),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("spacing", "Spacing", "spacing", 10),
+        ],
+        engine: {
+          backend: "stamping",
+          overrides: {
+            tipScaleStart: 0.8,
+            tipScaleEnd: 0.8,
+            tipMinPx: 1.6,
+            tipRoundness: 0.7,
+            toothBody: 0.24,
+            toothFlank: 0.3,
+          },
+        },
+      },
+
+      // 6) Pandani — juicy torn edge (STAMPING)
+      {
+        id: "ink-pandani",
+        name: "Pandani",
+        subtitle: "juicy torn edge",
+        params: [
+          p("size", "Size", "size", 16, 1, 120),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 20),
+          p("spacing", "Spacing", "spacing", 12),
+        ],
+        engine: {
+          backend: "stamping",
+          overrides: {
+            tipScaleStart: 0.86,
+            tipScaleEnd: 0.86,
+            tipMinPx: 1.6,
+            tipRoundness: 0.75,
+            edgeNoiseStrength: 0.35,
+            edgeNoiseScale: 8,
+            toothBody: 0.28,
+            toothFlank: 0.38,
+          },
+        },
+      },
+
+      // 7) Tinderbox — dry brush pen (STAMPING)
+      {
+        id: "ink-tinderbox",
+        name: "Tinderbox",
+        subtitle: "dry brush pen",
+        params: [
+          p("size", "Size", "size", 15, 1, 120),
+          p("flow", "Flow", "flow", 85),
+          p("smoothing", "Smoothing", "smoothing", 18),
+          p("spacing", "Spacing", "spacing", 12),
+        ],
+        engine: {
+          backend: "stamping",
+          overrides: {
+            tipScaleStart: 0.84,
+            tipScaleEnd: 0.84,
+            tipMinPx: 1.6,
+            tipRoundness: 0.7,
+            edgeNoiseStrength: 0.45,
+            edgeNoiseScale: 10,
+            dryThreshold: 0.2,
+            toothBody: 0.32,
+            toothFlank: 0.42,
+          },
+        },
+      },
+
+      // 8) Syrup — smooth gel, blunt ends (RIBBON marker)
+      {
+        id: "ink-syrup",
+        name: "Syrup",
+        subtitle: "smooth gel",
+        params: [
+          p("size", "Size", "size", 10, 1, 80),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 26),
+        ],
+        engine: {
+          backend: "ribbon",
+          rendering: { mode: "marker" },
+          overrides: {
+            tipScaleStart: 0.1,
+            tipScaleEnd: 0.1,
+            tipMinPx: 1.4,
+            uniformity: 0.98,
+            tipRoundness: 1.0,
+          },
+        },
+      },
+
+      // 9) Thylacine — parallel tracks (STAMPING for now, split later)
+      {
+        id: "ink-thylacine",
+        name: "Thylacine",
+        subtitle: "parallel tracks",
+        params: [
+          p("size", "Size", "size", 14, 1, 120),
+          p("flow", "Flow", "flow", 95),
+          p("smoothing", "Smoothing", "smoothing", 20),
+          p("spacing", "Spacing", "spacing", 10),
+        ],
+        engine: {
+          backend: "stamping",
+          overrides: {
+            tipScaleStart: 0.1,
+            tipScaleEnd: 0.1,
+            tipMinPx: 1.0,
+            uniformity: 0.95,
+            tipRoundness: 1.0,
+            splitCount: 4,
+            splitSpacing: 3.5,
+          },
+        },
+      },
+
+      // 10) Gel Pen — slick, bulbous ends (RIBBON marker)
+      {
+        id: "ink-gel-pen",
+        name: "Gel Pen",
+        subtitle: "slick, even",
+        params: [
+          p("size", "Size", "size", 8, 1, 80),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 24),
+        ],
+        engine: {
+          backend: "ribbon",
+          rendering: { mode: "marker" },
+          overrides: {
+            tipScaleStart: 0.08,
+            tipScaleEnd: 0.08,
+            tipMinPx: 1.8,
+            uniformity: 1.0,
+            thicknessCurve: 0.9,
+            tipRoundness: 1.0,
+          },
         },
       },
     ],
