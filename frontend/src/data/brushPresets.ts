@@ -1,6 +1,6 @@
-// src/data/brushPresets.ts
+// FILE: src/data/brushPresets.ts
 
-import type { EngineConfig, RenderingMode } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine";
 
 /* ============================
    UI Param Types
@@ -67,28 +67,51 @@ const p = (
   ...(show === false ? { show } : {}),
 });
 
-/* Engine templates (consistent, canonical modes only) */
+/* ============================
+   Engine templates
+   (canonical, single-backend)
+   ============================ */
+
 const engines = {
   technical: (): EngineConfig => ({
-    backend: "stamping",
-    strokePath: {
-      spacing: 1.5,
-      jitter: 2,
-      scatter: 0,
-      streamline: 80,
-      count: 1,
-    },
-    shape: { type: "round", softness: 5, sizeScale: 1.0 },
+    backend: "ribbon",
+    strokePath: { spacing: 0, jitter: 0, scatter: 0, streamline: 80, count: 1 },
+    shape: { type: "nib", softness: 0, roundness: 100, sizeScale: 1.0 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+    rendering: { mode: "marker", wetEdges: false, flow: 100 },
+    overrides: {
+      // crisp, uniform ink
+      uniformity: 0.92,
+      tipScaleStart: 0.15,
+      tipScaleEnd: 0.2,
+      tipMinPx: 0.6,
+      rimMode: "off",
+      toothBody: 0,
+      toothFlank: 0,
+      coreStrength: 160, // ribbon intensity
+      speedToWidth: 0,
+      speedToFlow: 0,
+    },
   }),
 
   calligraphy: (angle = 32): EngineConfig => ({
-    backend: "stamping",
-    strokePath: { spacing: 3, jitter: 3, scatter: 0, streamline: 70, count: 1 },
-    shape: { type: "chisel", angle, softness: 10, sizeScale: 1.1 },
+    backend: "ribbon",
+    strokePath: { spacing: 0, jitter: 0, scatter: 0, streamline: 70, count: 1 },
+    shape: { type: "chisel", angle, softness: 6, sizeScale: 1.0 },
     grain: { kind: "none", depth: 0, scale: 1.0 },
-    rendering: { mode: "glazed", wetEdges: false, flow: 90 },
+    rendering: { mode: "marker", wetEdges: false, flow: 100 },
+    overrides: {
+      uniformity: 0.9,
+      tipScaleStart: 0.1,
+      tipScaleEnd: 0.15,
+      tipMinPx: 0.8,
+      rimMode: "off",
+      toothBody: 0,
+      toothFlank: 0,
+      coreStrength: 160,
+      speedToWidth: 0,
+      speedToFlow: 0,
+    },
   }),
 
   graphite: (): EngineConfig => ({
@@ -195,6 +218,44 @@ const engines = {
     grain: { kind: "noise", depth: 50, scale: 1.2 },
     rendering: { mode: "blended", wetEdges: false, flow: 70 },
   }),
+
+  /* New: impasto/particle/pattern templates so every backend is covered */
+
+  impasto: (): EngineConfig => ({
+    backend: "impasto",
+    strokePath: { spacing: 7, jitter: 6, scatter: 4, streamline: 25, count: 1 },
+    shape: { type: "oval", softness: 20, roundness: 30, sizeScale: 1.2 },
+    grain: { kind: "canvas", depth: 65, scale: 1.0, rotate: 0 },
+    rendering: { mode: "blended", wetEdges: false, flow: 80 },
+    overrides: {
+      // Keep edges a touch softer; let impasto backend do the body
+      tipScaleStart: 0.3,
+      tipScaleEnd: 0.35,
+      uniformity: 0.18,
+    },
+  }),
+
+  particle: (): EngineConfig => ({
+    backend: "particle",
+    strokePath: {
+      spacing: 8,
+      jitter: 16,
+      scatter: 22,
+      streamline: 18,
+      count: 1,
+    },
+    shape: { type: "spray", softness: 45, sizeScale: 1.0 },
+    grain: { kind: "none", depth: 0, scale: 1.0 },
+    rendering: { mode: "spray", wetEdges: false, flow: 60 },
+  }),
+
+  pattern: (): EngineConfig => ({
+    backend: "pattern",
+    strokePath: { spacing: 6, jitter: 6, scatter: 0, streamline: 40, count: 1 },
+    shape: { type: "square", softness: 10, sizeScale: 1.0 },
+    grain: { kind: "none", depth: 0, scale: 1.0 },
+    rendering: { mode: "marker", wetEdges: false, flow: 100 },
+  }),
 };
 
 /* ============================
@@ -217,9 +278,282 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("flow", "Flow", "flow", 70),
           p("spacing", "Spacing", "spacing", 12),
           p("smoothing", "Smoothing", "smoothing", 20),
-          p("jitterSize", "Size Jitter", "jitterSize", 5, 0, 100, 1, false),
         ],
-        engine: engines.graphite(),
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3,
+            jitter: 2,
+            scatter: 0,
+            streamline: 35,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 6,
+            softness: 38,
+            roundness: 70,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "paper", depth: 42, scale: 1.15 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 78 },
+          overrides: {
+            flow: 72,
+            rimMode: "auto",
+            rimStrength: 0.12,
+            bgIsLight: true,
+            toothBody: 0.72,
+            toothFlank: 0.55,
+            toothScale: 24,
+            tipScaleStart: 0.5,
+            tipScaleEnd: 0.55,
+            tipMinPx: 0.9,
+            uniformity: 0.15,
+            bellyGain: 0.95,
+            endBias: 0.0,
+          },
+        },
+      },
+
+      // 4B — peppery flank, decent fill in the belly
+      {
+        id: "pencil-4b",
+        name: "4B Pencil",
+        subtitle: "slim belly, crisp edge",
+        params: [
+          p("size", "Size", "size", 7, 1, 80, 1, true),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("grain", "Grain", "grain", 52),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3,
+            jitter: 4,
+            scatter: 0,
+            streamline: 30,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 8,
+            softness: 48,
+            roundness: 40,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "paper", depth: 60, scale: 1.15 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: {
+            flow: 70,
+            rimMode: "auto",
+            rimStrength: 0.11,
+            bgIsLight: true,
+            toothBody: 0.58,
+            toothFlank: 0.92,
+            toothScale: 0,
+            tipScaleStart: 0.55,
+            tipScaleEnd: 0.6,
+            tipMinPx: 0.8,
+            uniformity: 0.1,
+            bellyGain: 1.0,
+            endBias: 0.05,
+          },
+        },
+      },
+
+      // 6B — smoother core (fewer belly holes), textured shoulders
+      {
+        id: "pencil-6b",
+        name: "6B Pencil",
+        subtitle: "long reach, lively core",
+        params: [
+          p("size", "Size", "size", 8, 1, 80, 1, true),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("grain", "Grain", "grain", 52),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3,
+            jitter: 3,
+            scatter: 0,
+            streamline: 28,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 8,
+            softness: 50,
+            roundness: 28,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "paper", depth: 68, scale: 1.15 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: {
+            flow: 64,
+            rimMode: "auto",
+            rimStrength: 0.1,
+            bgIsLight: true,
+            toothBody: 0.62,
+            toothFlank: 0.96,
+            toothScale: 32,
+            tipScaleStart: 0.6,
+            tipScaleEnd: 0.65,
+            tipMinPx: 0.8,
+            uniformity: 0.08,
+            bellyGain: 1.05,
+            endBias: 0.05,
+          },
+        },
+      },
+
+      // 9B — smoothest core (fewest belly holes)
+      {
+        id: "pencil-9b",
+        name: "9B Pencil",
+        subtitle: "dark belly, soft shoulder",
+        params: [
+          p("size", "Size", "size", 9, 1, 80, 1, true),
+          p("flow", "Flow", "flow", 100),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("grain", "Grain", "grain", 52),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3.2,
+            jitter: 2,
+            scatter: 0,
+            streamline: 26,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 8,
+            softness: 54,
+            roundness: 24,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "paper", depth: 72, scale: 1.15 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: {
+            flow: 62,
+            rimMode: "auto",
+            rimStrength: 0.1,
+            bgIsLight: true,
+            toothBody: 0.3,
+            toothFlank: 0.8,
+            toothScale: 0,
+            tipScaleStart: 0.62,
+            tipScaleEnd: 0.7,
+            tipMinPx: 0.8,
+            uniformity: 0.05,
+            bellyGain: 1.1,
+            endBias: 0.04,
+          },
+        },
+      },
+
+      {
+        id: "pc-hb-pencil",
+        name: "HB Pencil",
+        subtitle: "thin, crisp",
+        params: [
+          p("size", "Size", "size", 6, 1, 60, 1, true),
+          p("flow", "Flow", "flow", 80),
+          p("smoothing", "Smoothing", "smoothing", 42),
+          p("grain", "Grain", "grain", 40),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 2.5,
+            jitter: 2,
+            scatter: 0,
+            streamline: 42,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 8,
+            softness: 46,
+            roundness: 34,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "paper", depth: 40, scale: 1.05 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 95 },
+          overrides: {
+            flow: 56,
+            rimMode: "auto",
+            rimStrength: 0.16,
+            bgIsLight: true,
+          },
+        },
+      },
+      {
+        id: "pc-charcoal-pencil",
+        name: "Charcoal Pencil",
+        subtitle: "pencil line, extra tooth",
+        params: [
+          p("size", "Size", "size", 10, 1, 100, 1, true),
+          p("flow", "Flow", "flow", 95),
+          p("smoothing", "Smoothing", "smoothing", 24),
+          p("grain", "Grain", "grain", 68),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3.2,
+            jitter: 8,
+            scatter: 0.4,
+            streamline: 24,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 6,
+            softness: 50,
+            roundness: 32,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "noise", depth: 70, scale: 1.25 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: { flow: 64, rimMode: "off", rimStrength: 0.0 },
+        },
+      },
+
+      {
+        id: "pc-charcoal-pencil-2",
+        name: "Charcoal Pencil 2",
+        subtitle: "slimmer pencil w/ tooth",
+        params: [
+          p("size", "Size", "size", 9, 1, 80, 1, true),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 30),
+          p("grain", "Grain", "grain", 62),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3.0,
+            jitter: 5,
+            scatter: 0.2,
+            streamline: 30,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 6,
+            softness: 50,
+            roundness: 32,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "noise", depth: 62, scale: 1.2 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: { flow: 61, rimMode: "off", rimStrength: 0.0 },
+        },
       },
       {
         id: "pencil-b",
@@ -249,48 +583,211 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         ],
         engine: engines.charcoal(),
       },
+    ],
+  },
+
+  /* ---------- Dry Media (Graphite · Charcoal · Conté) ---------- */
+  {
+    id: "dry-media",
+    name: "Dry Media (Graphite · Charcoal · Conté)",
+    brushes: [
       {
-        id: "pencil-6b",
-        name: "Pencil 6B",
-        subtitle: "soft, dark graphite",
+        id: "pc-charcoal-light-grainy",
+        name: "Charcoal Light Grainy",
+        subtitle: "dry, peppery edge",
         params: [
-          p("size", "Size", "size", 8, 1, 80, 1, true),
-          p("flow", "Flow", "flow", 100),
-          p("smoothing", "Smoothing", "smoothing", 22),
-          p("grain", "Grain", "grain", 52),
-          p("opacity", "Opacity", "opacity", 100),
+          p("size", "Size", "size", 14, 1, 120, 1, true),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 20),
+          p("grain", "Grain", "grain", 72),
         ],
         engine: {
           backend: "stamping",
           strokePath: {
-            spacing: 3, // <- as %, baseline for preview UI
-            jitter: 4, // % of spacing
-            scatter: 0.1, // px
-            streamline: 30,
+            spacing: 3.4,
+            jitter: 4,
+            scatter: 0,
+            streamline: 20,
             count: 1,
           },
-          shape: {
-            type: "oval",
-            angle: 8,
-            softness: 50,
-            roundness: 28,
-            sizeScale: 1.0,
+          shape: { type: "charcoal", softness: 55, sizeScale: 1.05 },
+          grain: { kind: "noise", depth: 78, scale: 1.35 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 95 },
+        },
+      },
+      {
+        id: "pc-charcoal-light-smudged",
+        name: "Charcoal Light Smudged",
+        subtitle: "rubbed halo",
+        params: [
+          p("size", "Size", "size", 16, 1, 120, 1, true),
+          p("flow", "Flow", "flow", 75),
+          p("smoothing", "Smoothing", "smoothing", 25),
+          p("grain", "Grain", "grain", 40),
+        ],
+        engine: {
+          backend: "smudge",
+          strokePath: {
+            spacing: 3.6,
+            jitter: 6,
+            scatter: 2,
+            streamline: 25,
+            count: 1,
           },
-          grain: { kind: "paper", depth: 68, scale: 1.15 },
-          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
-          overrides: {
-            flow: 64,
-            spacing: 0.003, // request ~0.30% (backend also caps)
-            jitter: 0,
+          shape: { type: "round", softness: 70, sizeScale: 1.0 },
+          grain: { kind: "paper", depth: 30, scale: 1.1 },
+          rendering: { mode: "blended", wetEdges: false, flow: 70 },
+        },
+      },
+
+      {
+        id: "pc-charcoal-smooth",
+        name: "Charcoal Smooth",
+        subtitle: "wide, velvety",
+        params: [
+          p("size", "Size", "size", 22, 1, 140, 1, true),
+          p("flow", "Flow", "flow", 70),
+          p("smoothing", "Smoothing", "smoothing", 20),
+          p("grain", "Grain", "grain", 30),
+        ],
+        engine: {
+          backend: "smudge",
+          strokePath: {
+            spacing: 3.8,
+            jitter: 8,
+            scatter: 3,
+            streamline: 20,
+            count: 1,
+          },
+          shape: { type: "round", softness: 80, sizeScale: 1.15 },
+          grain: { kind: "paper", depth: 25, scale: 1.15 },
+          rendering: { mode: "blended", wetEdges: false, flow: 65 },
+        },
+      },
+      {
+        id: "pc-charcoal-stick",
+        name: "Charcoal Stick",
+        subtitle: "blocky, bar nib",
+        params: [
+          p("size", "Size", "size", 18, 1, 120, 1, true),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 22),
+          p("grain", "Grain", "grain", 55),
+          p("angle", "Angle", "angle", 0, 0, 360),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3.0,
+            jitter: 2,
             scatter: 0,
-            softness: 54,
-            grainKind: "paper",
-            grainDepth: 58,
-            grainScale: 1.2,
-            rimMode: "auto",
-            rimStrength: 0.18,
-            bgIsLight: true,
+            streamline: 22,
+            count: 1,
           },
+          shape: { type: "chisel", angle: 0, softness: 22, sizeScale: 1.1 },
+          grain: { kind: "noise", depth: 60, scale: 1.2 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 95 },
+          overrides: { flow: 68, rimMode: "off", rimStrength: 0.0 },
+        },
+      },
+
+      {
+        id: "pc-wood-charcoal",
+        name: "Wood Charcoal",
+        subtitle: "streaky, dry",
+        params: [
+          p("size", "Size", "size", 16, 1, 120, 1, true),
+          p("flow", "Flow", "flow", 90),
+          p("smoothing", "Smoothing", "smoothing", 16),
+          p("grain", "Grain", "grain", 72),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 3.6,
+            jitter: 10,
+            scatter: 1.0,
+            streamline: 16,
+            count: 1,
+          },
+          shape: { type: "charcoal", softness: 50, sizeScale: 1.05 },
+          grain: { kind: "noise", depth: 72, scale: 1.3 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 95 },
+          overrides: { flow: 68, rimMode: "off", rimStrength: 0.0 },
+        },
+      },
+
+      {
+        id: "pc-conte-crayon",
+        name: "Conté Crayon",
+        subtitle: "dense sandy particulates",
+        params: [
+          p("size", "Size", "size", 18, 1, 140, 1, true),
+          p("flow", "Flow", "flow", 70),
+          p("smoothing", "Smoothing", "smoothing", 18),
+          p("grain", "Grain", "grain", 20),
+        ],
+        engine: {
+          backend: "spray",
+          strokePath: {
+            spacing: 8,
+            jitter: 10,
+            scatter: 28,
+            streamline: 18,
+            count: 18,
+          },
+          shape: { type: "spray", softness: 40, sizeScale: 1.0 },
+          grain: { kind: "none", depth: 0, scale: 1.0 },
+          rendering: { mode: "spray", wetEdges: false, flow: 55 },
+        },
+      },
+
+      {
+        id: "pc-charcoal-grunge",
+        name: "Charcoal Grunge",
+        subtitle: "heavy texture bands",
+        params: [
+          p("size", "Size", "size", 22, 1, 160, 1, true),
+          p("flow", "Flow", "flow", 65),
+          p("smoothing", "Smoothing", "smoothing", 14),
+          p("grain", "Grain", "grain", 10),
+        ],
+        engine: {
+          backend: "spray",
+          strokePath: {
+            spacing: 9,
+            jitter: 10,
+            scatter: 36,
+            streamline: 14,
+            count: 24,
+          },
+          shape: { type: "spray", softness: 45, sizeScale: 1.0 },
+          grain: { kind: "none", depth: 0, scale: 1.0 },
+          rendering: { mode: "spray", wetEdges: false, flow: 55 },
+        },
+      },
+      {
+        id: "pc-charcoal-shader",
+        name: "Charcoal Shader",
+        subtitle: "broad tonal fill",
+        params: [
+          p("size", "Size", "size", 24, 1, 180, 1, true),
+          p("flow", "Flow", "flow", 45),
+          p("smoothing", "Smoothing", "smoothing", 16),
+          p("grain", "Grain", "grain", 15),
+        ],
+        engine: {
+          backend: "spray",
+          strokePath: {
+            spacing: 9,
+            jitter: 8,
+            scatter: 26,
+            streamline: 16,
+            count: 18,
+          },
+          shape: { type: "spray", softness: 40, sizeScale: 1.05 },
+          grain: { kind: "none", depth: 0, scale: 1.0 },
+          rendering: { mode: "spray", wetEdges: false, flow: 50 },
         },
       },
     ],
@@ -312,7 +809,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("spacing", "Spacing", "spacing", 6),
           p("smoothing", "Smoothing", "smoothing", 35),
         ],
-        engine: engines.technical(),
+        engine: engines.technical(), // <-- now ribbon
       },
       {
         id: "calligraphy",
@@ -325,7 +822,32 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("smoothing", "Smoothing", "smoothing", 20),
           p("angle", "Angle", "angle", 32, 0, 360),
         ],
-        engine: engines.calligraphy(32),
+        engine: engines.calligraphy(32), // <-- now ribbon
+      },
+      {
+        id: "marker-chisel",
+        name: "Marker Chisel",
+        subtitle: "broad lettering",
+        params: [
+          p("size", "Size", "size", 18, 1, 120, 1, true),
+          p("flow", "Flow", "flow", 85),
+          p("spacing", "Spacing", "spacing", 8),
+          p("smoothing", "Smoothing", "smoothing", 16),
+          p("angle", "Angle", "angle", 15, 0, 360),
+        ],
+        engine: {
+          backend: "pattern",
+          strokePath: {
+            spacing: 6,
+            jitter: 4,
+            scatter: 0,
+            streamline: 36,
+            count: 1,
+          },
+          shape: { type: "chisel", angle: 15, softness: 8, sizeScale: 1.0 },
+          grain: { kind: "none", depth: 0, scale: 1.0 },
+          rendering: { mode: "marker", wetEdges: false, flow: 100 },
+        },
       },
     ],
   },
@@ -347,6 +869,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("smoothing", "Smoothing", "smoothing", 15),
         ],
         engine: engines.watercolor(),
+        // BLEND: ["wet","stamping"]  — nice future upgrade for hard/soft edges.
       },
       {
         id: "watercolor",
@@ -359,6 +882,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("opacity", "Opacity", "opacity", 70),
         ],
         engine: engines.watercolor(),
+        // BLEND: ["wet","spray"] — to add micro granulation speckle later.
       },
       {
         id: "oil-brush",
@@ -371,6 +895,19 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("grain", "Grain", "grain", 45),
         ],
         engine: engines.oil(),
+        // BLEND: ["impasto","stamping"] — impasto height + soft glazing.
+      },
+      {
+        id: "oil-impasto",
+        name: "Oil Impasto",
+        subtitle: "thick paint",
+        params: [
+          p("size", "Size", "size", 26, 1, 140, 1, true),
+          p("flow", "Flow", "flow", 80),
+          p("spacing", "Spacing", "spacing", 18),
+          p("grain", "Grain", "grain", 65),
+        ],
+        engine: engines.impasto(),
       },
     ],
   },
@@ -443,6 +980,18 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         ],
         engine: engines.oil(),
       },
+      {
+        id: "hatch-pattern",
+        name: "Hatch Pattern",
+        subtitle: "lined fill",
+        params: [
+          p("size", "Size", "size", 18, 1, 120, 1, true),
+          p("spacing", "Spacing", "spacing", 16),
+          p("angle", "Angle", "angle", 0, 0, 360),
+          p("opacity", "Opacity", "opacity", 100),
+        ],
+        engine: engines.pattern(),
+      },
     ],
   },
 
@@ -484,6 +1033,18 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         ],
         engine: engines.membrane(),
       },
+      {
+        id: "particle-dust",
+        name: "Particle Dust",
+        subtitle: "orbiting flecks",
+        params: [
+          p("size", "Size", "size", 20, 1, 140, 1, true),
+          p("flow", "Flow", "flow", 60),
+          p("spacing", "Spacing", "spacing", 22),
+          p("opacity", "Opacity", "opacity", 80),
+        ],
+        engine: engines.particle(),
+      },
     ],
   },
 
@@ -516,8 +1077,22 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         ],
         engine: engines.charcoal(),
       },
+      {
+        id: "woven-impasto",
+        name: "Woven Impasto",
+        subtitle: "raised fabric",
+        params: [
+          p("size", "Size", "size", 24),
+          p("flow", "Flow", "flow", 80),
+          p("spacing", "Spacing", "spacing", 20),
+          p("grain", "Grain", "grain", 70),
+        ],
+        engine: engines.impasto(),
+        // BLEND: ["impasto","pattern"] — height + oriented hatch.
+      },
     ],
   },
+
   {
     id: "luminance",
     name: "Luminance",

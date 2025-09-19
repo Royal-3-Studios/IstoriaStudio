@@ -1,3 +1,4 @@
+// FILE: src/components/editor/tools/brush/BrushSettings.tsx
 "use client";
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
@@ -17,7 +18,9 @@ import {
 } from "@/components/ui/select";
 import { drawStrokeToCanvas } from "@/lib/brush/engine";
 
+/** Enum-like option sets mirrored by select controls (indices map to strings). */
 const GRAIN_KIND_OPTS = ["none", "paper", "canvas", "noise"] as const;
+const RIM_MODE_OPTS = ["auto", "on", "off"] as const;
 
 export function BrushSettings({
   preset,
@@ -33,29 +36,29 @@ export function BrushSettings({
   const sections = BRUSH_SECTIONS;
   const [active, setActive] = React.useState<SectionDef["id"]>(sections[0].id);
 
-  // ---------- Preview (shared engine) ----------
+  /* ---------- Live preview (shared engine) ---------- */
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
 
   const overrides: Partial<NonNullable<RenderOptions["overrides"]>> =
     React.useMemo(() => {
       const o: Partial<NonNullable<RenderOptions["overrides"]>> = {};
 
-      // path placement / feel
+      /* -------- Path placement / feel -------- */
       if (values.spacing != null) o.spacing = Number(values.spacing); // % of diameter
       if (values.jitter != null) o.jitter = Number(values.jitter); // % of spacing
       if (values.scatter != null) o.scatter = Number(values.scatter); // px
       if (values.count != null)
         o.count = Math.max(1, Math.round(Number(values.count)));
 
-      // tip & orientation
+      /* -------- Tip & orientation -------- */
       if (values.angle != null) o.angle = Number(values.angle); // deg
       if (values.hardness != null) o.softness = 100 - Number(values.hardness); // UI hardness -> engine softness
 
-      // dynamics
+      /* -------- Dynamics (flow, wet edges) -------- */
       if (values.flow != null) o.flow = Number(values.flow);
       if (values.wetEdges != null) o.wetEdges = !!values.wetEdges;
 
-      // grain
+      /* -------- Grain -------- */
       if (values.grainKind != null) {
         const idx = Math.max(
           0,
@@ -65,16 +68,150 @@ export function BrushSettings({
       }
       if (values.grainDepth != null) o.grainDepth = Number(values.grainDepth);
       if (values.grainScale != null) {
-        // UI uses 100=1.0 convention; engine expects ~0.25..4
+        // UI uses 100 = 1.0; engine expects ~0.25..4
         const s = Number(values.grainScale) / 100;
         o.grainScale = Math.max(0.25, Math.min(4, s));
       }
       if (values.grainRotate != null)
         o.grainRotate = Number(values.grainRotate);
 
+      /* -------- Paper tooth (advanced) -------- */
+      if (values.toothBody != null)
+        o.toothBody = Math.max(0, Math.min(1, Number(values.toothBody)));
+      if (values.toothFlank != null)
+        o.toothFlank = Math.max(0, Math.min(1, Number(values.toothFlank)));
+      if (values.toothScale != null) {
+        const px = Math.round(Number(values.toothScale));
+        // 0 = auto (backend scales by brush diameter). Else clamp 2..64 px.
+        o.toothScale = px <= 0 ? 0 : Math.max(2, Math.min(64, px));
+      }
+
+      /* -------- Taper & body shaping (asymmetric allowed) -------- */
+      // Current engine keys you already had:
+      if (values.tipScaleStart != null)
+        o.tipScaleStart = Math.max(
+          0,
+          Math.min(1, Number(values.tipScaleStart))
+        ); // 0..1
+      if (values.tipScaleEnd != null)
+        o.tipScaleEnd = Math.max(0, Math.min(1, Number(values.tipScaleEnd))); // 0..1
+      if (values.tipMinPx != null)
+        o.tipMinPx = Math.max(0, Math.round(Number(values.tipMinPx))); // px floor
+      if (values.bellyGain != null)
+        o.bellyGain = Math.max(0.5, Math.min(2, Number(values.bellyGain))); // 0.5..2
+      if (values.endBias != null)
+        o.endBias = Math.max(-1, Math.min(1, Number(values.endBias))); // -1..+1
+      if (values.uniformity != null)
+        o.uniformity = Math.max(0, Math.min(1, Number(values.uniformity))); // 0..1
+
+      // Friendly aliases (if your schema uses these names instead)
+      if (values.taperStart != null)
+        o.tipScaleStart = Math.max(0, Math.min(1, Number(values.taperStart)));
+      if (values.taperEnd != null)
+        o.tipScaleEnd = Math.max(0, Math.min(1, Number(values.taperEnd)));
+      if (values.taperBias != null)
+        o.endBias = Math.max(-1, Math.min(1, Number(values.taperBias)));
+      if (values.tipRoundness != null)
+        o.tipRoundness = Math.max(0, Math.min(1, Number(values.tipRoundness)));
+      if (values.thicknessCurve != null)
+        o.thicknessCurve = Math.max(
+          0.2,
+          Math.min(3, Number(values.thicknessCurve))
+        );
+
+      /* -------- Split nibs / multi-track (off when count=1) -------- */
+      if (values.splitCount != null)
+        o.splitCount = Math.max(1, Math.round(Number(values.splitCount))); // 1..16
+      if (values.splitSpacing != null)
+        o.splitSpacing = Math.max(0, Number(values.splitSpacing)); // px
+      if (values.splitSpacingJitter != null)
+        o.splitSpacingJitter = Math.max(
+          0,
+          Math.min(100, Number(values.splitSpacingJitter))
+        ); // %
+      if (values.splitCurvature != null)
+        o.splitCurvature = Math.max(
+          -1,
+          Math.min(1, Number(values.splitCurvature))
+        ); // -1..+1
+      if (values.splitAsymmetry != null)
+        o.splitAsymmetry = Math.max(
+          -1,
+          Math.min(1, Number(values.splitAsymmetry))
+        ); // -1..+1
+      if (values.splitScatter != null)
+        o.splitScatter = Math.max(0, Number(values.splitScatter)); // px
+      if (values.splitAngle != null) o.splitAngle = Number(values.splitAngle); // deg (base fan)
+
+      // Dynamics routing into split behaviour
+      if (values.pressureToSplitSpacing != null)
+        o.pressureToSplitSpacing = Math.max(
+          0,
+          Math.min(1, Number(values.pressureToSplitSpacing))
+        ); // 0..1
+      if (values.tiltToSplitFan != null)
+        o.tiltToSplitFan = Math.max(
+          -45,
+          Math.min(45, Number(values.tiltToSplitFan))
+        ); // deg
+
+      /* -------- Speed dynamics (stroke velocity) -------- */
+      if (values.speedToWidth != null)
+        o.speedToWidth = Math.max(-1, Math.min(1, Number(values.speedToWidth))); // -1..+1
+      if (values.speedToFlow != null)
+        o.speedToFlow = Math.max(-1, Math.min(1, Number(values.speedToFlow))); // -1..+1
+      if (values.speedSmoothingMs != null)
+        o.speedSmoothingMs = Math.max(
+          0,
+          Math.round(Number(values.speedSmoothingMs))
+        ); // ms
+
+      /* -------- Tilt routing -------- */
+      if (values.tiltToSize != null)
+        o.tiltToSize = Math.max(-1, Math.min(1, Number(values.tiltToSize)));
+      if (values.tiltToFan != null)
+        o.tiltToFan = Math.max(-1, Math.min(1, Number(values.tiltToFan)));
+      if (values.tiltToGrainScale != null)
+        o.tiltToGrainScale = Math.max(
+          -1,
+          Math.min(1, Number(values.tiltToGrainScale))
+        );
+      if (values.tiltToEdgeNoise != null)
+        o.tiltToEdgeNoise = Math.max(
+          -1,
+          Math.min(1, Number(values.tiltToEdgeNoise))
+        );
+
+      /* -------- Edge noise (ink fringe / dry brush) -------- */
+      if (values.edgeNoiseStrength != null)
+        o.edgeNoiseStrength = Math.max(
+          0,
+          Math.min(1, Number(values.edgeNoiseStrength))
+        );
+      if (values.edgeNoiseScale != null)
+        o.edgeNoiseScale = Math.max(
+          2,
+          Math.min(64, Number(values.edgeNoiseScale))
+        );
+      if (values.dryThreshold != null)
+        o.dryThreshold = Math.max(0, Math.min(1, Number(values.dryThreshold)));
+
+      /* -------- Pencil rim / lighting -------- */
+      if (values.rimStrength != null)
+        o.rimStrength = Math.max(0, Math.min(1, Number(values.rimStrength)));
+      if (values.rimMode != null) {
+        const idx = Math.max(
+          0,
+          Math.min(RIM_MODE_OPTS.length - 1, Number(values.rimMode))
+        );
+        o.rimMode = RIM_MODE_OPTS[idx];
+      }
+      if (values.bgIsLight != null) o.bgIsLight = !!values.bgIsLight;
+
       return o;
     }, [values]);
 
+  // Derive preview brush size (stick to small range for thumbnail perf)
   const sizeParam = preset.params.find((p) => p.type === "size");
   const baseSizePx = Math.max(
     2,
@@ -117,7 +254,7 @@ export function BrushSettings({
 
   return (
     <div className="space-y-2">
-      {/* Live preview strip */}
+      {/* Preview strip */}
       <div className="rounded-md border bg-card p-1">
         <canvas ref={canvasRef} className="w-full h-[30px]" />
       </div>
@@ -135,6 +272,7 @@ export function BrushSettings({
               </TabsTrigger>
             ))}
           </TabsList>
+
           {sections.map((s) => (
             <TabsContent key={s.id} value={s.id} className="mt-2">
               <SectionPanel
@@ -147,7 +285,7 @@ export function BrushSettings({
         </Tabs>
       </div>
 
-      {/* sm: dropdown + panel */}
+      {/* sm: dropdown + active panel */}
       <div className="md:hidden space-y-2">
         <Select
           value={active}
@@ -164,6 +302,7 @@ export function BrushSettings({
             ))}
           </SelectContent>
         </Select>
+
         <SectionPanel
           section={sections.find((s) => s.id === active)!}
           values={values}
@@ -243,6 +382,7 @@ function ControlRow({
             </span>
           </>
         )}
+
         {control.kind === "toggle" && (
           <input
             type="checkbox"
@@ -251,6 +391,7 @@ function ControlRow({
             onChange={(e) => onChangeAction(e.target.checked ? 1 : 0)}
           />
         )}
+
         {control.kind === "select" && (
           <Select
             value={String(value)}

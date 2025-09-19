@@ -1,4 +1,4 @@
-// src/lib/brush/engine.ts
+// FILE: src/lib/brush/engine.ts
 /**
  * Brush engine orchestrator:
  * - Unifies types used by UI (BrushSettings) and presets
@@ -11,7 +11,7 @@ import { drawRibbonToCanvas } from "./backends/ribbon";
 import { drawSprayToCanvas } from "./backends/spray";
 import { drawWetToCanvas } from "./backends/wet";
 
-// ctx-based backends (yours/new)
+// ctx-based backends
 import drawStamping from "./backends/stamping";
 import drawSmudge from "./backends/smudge";
 import drawParticle from "./backends/particle";
@@ -71,36 +71,94 @@ export type EngineRendering = {
   flow?: number; // 0..100
 };
 
+/**
+ * RenderOverrides:
+ * These are the runtime knobs (merged from preset defaults + UI values)
+ * that backends can read. All fields are optional for callers; we fill
+ * defaults in mergeOverrides().
+ */
 export type RenderOverrides = {
-  centerlinePencil?: boolean;
-
-  // placement
+  /* -------- Placement -------- */
   spacing?: number; // %
   jitter?: number; // %
   scatter?: number; // px
   count?: number; // integer
 
-  // tip/orientation
+  /* -------- Tip / orientation -------- */
   angle?: number; // deg
   softness?: number; // 0..100
 
-  // dynamics
+  /* -------- Dynamics -------- */
   flow?: number; // 0..100
   coreStrength?: number; // ribbon intensity
 
-  // grain
+  /* -------- Grain -------- */
   grainKind?: "none" | "paper" | "canvas" | "noise";
   grainScale?: number; // 0.5..3
   grainDepth?: number; // 0..100
   grainRotate?: number; // deg
 
-  // wet
+  /* -------- Wet rendering hint -------- */
   wetEdges?: boolean;
 
-  // NEW — pencil/stamping rim control
-  rimMode?: "auto" | "on" | "off"; // default "auto"
-  rimStrength?: number; // 0..1, default 0.18
-  bgIsLight?: boolean; // hint for auto; default true
+  /* -------- Pencil / rim lighting -------- */
+  centerlinePencil?: boolean;
+  rimMode?: "auto" | "on" | "off";
+  rimStrength?: number; // 0..1
+  bgIsLight?: boolean;
+
+  /* -------- Paper tooth (graphite/charcoal) -------- */
+  toothBody?: number; // 0..1
+  toothFlank?: number; // 0..1
+  toothScale?: number; // px (0 = auto from diameter)
+
+  /* -------- Stroke geometry (taper/body) -------- */
+  /** 0..1: how much the START tip narrows (0=none, 1=sharp) */
+  tipScaleStart?: number;
+  /** 0..1: how much the END tip narrows (0=none, 1=sharp) */
+  tipScaleEnd?: number;
+  /** px: minimum tip width clamp (0 = none) */
+  tipMinPx?: number;
+  /** 0.5..2: multiplies belly thickness (1 = neutral) */
+  bellyGain?: number;
+  /** -1..1: makes start(-) or end(+) thicker */
+  endBias?: number;
+  /** 0..1: pushes thickness toward center (0=normal, 1=uniform marker) */
+  uniformity?: number;
+
+  /** 0..1: round the tip profile (0=pointier, 1=rounder) */
+  tipRoundness?: number;
+  /** 0.2..3: global thickness curve shaping (1 = neutral) */
+  thicknessCurve?: number;
+
+  /* -------- Split nibs / multi-track -------- */
+  splitCount?: number; // 1..16
+  splitSpacing?: number; // px between tracks
+  splitSpacingJitter?: number; // 0..100 (% of spacing)
+  splitCurvature?: number; // -1..+1 (fan bend)
+  splitAsymmetry?: number; // -1..+1 (offset bias)
+  splitScatter?: number; // px random normal scatter
+  splitAngle?: number; // deg base fan rotation
+
+  /* Pressure/tilt routing into split layout */
+  pressureToSplitSpacing?: number; // 0..1
+  tiltToSplitFan?: number; // deg
+
+  /* -------- Speed dynamics (stroke velocity) -------- */
+  speedToWidth?: number; // -1..+1
+  speedToFlow?: number; // -1..+1
+  speedSmoothingMs?: number; // ms averaging
+
+  /* -------- Tilt routing -------- */
+  tiltToSize?: number; // -1..+1
+  tiltToFan?: number; // -1..+1 (generic fan)
+  tiltToGrainScale?: number; // -1..+1
+  tiltToEdgeNoise?: number; // -1..+1
+
+  /* -------- Edge noise / dry fringe -------- */
+  edgeNoiseStrength?: number; // 0..1
+  edgeNoiseScale?: number; // 2..64 px (noise period)
+  dryThreshold?: number; // 0..1 (flow under this -> dry)
 };
 
 export type EngineConfig = {
@@ -158,51 +216,158 @@ function mergeOverrides(
   const e = engineDefaults ?? {};
   const u = ui ?? {};
 
-  const DEF = {
+  // Central default values — tuned to be visually neutral.
+  const DEF: Required<RenderOverrides> = {
+    /* placement */
     spacing: 4,
     jitter: 0.5,
     scatter: 0,
     count: 1,
+
+    /* tip/orientation */
     angle: 0,
     softness: 50,
+
+    /* dynamics */
     flow: 100,
     coreStrength: 140,
-    grainKind: "none" as "none" | "paper" | "canvas" | "noise",
+
+    /* grain */
+    grainKind: "none",
     grainScale: 1.0,
     grainDepth: 0,
     grainRotate: 0,
+
+    /* wet */
     wetEdges: false,
+
+    /* rim / pencil */
     centerlinePencil: false,
-    rimMode: "auto" as "auto" | "on" | "off",
+    rimMode: "auto",
     rimStrength: 0.18,
     bgIsLight: true,
+
+    /* paper tooth */
+    toothBody: 0.55,
+    toothFlank: 0.9,
+    toothScale: 0,
+
+    /* stroke geometry */
+    tipScaleStart: 0.85,
+    tipScaleEnd: 0.85,
+    tipMinPx: 0,
+    bellyGain: 1.0,
+    endBias: 0.0,
+    uniformity: 0.0,
+    tipRoundness: 0.0,
+    thicknessCurve: 1.0,
+
+    /* split nibs */
+    splitCount: 1,
+    splitSpacing: 0,
+    splitSpacingJitter: 0,
+    splitCurvature: 0,
+    splitAsymmetry: 0,
+    splitScatter: 0,
+    splitAngle: 0,
+
+    pressureToSplitSpacing: 0,
+    tiltToSplitFan: 0,
+
+    /* speed dynamics */
+    speedToWidth: 0,
+    speedToFlow: 0,
+    speedSmoothingMs: 30,
+
+    /* tilt routing */
+    tiltToSize: 0,
+    tiltToFan: 0,
+    tiltToGrainScale: 0,
+    tiltToEdgeNoise: 0,
+
+    /* edge noise */
+    edgeNoiseStrength: 0,
+    edgeNoiseScale: 8,
+    dryThreshold: 0.0,
   };
 
+  // Merge ui over engine defaults over DEF.
   return {
+    spacing: u.spacing ?? e.spacing ?? DEF.spacing,
+    jitter: u.jitter ?? e.jitter ?? DEF.jitter,
+    scatter: u.scatter ?? e.scatter ?? DEF.scatter,
+    count: Math.max(1, Math.round(u.count ?? e.count ?? DEF.count)),
+
+    angle: u.angle ?? e.angle ?? DEF.angle,
+    softness: u.softness ?? e.softness ?? DEF.softness,
+
+    flow: u.flow ?? e.flow ?? DEF.flow,
+    coreStrength: u.coreStrength ?? e.coreStrength ?? DEF.coreStrength,
+
+    grainKind: u.grainKind ?? e.grainKind ?? DEF.grainKind,
+    grainScale: u.grainScale ?? e.grainScale ?? DEF.grainScale,
+    grainDepth: u.grainDepth ?? e.grainDepth ?? DEF.grainDepth,
+    grainRotate: u.grainRotate ?? e.grainRotate ?? DEF.grainRotate,
+
+    wetEdges: u.wetEdges ?? e.wetEdges ?? DEF.wetEdges,
+
     centerlinePencil:
       u.centerlinePencil ?? e.centerlinePencil ?? DEF.centerlinePencil,
-    spacing: (u.spacing ?? e.spacing ?? DEF.spacing) as number,
-    jitter: (u.jitter ?? e.jitter ?? DEF.jitter) as number,
-    scatter: (u.scatter ?? e.scatter ?? DEF.scatter) as number,
-    count: Math.max(1, Math.round(u.count ?? e.count ?? DEF.count)) as number,
-    angle: (u.angle ?? e.angle ?? DEF.angle) as number,
-    softness: (u.softness ?? e.softness ?? DEF.softness) as number,
-    flow: (u.flow ?? e.flow ?? DEF.flow) as number,
-    coreStrength: (u.coreStrength ??
-      e.coreStrength ??
-      DEF.coreStrength) as number,
-    grainKind: (u.grainKind ?? e.grainKind ?? DEF.grainKind) as
-      | "none"
-      | "paper"
-      | "canvas"
-      | "noise",
-    grainScale: (u.grainScale ?? e.grainScale ?? DEF.grainScale) as number,
-    grainDepth: (u.grainDepth ?? e.grainDepth ?? DEF.grainDepth) as number,
-    grainRotate: (u.grainRotate ?? e.grainRotate ?? DEF.grainRotate) as number,
-    wetEdges: u.wetEdges ?? e.wetEdges ?? DEF.wetEdges,
     rimMode: (u.rimMode ?? e.rimMode ?? DEF.rimMode) as "auto" | "on" | "off",
-    rimStrength: (u.rimStrength ?? e.rimStrength ?? DEF.rimStrength) as number,
-    bgIsLight: (u.bgIsLight ?? e.bgIsLight ?? DEF.bgIsLight) as boolean,
+    rimStrength: u.rimStrength ?? e.rimStrength ?? DEF.rimStrength,
+    bgIsLight: u.bgIsLight ?? e.bgIsLight ?? DEF.bgIsLight,
+
+    toothBody: u.toothBody ?? e.toothBody ?? DEF.toothBody,
+    toothFlank: u.toothFlank ?? e.toothFlank ?? DEF.toothFlank,
+    toothScale: u.toothScale ?? e.toothScale ?? DEF.toothScale,
+
+    tipScaleStart: u.tipScaleStart ?? e.tipScaleStart ?? DEF.tipScaleStart,
+    tipScaleEnd: u.tipScaleEnd ?? e.tipScaleEnd ?? DEF.tipScaleEnd,
+    tipMinPx: u.tipMinPx ?? e.tipMinPx ?? DEF.tipMinPx,
+    bellyGain: u.bellyGain ?? e.bellyGain ?? DEF.bellyGain,
+    endBias: u.endBias ?? e.endBias ?? DEF.endBias,
+    uniformity: u.uniformity ?? e.uniformity ?? DEF.uniformity,
+    tipRoundness: u.tipRoundness ?? e.tipRoundness ?? DEF.tipRoundness,
+    thicknessCurve: u.thicknessCurve ?? e.thicknessCurve ?? DEF.thicknessCurve,
+
+    splitCount: Math.max(
+      1,
+      Math.round(u.splitCount ?? e.splitCount ?? DEF.splitCount)
+    ),
+    splitSpacing: u.splitSpacing ?? e.splitSpacing ?? DEF.splitSpacing,
+    splitSpacingJitter:
+      u.splitSpacingJitter ?? e.splitSpacingJitter ?? DEF.splitSpacingJitter,
+    splitCurvature: u.splitCurvature ?? e.splitCurvature ?? DEF.splitCurvature,
+    splitAsymmetry: u.splitAsymmetry ?? e.splitAsymmetry ?? DEF.splitAsymmetry,
+    splitScatter: u.splitScatter ?? e.splitScatter ?? DEF.splitScatter,
+    splitAngle: u.splitAngle ?? e.splitAngle ?? DEF.splitAngle,
+
+    pressureToSplitSpacing:
+      u.pressureToSplitSpacing ??
+      e.pressureToSplitSpacing ??
+      DEF.pressureToSplitSpacing,
+    tiltToSplitFan: u.tiltToSplitFan ?? e.tiltToSplitFan ?? DEF.tiltToSplitFan,
+
+    speedToWidth: u.speedToWidth ?? e.speedToWidth ?? DEF.speedToWidth,
+    speedToFlow: u.speedToFlow ?? e.speedToFlow ?? DEF.speedToFlow,
+    speedSmoothingMs: Math.max(
+      0,
+      Math.round(
+        u.speedSmoothingMs ?? e.speedSmoothingMs ?? DEF.speedSmoothingMs
+      )
+    ),
+
+    tiltToSize: u.tiltToSize ?? e.tiltToSize ?? DEF.tiltToSize,
+    tiltToFan: u.tiltToFan ?? e.tiltToFan ?? DEF.tiltToFan,
+    tiltToGrainScale:
+      u.tiltToGrainScale ?? e.tiltToGrainScale ?? DEF.tiltToGrainScale,
+    tiltToEdgeNoise:
+      u.tiltToEdgeNoise ?? e.tiltToEdgeNoise ?? DEF.tiltToEdgeNoise,
+
+    edgeNoiseStrength:
+      u.edgeNoiseStrength ?? e.edgeNoiseStrength ?? DEF.edgeNoiseStrength,
+    edgeNoiseScale: u.edgeNoiseScale ?? e.edgeNoiseScale ?? DEF.edgeNoiseScale,
+    dryThreshold: u.dryThreshold ?? e.dryThreshold ?? DEF.dryThreshold,
   };
 }
 
@@ -254,7 +419,7 @@ function pickBackend(opt: RenderOptions): Exclude<BrushBackend, "auto"> {
 
   if (isWet) return "wet";
   if (scatter >= 12 || count >= 12) return "spray";
-  // NOTE: don't force ribbon on centerlinePencil. Let presets pick stamping for pencils.
+  // NOTE: keep pencils/charcoal in stamping unless presets pick otherwise.
   return "stamping";
 }
 
