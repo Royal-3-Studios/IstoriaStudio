@@ -20,19 +20,16 @@ import drawImpasto from "./backends/impasto";
 
 /* ============================== Types =============================== */
 
-export type BrushBackend =
-  | "ribbon"
-  | "stamping"
-  | "spray"
-  | "wet"
-  | "smudge"
-  | "particle"
-  | "pattern"
-  | "impasto"
-  | "auto";
-
-/** Canonical rendering modes (no legacy names) */
-export type RenderingMode = "blended" | "glazed" | "marker" | "spray" | "wet";
+import type {
+  BrushBackend,
+  RenderingMode,
+  GrainMotion,
+  TaperProfile,
+  CurvePoint,
+  ModInput,
+  ModTarget,
+  EngineModulations,
+} from "@/lib/brush/core/types";
 
 export type EngineShape = {
   type?:
@@ -71,6 +68,22 @@ export type EngineRendering = {
   flow?: number; // 0..100
 };
 
+/* ===== Advanced modulation system (additive and backwards-compatible) ===== */
+
+export type ModRoute = {
+  input: ModInput;
+  target: ModTarget;
+  /** Scalar after curve (applied per mode). -1..+1 typical. */
+  amount?: number;
+  /** How to combine with base value. */
+  mode?: "add" | "mul" | "replace";
+  /** Optional remap LUT; if absent, linear. */
+  curve?: CurvePoint[];
+  /** Optional post-curve clamp. */
+  min?: number;
+  max?: number;
+};
+
 /**
  * RenderOverrides:
  * These are the runtime knobs (merged from preset defaults + UI values)
@@ -87,9 +100,17 @@ export type RenderOverrides = {
   /* -------- Tip / orientation -------- */
   angle?: number; // deg
   softness?: number; // 0..100
+  /** Per-stamp random rotation jitter (deg). */
+  angleJitter?: number; // 0..180
+  /** 0..1: 0=no follow, 1=fully align tip to path direction. */
+  angleFollowDirection?: number;
 
   /* -------- Dynamics -------- */
   flow?: number; // 0..100
+  /** Separate from flow; caps composited output opacity. */
+  opacity?: number; // 0..100
+  /** If true, holding the stamp builds up (airbrush behavior). */
+  buildup?: boolean;
   coreStrength?: number; // ribbon intensity
 
   /* -------- Grain -------- */
@@ -97,6 +118,7 @@ export type RenderOverrides = {
   grainScale?: number; // 0.5..3
   grainDepth?: number; // 0..100
   grainRotate?: number; // deg
+  grainMotion?: GrainMotion;
 
   /* -------- Wet rendering hint -------- */
   wetEdges?: boolean;
@@ -130,6 +152,12 @@ export type RenderOverrides = {
   tipRoundness?: number;
   /** 0.2..3: global thickness curve shaping (1 = neutral) */
   thicknessCurve?: number;
+
+  /** Taper shape controls (ease/exp/custom curves) */
+  taperProfileStart?: TaperProfile;
+  taperProfileEnd?: TaperProfile;
+  taperProfileStartCurve?: CurvePoint[]; // when 'custom'
+  taperProfileEndCurve?: CurvePoint[]; // when 'custom'
 
   /* -------- Split nibs / multi-track -------- */
   splitCount?: number; // 1..16
@@ -168,6 +196,8 @@ export type EngineConfig = {
   grain?: EngineGrain;
   rendering?: EngineRendering;
   overrides?: Partial<RenderOverrides>; // engine defaults
+  /** Advanced modulation routes (optional). */
+  modulations?: EngineModulations;
 };
 
 /** Back-compat alias */
@@ -227,9 +257,13 @@ function mergeOverrides(
     /* tip/orientation */
     angle: 0,
     softness: 50,
+    angleJitter: 0,
+    angleFollowDirection: 0,
 
     /* dynamics */
     flow: 100,
+    opacity: 100,
+    buildup: false,
     coreStrength: 140,
 
     /* grain */
@@ -237,6 +271,7 @@ function mergeOverrides(
     grainScale: 1.0,
     grainDepth: 0,
     grainRotate: 0,
+    grainMotion: "paperLocked",
 
     /* wet */
     wetEdges: false,
@@ -261,6 +296,10 @@ function mergeOverrides(
     uniformity: 0.0,
     tipRoundness: 0.0,
     thicknessCurve: 1.0,
+    taperProfileStart: "easeOut",
+    taperProfileEnd: "easeIn",
+    taperProfileStartCurve: [],
+    taperProfileEndCurve: [],
 
     /* split nibs */
     splitCount: 1,
@@ -300,14 +339,22 @@ function mergeOverrides(
 
     angle: u.angle ?? e.angle ?? DEF.angle,
     softness: u.softness ?? e.softness ?? DEF.softness,
+    angleJitter: u.angleJitter ?? e.angleJitter ?? DEF.angleJitter,
+    angleFollowDirection:
+      u.angleFollowDirection ??
+      e.angleFollowDirection ??
+      DEF.angleFollowDirection,
 
     flow: u.flow ?? e.flow ?? DEF.flow,
+    opacity: u.opacity ?? e.opacity ?? DEF.opacity,
+    buildup: u.buildup ?? e.buildup ?? DEF.buildup,
     coreStrength: u.coreStrength ?? e.coreStrength ?? DEF.coreStrength,
 
     grainKind: u.grainKind ?? e.grainKind ?? DEF.grainKind,
     grainScale: u.grainScale ?? e.grainScale ?? DEF.grainScale,
     grainDepth: u.grainDepth ?? e.grainDepth ?? DEF.grainDepth,
     grainRotate: u.grainRotate ?? e.grainRotate ?? DEF.grainRotate,
+    grainMotion: u.grainMotion ?? e.grainMotion ?? DEF.grainMotion,
 
     wetEdges: u.wetEdges ?? e.wetEdges ?? DEF.wetEdges,
 
@@ -329,6 +376,19 @@ function mergeOverrides(
     uniformity: u.uniformity ?? e.uniformity ?? DEF.uniformity,
     tipRoundness: u.tipRoundness ?? e.tipRoundness ?? DEF.tipRoundness,
     thicknessCurve: u.thicknessCurve ?? e.thicknessCurve ?? DEF.thicknessCurve,
+
+    taperProfileStart:
+      u.taperProfileStart ?? e.taperProfileStart ?? DEF.taperProfileStart,
+    taperProfileEnd:
+      u.taperProfileEnd ?? e.taperProfileEnd ?? DEF.taperProfileEnd,
+    taperProfileStartCurve:
+      u.taperProfileStartCurve ??
+      e.taperProfileStartCurve ??
+      DEF.taperProfileStartCurve,
+    taperProfileEndCurve:
+      u.taperProfileEndCurve ??
+      e.taperProfileEndCurve ??
+      DEF.taperProfileEndCurve,
 
     splitCount: Math.max(
       1,

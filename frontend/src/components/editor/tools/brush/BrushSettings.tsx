@@ -1,4 +1,3 @@
-// FILE: src/components/editor/tools/brush/BrushSettings.tsx
 "use client";
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
@@ -17,10 +16,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { drawStrokeToCanvas } from "@/lib/brush/engine";
+import { debounce } from "@/lib/shared/timing";
 
 /** Enum-like option sets mirrored by select controls (indices map to strings). */
 const GRAIN_KIND_OPTS = ["none", "paper", "canvas", "noise"] as const;
 const RIM_MODE_OPTS = ["auto", "on", "off"] as const;
+const GRAIN_MOTION_OPTS = ["paperLocked", "tipLocked", "smudgeLocked"] as const;
+const TAPER_PROFILE_OPTS = [
+  "linear",
+  "easeIn",
+  "easeOut",
+  "easeInOut",
+  "expo",
+  "custom",
+] as const;
 
 export function BrushSettings({
   preset,
@@ -53,9 +62,19 @@ export function BrushSettings({
       /* -------- Tip & orientation -------- */
       if (values.angle != null) o.angle = Number(values.angle); // deg
       if (values.hardness != null) o.softness = 100 - Number(values.hardness); // UI hardness -> engine softness
+      if (values.angleJitter != null)
+        o.angleJitter = Math.max(0, Math.min(180, Number(values.angleJitter)));
+      if (values.angleFollowDirection != null)
+        o.angleFollowDirection = Math.max(
+          0,
+          Math.min(1, Number(values.angleFollowDirection))
+        );
 
-      /* -------- Dynamics (flow, wet edges) -------- */
+      /* -------- Dynamics (flow, opacity, buildup, wet edges) -------- */
       if (values.flow != null) o.flow = Number(values.flow);
+      if (values.opacity != null)
+        o.opacity = Math.max(0, Math.min(100, Number(values.opacity)));
+      if (values.buildup != null) o.buildup = !!values.buildup;
       if (values.wetEdges != null) o.wetEdges = !!values.wetEdges;
 
       /* -------- Grain -------- */
@@ -74,6 +93,13 @@ export function BrushSettings({
       }
       if (values.grainRotate != null)
         o.grainRotate = Number(values.grainRotate);
+      if (values.grainMotion != null) {
+        const idx = Math.max(
+          0,
+          Math.min(GRAIN_MOTION_OPTS.length - 1, Number(values.grainMotion))
+        );
+        o.grainMotion = GRAIN_MOTION_OPTS[idx];
+      }
 
       /* -------- Paper tooth (advanced) -------- */
       if (values.toothBody != null)
@@ -87,7 +113,6 @@ export function BrushSettings({
       }
 
       /* -------- Taper & body shaping (asymmetric allowed) -------- */
-      // Current engine keys you already had:
       if (values.tipScaleStart != null)
         o.tipScaleStart = Math.max(
           0,
@@ -96,7 +121,7 @@ export function BrushSettings({
       if (values.tipScaleEnd != null)
         o.tipScaleEnd = Math.max(0, Math.min(1, Number(values.tipScaleEnd))); // 0..1
       if (values.tipMinPx != null)
-        o.tipMinPx = Math.max(0, Math.round(Number(values.tipMinPx))); // px floor
+        o.tipMinPx = Math.max(0, Math.round(Number(values.tipMinPx))); // px
       if (values.bellyGain != null)
         o.bellyGain = Math.max(0.5, Math.min(2, Number(values.bellyGain))); // 0.5..2
       if (values.endBias != null)
@@ -118,6 +143,53 @@ export function BrushSettings({
           0.2,
           Math.min(3, Number(values.thicknessCurve))
         );
+
+      // Taper profiles (enum indices)
+      if (values.taperProfileStart != null) {
+        const idx = Math.max(
+          0,
+          Math.min(
+            TAPER_PROFILE_OPTS.length - 1,
+            Number(values.taperProfileStart)
+          )
+        );
+        o.taperProfileStart = TAPER_PROFILE_OPTS[idx];
+      }
+      if (values.taperProfileEnd != null) {
+        const idx = Math.max(
+          0,
+          Math.min(
+            TAPER_PROFILE_OPTS.length - 1,
+            Number(values.taperProfileEnd)
+          )
+        );
+        o.taperProfileEnd = TAPER_PROFILE_OPTS[idx];
+      }
+      // Custom curves (JSON string of {x,y}[] in 0..1)
+      if (
+        values.taperProfileStartCurve &&
+        typeof values.taperProfileStartCurve === "string"
+      ) {
+        try {
+          o.taperProfileStartCurve = JSON.parse(
+            String(values.taperProfileStartCurve)
+          );
+        } catch {
+          /* ignore malformed */
+        }
+      }
+      if (
+        values.taperProfileEndCurve &&
+        typeof values.taperProfileEndCurve === "string"
+      ) {
+        try {
+          o.taperProfileEndCurve = JSON.parse(
+            String(values.taperProfileEndCurve)
+          );
+        } catch {
+          /* ignore malformed */
+        }
+      }
 
       /* -------- Split nibs / multi-track (off when count=1) -------- */
       if (values.splitCount != null)
@@ -212,21 +284,37 @@ export function BrushSettings({
     }, [values]);
 
   // Derive preview brush size (stick to small range for thumbnail perf)
-  const sizeParam = preset.params.find((p) => p.type === "size");
-  const baseSizePx = Math.max(
-    2,
-    Math.min(
-      28,
-      ((values.size ?? sizeParam?.defaultValue ?? 12) as number) *
-        (preset.engine.shape?.sizeScale ?? 1)
-    )
+  const sizeParam = React.useMemo(
+    () => preset.params.find((p) => p.type === "size"),
+    [preset.params]
   );
+  const baseSizePx = React.useMemo(() => {
+    return Math.max(
+      2,
+      Math.min(
+        28,
+        ((values.size ?? sizeParam?.defaultValue ?? 12) as number) *
+          (preset.engine.shape?.sizeScale ?? 1)
+      )
+    );
+  }, [values.size, sizeParam?.defaultValue, preset.engine.shape?.sizeScale]);
+
+  // Debounced preview renderer to avoid spamming draw calls on rapid slider changes
+  const schedulePreview = React.useRef(
+    debounce(
+      (canvas: HTMLCanvasElement, opts: RenderOptions) => {
+        void drawStrokeToCanvas(canvas, opts);
+      },
+      40, // ~1–2 frames of debounce for a smoother feel
+      { trailing: true, leading: false, maxWait: 100 }
+    )
+  ).current;
 
   React.useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
 
-    void drawStrokeToCanvas(el, {
+    const opts: RenderOptions = {
       engine: preset.engine,
       baseSizePx,
       color: "#000000",
@@ -241,7 +329,9 @@ export function BrushSettings({
         perStamp: !!values.perStamp,
       },
       overrides,
-    });
+    };
+
+    schedulePreview(el, opts);
   }, [
     preset.engine,
     baseSizePx,
@@ -250,7 +340,15 @@ export function BrushSettings({
     values.satJitter,
     values.brightJitter,
     values.perStamp,
+    schedulePreview,
   ]);
+
+  React.useEffect(() => {
+    // Cleanup debounced timer on unmount
+    return () => {
+      schedulePreview.cancel();
+    };
+  }, [schedulePreview]);
 
   return (
     <div className="space-y-2">

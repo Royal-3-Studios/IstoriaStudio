@@ -3,10 +3,14 @@
 // =============================================================
 
 // Re-export engine-facing types so existing UI imports still work
-export type { BrushBackend, RenderingMode, BlendMode } from "@/lib/brush/types";
+export type {
+  BrushBackend,
+  RenderingMode,
+  BlendMode,
+} from "@/lib/brush/core/types";
 
 // in src/lib/brush/engine.ts (or backends)
-import type { BlendMode } from "@/lib/brush/types";
+import type { BlendMode } from "@/lib/brush/core/types";
 
 // --- Everything below stays exactly as you have it ---
 export type ToolId =

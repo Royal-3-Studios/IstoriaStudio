@@ -6,7 +6,6 @@
       "DOM.Iterable",
       "ES2022"
     ],
-    // "allowImportingTsExtensions": true,
     "allowJs": true,
     "checkJs": false,
     "skipLibCheck": true,
@@ -29,6 +28,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@core/*": [
+        "./src/lib/brush/core/*"
+      ],
+      "@backends/*": [
+        "./src/lib/brush/backends/*"
       ]
     }
   },
@@ -36,7 +41,7 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
+    ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
