@@ -253,7 +253,8 @@ const engines = {
     backend: "pattern",
     strokePath: { spacing: 6, jitter: 6, scatter: 0, streamline: 40, count: 1 },
     shape: { type: "square", softness: 10, sizeScale: 1.0 },
-    grain: { kind: "none", depth: 0, scale: 1.0 },
+    // IMPORTANT: use a real kind so the pattern backend has a tile to multiply
+    grain: { kind: "paper", depth: 0, scale: 1.0, rotate: 0 },
     rendering: { mode: "marker", wetEdges: false, flow: 100 },
   }),
 
@@ -901,7 +902,6 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
   },
 
   /* ---------- Inking ---------- */
-  /* ---------- Inking ---------- */
   {
     id: "inking",
     name: "Inking",
@@ -1032,22 +1032,51 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         name: "Pandani",
         subtitle: "juicy torn edge",
         params: [
-          p("size", "Size", "size", 16, 1, 120),
-          p("flow", "Flow", "flow", 100),
+          p("size", "Size", "size", 18, 6, 60),
+          p("flow", "Flow", "flow", 92),
           p("smoothing", "Smoothing", "smoothing", 20),
-          p("spacing", "Spacing", "spacing", 12),
+          p("spacing", "Spacing", "spacing", 8),
         ],
         engine: {
           backend: "stamping",
+          strokePath: {
+            spacing: 8,
+            jitter: 0.15,
+            scatter: 0.0,
+            streamline: 24,
+            count: 1,
+          },
+          shape: {
+            type: "oval",
+            angle: 0,
+            softness: 34,
+            roundness: 32,
+            sizeScale: 1.0,
+          },
+          grain: { kind: "none", depth: 0, scale: 1.0 },
+          rendering: { mode: "blended", flow: 92, wetEdges: false },
           overrides: {
-            tipScaleStart: 0.86,
-            tipScaleEnd: 0.86,
-            tipMinPx: 1.6,
-            tipRoundness: 0.75,
-            edgeNoiseStrength: 0.35,
-            edgeNoiseScale: 8,
-            toothBody: 0.28,
-            toothFlank: 0.38,
+            tipScaleStart: 0.82,
+            tipScaleEnd: 0.84,
+            tipMinPx: 1.0,
+            bellyGain: 1.28,
+            endBias: 0.04,
+            uniformity: 0.06,
+            tipRoundness: 0.35,
+
+            toothBody: 0.08,
+            toothFlank: 0.8,
+            toothScale: 0.65,
+
+            rimMode: "off",
+
+            splitCount: 1,
+            splitSpacing: 0,
+            splitSpacingJitter: 0,
+            splitCurvature: 0,
+            splitAsymmetry: 0,
+            splitScatter: 0,
+            splitAngle: 0,
           },
         },
       },

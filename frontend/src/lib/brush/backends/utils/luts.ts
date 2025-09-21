@@ -30,11 +30,10 @@ export function linearToSrgb8(linear: number): number {
  * Index with Math.round(clamp01(linear) * (N - 1)).
  */
 export const LINEAR_TO_SRGB_LUT = (() => {
-  const N = 4096; // 8192 if you want even smoother indexing
+  const N = 4096; // 8192 for even smoother
   const t = new Uint8ClampedArray(N);
   for (let i = 0; i < N; i++) {
     const L = i / (N - 1);
-    // We go straight to 8-bit here to avoid extra multiply/round per sample later.
     const s = L <= 0.0031308 ? 12.92 * L : 1.055 * Math.pow(L, 1 / 2.4) - 0.055;
     t[i] = Math.round(s * 255);
   }
@@ -49,8 +48,8 @@ export function linearToSrgb8LUT(linear: number): number {
 }
 
 /**
- * Bonus: a compact 256-entry linear -> sRGB8 table for cases where your linear value
- * is already quantized to 8-bit (e.g., came from a Float32->byte pass).
+ * Compact 256-entry linear -> sRGB8 table for when your linear value
+ * is already quantized to 8-bit.
  */
 export const LINEAR_TO_SRGB8_256 = (() => {
   const t = new Uint8ClampedArray(256);

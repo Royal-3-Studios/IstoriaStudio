@@ -25,7 +25,12 @@ export function srgb8ToLinear(
 }
 
 /** linear (non-premul) RGBA 0..1 -> sRGB 8-bit (0..255 ints), fast LUT path */
-export function linearToSrgb8(r: number, g: number, b: number, a: number) {
+export function linearToSrgb8(
+  r: number,
+  g: number,
+  b: number,
+  a: number
+): { r: number; g: number; b: number; a: number } {
   return {
     r: linearToSrgb8LUT(clamp01(r)),
     g: linearToSrgb8LUT(clamp01(g)),
@@ -63,7 +68,7 @@ export function linearPremulToSrgb8(
   gp: number,
   bp: number,
   a: number
-) {
+): { r: number; g: number; b: number; a: number } {
   // Convert premul -> non-premul in linear, then to sRGB8
   const { r, g, b } = unpremultiply(rp, gp, bp, a);
   return linearToSrgb8(r, g, b, a);

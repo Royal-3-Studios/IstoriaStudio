@@ -102,6 +102,30 @@ function alphaFromCutoff(cutoff: number, dt: number): number {
   return 1 / (1 + tau / Math.max(1e-6, dt));
 }
 
+/* --------------------------- Pressure map utility ------------------------ */
+/** Small, pure mapper you can use anywhere (e.g., in stroke/backends). */
+export type PressureMapOpts = {
+  deadZone?: number; // 0..1, typical 0.02..0.08
+  gamma?: number; // e.g., 0.8..1.6
+  gain?: number; // linear scale, default 1.0
+};
+
+export function mapPressure(raw: number, opts?: PressureMapOpts): number {
+  let p = Number.isFinite(raw) ? raw : 0;
+  p = clamp01(p);
+  if (opts?.deadZone && opts.deadZone > 0) {
+    const dz = Math.max(0, Math.min(0.5, opts.deadZone));
+    p = p <= dz ? 0 : (p - dz) / (1 - dz);
+  }
+  if (opts?.gamma && opts.gamma > 0) {
+    p = Math.pow(p, opts.gamma);
+  }
+  if (opts?.gain && opts.gain !== 1) {
+    p *= opts.gain;
+  }
+  return clamp01(p);
+}
+
 /* ----------------------------- One Euro filter --------------------------- */
 
 class OneEuro {
@@ -220,28 +244,31 @@ export class PressureTracker {
 
   /** Current speed in px/s computed from last update; 0 if unknown. */
   get lastSpeed(): number {
-    // Not stored persistently; computing ad-hoc would require last ds/dt cache.
-    // For most use, call .update() return tuple if you need it live.
+    // Not stored persistently; expose later if needed.
     return 0;
   }
 
   /**
    * Update tracker with a new input sample and return normalized pressure [0..1].
-   * This includes: clamping -> (optional) synthesis -> (optional) smoothing -> (optional) velocity compensation -> (optional) curve.
+   * Pipeline: clamp -> (optional) synthesis -> (optional) smoothing -> (optional) velocity comp -> (optional) curve.
    */
   update(sample: PressureSample): number {
     const { x, y, t, rawPressure, pointerType } = sample;
 
-    // Compute speed (px/s) from previous point
+    // Compute speed (px/s) from previous point — capture prevT BEFORE updating state.
+    const prevT = this.lastT;
+    const prevX = this.lastX;
+    const prevY = this.lastY;
+    const hadPrev = this.havePrev;
+
     let speed = 0;
-    if (this.havePrev) {
-      const dt = (t - this.lastT) / 1000; // seconds
-      const dx = x - this.lastX;
-      const dy = y - this.lastY;
-      const ds = Math.hypot(dx, dy);
+    if (hadPrev) {
+      const dt = (t - prevT) / 1000; // seconds
+      const ds = Math.hypot(x - prevX, y - prevY);
       speed = dt > 0 ? ds / dt : 0;
     }
 
+    // Update state AFTER computing speed
     this.lastX = x;
     this.lastY = y;
     this.lastT = t;
@@ -280,15 +307,12 @@ export class PressureTracker {
       mode: "oneEuro",
       oneEuro: { minCutoff: 1.0, beta: 0.02, dCutoff: 1.0 },
     };
+
     if (sm.mode === "ema" && this.ema) {
       p = this.ema.filter(p);
-    } else if (sm.mode === "oneEuro" && this.oneEuro && this.havePrev) {
-      const dtSec = Math.max(1e-4, (t - (this.lastT ?? t)) / 1000); // lastT already updated; use small epsilon
-      // We need the real dt; so compute from previous frame: we cached before updating lastT above.
-      // Adjust: compute dt from 'speed' derivation path: If havePrev, we had (t - prevT)
-      // Since we already overwrote lastT, estimate dt from speed with ds (not stored). Use 1/120 as safe default.
-      const dt = 1 / 120;
-      p = this.oneEuro.filter(p, dt);
+    } else if (sm.mode === "oneEuro" && this.oneEuro && hadPrev) {
+      const dtSec = Math.max(1e-4, (t - prevT) / 1000); // real dt between samples
+      p = this.oneEuro.filter(p, dtSec);
     }
 
     // 3) velocity compensation (slightly reduce pressure at high speed)
@@ -296,7 +320,7 @@ export class PressureTracker {
       const k = clamp01(this.opts.velocityComp.k);
       const ref = Math.max(1e-3, this.opts.velocityComp.refSpeed);
       const factor = clamp01(1 - k * (speed / ref)); // linear falloff
-      p *= factor + (1 - factor) * 1.0; // keeps in [0..1]; factor=1 => p, factor=0 => p*1
+      p *= factor; // gentle reduction with speed
     }
 
     // 4) curve shaping

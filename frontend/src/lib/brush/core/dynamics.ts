@@ -79,19 +79,15 @@ function applyRoute(
 
   switch (route.mode) {
     case "add":
-      // add a delta scaled by amount, commonly amount in "units of base param"
       out = base + route.amount * mapped;
       break;
     case "mul":
-      // multiplicative modulation around 1. amount is a gain on the mapped factor.
-      // mapped in [0,1] -> scale in [1-amount, 1+amount] if you want symmetric effect:
-      // choose the policy; here we interpret amount as a direct multiplier of (1 + mapped*amount)
+      // multiplicative modulation around 1:
+      // base * (1 + amount * mapped)
       out = base * (1 + route.amount * mapped);
       break;
     case "replace":
-      // amount works like lerp weight between base and mappedValueScaled.
-      // If you need "absolute scale", interpret mapped in [0,1] as absolute target
-      // and amount as blend weight.
+      // linear blend between base and mapped
       out = base * (1 - route.amount) + mapped * route.amount;
       break;
   }
@@ -106,7 +102,6 @@ function applyRoute(
 export class Modulator {
   private byTarget: Map<ModTarget, CompiledRoute[]>;
   constructor(compiled: CompiledRoute[]) {
-    // bucket routes per target for fast lookup
     this.byTarget = new Map();
     for (const r of compiled) {
       const arr = this.byTarget.get(r.target);
@@ -120,9 +115,7 @@ export class Modulator {
     const routes = this.byTarget.get(target);
     if (!routes || routes.length === 0) return base;
     let v = base;
-    for (const r of routes) {
-      v = applyRoute(v, r, ctx);
-    }
+    for (const r of routes) v = applyRoute(v, r, ctx);
     return v;
   }
 

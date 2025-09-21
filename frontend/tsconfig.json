@@ -34,6 +34,10 @@
       ],
       "@backends/*": [
         "./src/lib/brush/backends/*"
+      ],
+      "@backends": [
+        "./src/lib/brush/backends",
+        "./src/lib/brush/backends/index.ts"
       ]
     }
   },

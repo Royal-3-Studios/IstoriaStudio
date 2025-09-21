@@ -1,5 +1,4 @@
-// src/lib/brush/backends/index.ts
-
+// FILE: src/lib/brush/backends/index.ts
 export * as Mathx from "./utils/math";
 export * as Vec from "./utils/vector";
 export * as Rand from "./utils/random";
@@ -16,3 +15,16 @@ export * as Dynamics from "@core/dynamics";
 export * as CanvasUtil from "./utils/canvas";
 export * as Perf from "./utils/perf";
 export * as Timing from "@/lib/shared/timing";
+
+/* Also re-export named helpers so you can import them directly */
+export {
+  resamplePath,
+  resolveSpacingFraction,
+  segmentNormal,
+} from "./utils/stroke";
+export {
+  makeMultiplyTile,
+  makeAlphaNoiseTile,
+  makeHoleDotTile,
+  fillPatternWithRandomPhase,
+} from "./utils/texture";

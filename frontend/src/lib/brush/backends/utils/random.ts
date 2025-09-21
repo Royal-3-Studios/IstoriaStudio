@@ -144,3 +144,6 @@ export function mulberry32(seed = 123456789): RNG {
 export function createRNG(...parts: Array<string | number>): RNG {
   return mulberry32(seedFrom(...parts));
 }
+export const uniform = (rng: RNG) => rng.nextFloat();
+export const pick = <T>(rng: RNG, arr: readonly T[]) =>
+  arr[rng.nextIntExclusive(arr.length)];

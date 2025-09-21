@@ -1,7 +1,11 @@
+// FILE: src/lib/brush/backends/utils/sampler.ts
 import type { PixelBuf } from "@/lib/brush/core/types";
 import { SRGB_TO_LINEAR, LINEAR_TO_SRGB_LUT } from "./luts";
 
 export type WrapMode = "clamp" | "repeat" | "mirror";
+
+export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (numbers 0..255)
+export type SampleLinear = { r: number; g: number; b: number; a: number }; // linear floats 0..1 (non-premul)
 
 /** Wrap a coordinate index into [0, max-1] according to wrap mode. */
 function wrap(i: number, max: number, mode: WrapMode): number {
@@ -15,17 +19,20 @@ function wrap(i: number, max: number, mode: WrapMode): number {
   return t <= m ? t : period - t;
 }
 
-/** Nearest neighbor sample. Returns sRGB bytes. */
+/** Nearest neighbor sample. Returns sRGB bytes (as numbers). */
 export function sampleNearest(
   img: PixelBuf,
   x: number,
   y: number,
   wrapMode: WrapMode = "repeat"
-): { r: number; g: number; b: number; a: number } {
-  if (img.width <= 0 || img.height <= 0) return { r: 0, g: 0, b: 0, a: 0 };
-  const ix = wrap(Math.round(x), img.width, wrapMode);
-  const iy = wrap(Math.round(y), img.height, wrapMode);
-  const i = (iy * img.width + ix) * 4;
+): SampleRGBA8 {
+  const w = img.width | 0;
+  const h = img.height | 0;
+  if (w <= 0 || h <= 0) return { r: 0, g: 0, b: 0, a: 0 };
+
+  const ix = wrap(Math.round(x), w, wrapMode);
+  const iy = wrap(Math.round(y), h, wrapMode);
+  const i = (iy * w + ix) * 4;
   const d = img.data;
   return { r: d[i], g: d[i + 1], b: d[i + 2], a: d[i + 3] };
 }
@@ -36,23 +43,24 @@ export function sampleBilinear(
   x: number,
   y: number,
   wrapMode: WrapMode = "repeat"
-): { r: number; g: number; b: number; a: number } {
-  if (img.width <= 0 || img.height <= 0) return { r: 0, g: 0, b: 0, a: 0 };
+): SampleRGBA8 {
+  const w = img.width | 0;
+  const h = img.height | 0;
+  if (w <= 0 || h <= 0) return { r: 0, g: 0, b: 0, a: 0 };
 
   const x0 = Math.floor(x),
     y0 = Math.floor(y);
   const tx = x - x0,
     ty = y - y0;
-
   const x1 = x0 + 1,
     y1 = y0 + 1;
-  const ix0 = wrap(x0, img.width, wrapMode),
-    ix1 = wrap(x1, img.width, wrapMode);
-  const iy0 = wrap(y0, img.height, wrapMode),
-    iy1 = wrap(y1, img.height, wrapMode);
 
-  const d = img.data,
-    w = img.width;
+  const ix0 = wrap(x0, w, wrapMode),
+    ix1 = wrap(x1, w, wrapMode);
+  const iy0 = wrap(y0, h, wrapMode),
+    iy1 = wrap(y1, h, wrapMode);
+
+  const d = img.data;
 
   const i00 = (iy0 * w + ix0) * 4;
   const i10 = (iy0 * w + ix1) * 4;
@@ -72,7 +80,7 @@ export function sampleBilinear(
   const a =
     d[i00 + 3] * w00 + d[i10 + 3] * w10 + d[i01 + 3] * w01 + d[i11 + 3] * w11;
 
-  return { r, g, b, a }; // sRGB bytes (0..255 floats)
+  return { r, g, b, a };
 }
 
 /** Bilinear sample converted to LINEAR (non-premultiplied) 0..1 floats. */
@@ -81,13 +89,14 @@ export function sampleBilinearLinear(
   x: number,
   y: number,
   wrapMode: WrapMode = "repeat"
-): { r: number; g: number; b: number; a: number } {
+): SampleLinear {
   const s = sampleBilinear(img, x, y, wrapMode);
+  // Index clamps to 0..255 to avoid OOB
   return {
-    r: SRGB_TO_LINEAR[Math.max(0, Math.min(255, s.r | 0))],
-    g: SRGB_TO_LINEAR[Math.max(0, Math.min(255, s.g | 0))],
-    b: SRGB_TO_LINEAR[Math.max(0, Math.min(255, s.b | 0))],
-    a: (s.a | 0) / 255,
+    r: SRGB_TO_LINEAR[(s.r | 0) & 0xff],
+    g: SRGB_TO_LINEAR[(s.g | 0) & 0xff],
+    b: SRGB_TO_LINEAR[(s.b | 0) & 0xff],
+    a: ((s.a | 0) & 0xff) / 255,
   };
 }
 
@@ -97,36 +106,26 @@ export function sampleBilinearLinearPremul(
   x: number,
   y: number,
   wrapMode: WrapMode = "repeat"
-): { r: number; g: number; b: number; a: number } {
+): SampleLinear {
   const l = sampleBilinearLinear(img, x, y, wrapMode);
   return { r: l.r * l.a, g: l.g * l.a, b: l.b * l.a, a: l.a };
 }
 
-/** Optional fast path: bilinear sample and map back to sRGB 8-bit using a LUT. */
+/** Fast path: bilinear sample and map back to sRGB 8-bit using a LUT. */
 export function sampleBilinearToSrgb8(
   img: PixelBuf,
   x: number,
   y: number,
   wrapMode: WrapMode = "repeat"
-): { r: number; g: number; b: number; a: number } {
+): SampleRGBA8 {
   const lin = sampleBilinearLinear(img, x, y, wrapMode);
-  // Use the high-res LUT for speed in hot paths:
+  const N = LINEAR_TO_SRGB_LUT.length - 1;
+  const idx = (v: number) =>
+    LINEAR_TO_SRGB_LUT[Math.round(Math.max(0, Math.min(1, v)) * N)];
   return {
-    r: LINEAR_TO_SRGB_LUT[
-      Math.round(
-        Math.max(0, Math.min(1, lin.r)) * (LINEAR_TO_SRGB_LUT.length - 1)
-      )
-    ],
-    g: LINEAR_TO_SRGB_LUT[
-      Math.round(
-        Math.max(0, Math.min(1, lin.g)) * (LINEAR_TO_SRGB_LUT.length - 1)
-      )
-    ],
-    b: LINEAR_TO_SRGB_LUT[
-      Math.round(
-        Math.max(0, Math.min(1, lin.b)) * (LINEAR_TO_SRGB_LUT.length - 1)
-      )
-    ],
+    r: idx(lin.r),
+    g: idx(lin.g),
+    b: idx(lin.b),
     a: Math.max(0, Math.min(255, Math.round(lin.a * 255))),
   };
 }
@@ -138,7 +137,7 @@ export function sampleUVBilinearLinear(
   v: number,
   wrapMode: WrapMode = "repeat",
   transform?: [number, number, number, number, number, number] // [a,b,c,d,tx,ty]
-): { r: number; g: number; b: number; a: number } {
+): SampleLinear {
   // Map UV to pixel coords
   let x = u * img.width;
   let y = v * img.height;

@@ -1,3 +1,4 @@
+// src/lib/brush/backends/utils/curves.ts
 import type { CurvePoint } from "@/lib/brush/core/types";
 
 /* ============================================================
@@ -56,6 +57,7 @@ type Segment = {
   m0: number;
   m1: number;
 };
+
 function buildMonotoneSegments(points: CurvePoint[]): Segment[] {
   const pts = sanitize(points);
   const n = pts.length;

@@ -1,5 +1,6 @@
 // src/components/editor/tools/BrushCard.tsx
 "use client";
+
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
 import { Sun, Moon } from "lucide-react";
@@ -20,26 +21,25 @@ export const BrushCard = React.memo(function BrushCard({
   initialBg?: "light" | "dark";
 }) {
   const [bgMode, setBgMode] = React.useState<"light" | "dark">(initialBg);
-
-  // Base size from the preset (kept modest for cards)
-  const sizeParam = preset.params.find((p) => p.type === "size");
-  const baseSizePx = Math.max(
-    2,
-    Math.min(
-      28,
-      Number(sizeParam?.defaultValue ?? 12) *
-        (preset.engine.shape?.sizeScale ?? 1) // <- optional chaining
-    )
-  );
-
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
 
-  // Fixed-dimension S curve like Procreate preview
+  // Derive a modest preview brush size from the preset
+  const sizeParam = React.useMemo(
+    () => preset.params.find((p) => p.type === "size"),
+    [preset.params]
+  );
+  const baseSizePx = React.useMemo(() => {
+    const ui = Number(sizeParam?.defaultValue ?? 12);
+    const scale = preset.engine.shape?.sizeScale ?? 1;
+    return Math.max(2, Math.min(28, Math.round(ui * scale)));
+  }, [sizeParam?.defaultValue, preset.engine.shape?.sizeScale]);
+
+  // Fixed S-curve path (with angles) for previews
   const path = React.useMemo(() => {
     const w = PREVIEW_W;
     const h = PREVIEW_H;
 
-    const scatterPct = (preset.engine.strokePath?.scatter ?? 0) / 100; // <- optional chaining
+    const scatterPct = (preset.engine.strokePath?.scatter ?? 0) / 100;
     const radius = baseSizePx * 0.5;
     const worstScatter = baseSizePx * 0.5 * scatterPct;
 
@@ -69,35 +69,46 @@ export const BrushCard = React.memo(function BrushCard({
       pts.push({ x, y, angle: Math.atan2(dy, dx) });
     }
     return pts;
-  }, [baseSizePx, preset.engine.strokePath?.scatter]); // <- safe dep
+  }, [baseSizePx, preset.engine.strokePath?.scatter]);
 
-  // Deterministic seed per brush id
+  // Deterministic preview seed per brush id
   const seed = React.useMemo(
     () => preset.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0),
     [preset.id]
   );
 
-  const spacingOverride =
-    (preset.engine.strokePath?.spacing ?? 6) / Math.max(1, baseSizePx * 0.5); // <- optional chaining
+  // Keep strokes compact for preview row
+  const spacingOverride = React.useMemo(() => {
+    const uiSpacing = preset.engine.strokePath?.spacing ?? 6;
+    // Convert UI spacing (percent or fraction) to fraction of diameter
+    const frac =
+      typeof uiSpacing === "number"
+        ? uiSpacing > 1
+          ? Math.min(0.35, Math.max(0.01, uiSpacing / 100))
+          : Math.min(0.35, Math.max(0.01, uiSpacing))
+        : 0.06;
+    // Engine expects a fraction of diameter, our preview uses diameter≈baseSizePx
+    return frac;
+  }, [preset.engine.strokePath?.spacing]);
 
-  // Draw on change
+  // Render preview on change
   React.useEffect(() => {
     const el = canvasRef.current;
-    if (!el || !path) return;
-    drawStrokeToCanvas(el, {
+    if (!el || !path.length) return;
+
+    void drawStrokeToCanvas(el, {
       engine: preset.engine,
       baseSizePx,
       color: "#000000",
-      width: 352,
-      height: 127,
+      width: PREVIEW_W,
+      height: PREVIEW_H,
       pixelRatio: 2,
       seed,
       path,
-      colorJitter: undefined,
       overrides: {
-        centerlinePencil: true,
+        centerlinePencil: true, // ensures pencil-like rim for graphite presets
         flow: 100,
-        spacing: spacingOverride,
+        spacing: spacingOverride, // fraction of diameter
       },
     });
   }, [preset.engine, baseSizePx, seed, path, spacingOverride]);
@@ -107,6 +118,11 @@ export const BrushCard = React.memo(function BrushCard({
   const bgStyle: React.CSSProperties = {
     backgroundColor: bgMode === "dark" ? "#111827" : "#ffffff",
   };
+
+  const handleActivate = React.useCallback(
+    () => onSelect?.(preset.id),
+    [onSelect, preset.id]
+  );
 
   return (
     <div
@@ -119,8 +135,8 @@ export const BrushCard = React.memo(function BrushCard({
       ].join(" ")}
       role="button"
       aria-pressed={selected}
-      onClick={() => onSelect?.(preset.id)}
-      onKeyDown={(e) => e.key === "Enter" && onSelect?.(preset.id)}
+      onClick={handleActivate}
+      onKeyDown={(e) => e.key === "Enter" && handleActivate()}
       tabIndex={0}
       aria-label={subtitle ? `${title} — ${subtitle}` : title}
       style={{ width: "100%", height: 132 }}
@@ -143,7 +159,7 @@ export const BrushCard = React.memo(function BrushCard({
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-xs font-medium">{title}</div>
-            {!!subtitle && (
+            {subtitle && (
               <div className="truncate text-[10px] opacity-80">{subtitle}</div>
             )}
           </div>

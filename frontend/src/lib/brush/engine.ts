@@ -1,35 +1,55 @@
 // FILE: src/lib/brush/engine.ts
 /**
- * Brush engine orchestrator:
- * - Unifies types used by UI (BrushSettings) and presets
- * - Picks a backend: ribbon | stamping | spray | wet | smudge | particle | pattern | impasto | auto
- * - Normalizes DPR, color, size, and merges overrides safely
- * - Forwards options to the selected backend (ctx-based vs canvas-based)
+ * Brush Engine Orchestrator
+ * ------------------------------------------------------------
+ * Responsibilities:
+ *  - Define shared types for presets, UI, and backends.
+ *  - Normalize inputs (DPR, canvas size, color, engine config, overrides).
+ *  - Pick an appropriate backend (or respect explicit choice).
+ *  - Render into an offscreen layer, then composite with global blend/opacity.
+ *
+ * Backends supported:
+ *  - Canvas-based: ribbon, spray, wet, impasto
+ *  - Ctx-based (wrapped with "...ToCanvas"): stamping, smudge, particle, pattern
  */
 
+import { createLayer } from "./backends/utils/canvas";
+import { createBrushContext } from "@/lib/brush/core/brushContext";
+import { mulberry32 } from "./backends/utils/random";
+
+import {
+  withCompositeAndAlpha,
+  toCompositeOp,
+} from "./backends/utils/blending";
+
+// Canvas-based backends (expect a Canvas)
 import { drawRibbonToCanvas } from "./backends/ribbon";
 import { drawSprayToCanvas } from "./backends/spray";
 import { drawWetToCanvas } from "./backends/wet";
+import { drawImpastoToCanvas } from "./backends/impasto";
 
-// ctx-based backends
-import drawStamping from "./backends/stamping";
-import drawSmudge from "./backends/smudge";
-import drawParticle from "./backends/particle";
-import drawPattern from "./backends/pattern";
-import drawImpasto from "./backends/impasto";
+// Ctx-based backends (provide ...ToCanvas wrappers)
+import drawStamping, { drawStampingToCanvas } from "./backends/stamping";
+import drawSmudge, { drawSmudgeToCanvas } from "./backends/smudge";
+import drawParticle, { drawParticleToCanvas } from "./backends/particle";
+import drawPattern, { drawPatternToCanvas } from "./backends/pattern";
 
-/* ============================== Types =============================== */
+/* ========================================================================== */
+/*                                    Types                                   */
+/* ========================================================================== */
 
-import type {
-  BrushBackend,
-  RenderingMode,
-  GrainMotion,
-  TaperProfile,
-  CurvePoint,
-  ModInput,
-  ModTarget,
-  EngineModulations,
-} from "@/lib/brush/core/types";
+export type BrushBackend =
+  | "auto"
+  | "ribbon"
+  | "stamping"
+  | "spray"
+  | "wet"
+  | "smudge"
+  | "particle"
+  | "pattern"
+  | "impasto";
+
+export type RenderingMode = "blended" | "glazed" | "marker" | "spray" | "wet";
 
 export type EngineShape = {
   type?:
@@ -48,11 +68,16 @@ export type EngineShape = {
 };
 
 export type EngineStrokePath = {
-  spacing?: number; // % of diameter for stamping/spray
-  jitter?: number; // % of spacing for stamping/spray
-  scatter?: number; // px normal to path
-  streamline?: number; // % path smoothing
-  count?: number; // stamps per step (1+)
+  /** % of diameter per step for stamping/spray; typical 4..20. */
+  spacing?: number;
+  /** Portion of spacing used to jitter along the path (0..1). */
+  jitter?: number;
+  /** Scatter orthogonal to path (px). */
+  scatter?: number;
+  /** Path smoothing / streamline (0..100). */
+  streamline?: number;
+  /** Stamps per step (multi-nib / split). */
+  count?: number;
 };
 
 export type EngineGrain = {
@@ -60,148 +85,150 @@ export type EngineGrain = {
   depth?: number; // 0..100
   scale?: number; // 0.5..3
   rotate?: number; // deg
+  motion?: "paperLocked" | "tipLocked" | "smudgeLocked";
 };
 
 export type EngineRendering = {
   mode?: RenderingMode;
   wetEdges?: boolean;
   flow?: number; // 0..100
-};
-
-/* ===== Advanced modulation system (additive and backwards-compatible) ===== */
-
-export type ModRoute = {
-  input: ModInput;
-  target: ModTarget;
-  /** Scalar after curve (applied per mode). -1..+1 typical. */
-  amount?: number;
-  /** How to combine with base value. */
-  mode?: "add" | "mul" | "replace";
-  /** Optional remap LUT; if absent, linear. */
-  curve?: CurvePoint[];
-  /** Optional post-curve clamp. */
-  min?: number;
-  max?: number;
+  /** Global blend used when compositing the offscreen stroke layer. */
+  blendMode?: CanvasRenderingContext2D["globalCompositeOperation"];
 };
 
 /**
- * RenderOverrides:
- * These are the runtime knobs (merged from preset defaults + UI values)
- * that backends can read. All fields are optional for callers; we fill
- * defaults in mergeOverrides().
+ * Step-4: added predictive spacing + velocity-aware spacing knobs.
+ * These are purely optional; backends consume them via stroke.ts helpers.
  */
 export type RenderOverrides = {
-  /* -------- Placement -------- */
-  spacing?: number; // %
-  jitter?: number; // %
-  scatter?: number; // px
-  count?: number; // integer
+  /* Placement & distribution */
+  spacing?: number;
+  jitter?: number;
+  scatter?: number;
+  count?: number;
 
-  /* -------- Tip / orientation -------- */
-  angle?: number; // deg
-  softness?: number; // 0..100
-  /** Per-stamp random rotation jitter (deg). */
-  angleJitter?: number; // 0..180
-  /** 0..1: 0=no follow, 1=fully align tip to path direction. */
+  /* Tip / orientation */
+  angle?: number;
+  softness?: number;
+  sizeJitter?: number;
+  angleJitter?: number;
   angleFollowDirection?: number;
 
-  /* -------- Dynamics -------- */
-  flow?: number; // 0..100
-  /** Separate from flow; caps composited output opacity. */
+  /* Dynamics */
+  flow?: number;
   opacity?: number; // 0..100
-  /** If true, holding the stamp builds up (airbrush behavior). */
   buildup?: boolean;
-  coreStrength?: number; // ribbon intensity
+  coreStrength?: number;
 
-  /* -------- Grain -------- */
+  /* Grain */
   grainKind?: "none" | "paper" | "canvas" | "noise";
-  grainScale?: number; // 0.5..3
-  grainDepth?: number; // 0..100
-  grainRotate?: number; // deg
-  grainMotion?: GrainMotion;
+  grainScale?: number;
+  grainDepth?: number;
+  grainRotate?: number;
+  grainMotion?: "paperLocked" | "tipLocked" | "smudgeLocked";
 
-  /* -------- Wet rendering hint -------- */
+  /* Wet hint */
   wetEdges?: boolean;
 
-  /* -------- Pencil / rim lighting -------- */
+  /* Smudge-specific */
+  smudgeStrength?: number; // 0..2 (movement factor)
+  smudgeAlpha?: number; // 0..2 (alpha multiplier)
+  smudgeBlur?: number; // px
+  smudgeSpacing?: number; // % or fraction
+
+  /* Pencil / rim (used by some backends) */
   centerlinePencil?: boolean;
   rimMode?: "auto" | "on" | "off";
-  rimStrength?: number; // 0..1
+  rimStrength?: number;
   bgIsLight?: boolean;
 
-  /* -------- Paper tooth (graphite/charcoal) -------- */
-  toothBody?: number; // 0..1
-  toothFlank?: number; // 0..1
-  toothScale?: number; // px (0 = auto from diameter)
+  /* Paper tooth */
+  toothBody?: number;
+  toothFlank?: number;
+  toothScale?: number;
 
-  /* -------- Stroke geometry (taper/body) -------- */
-  /** 0..1: how much the START tip narrows (0=none, 1=sharp) */
+  /* Stroke geometry (taper/body) */
   tipScaleStart?: number;
-  /** 0..1: how much the END tip narrows (0=none, 1=sharp) */
   tipScaleEnd?: number;
-  /** px: minimum tip width clamp (0 = none) */
   tipMinPx?: number;
-  /** 0.5..2: multiplies belly thickness (1 = neutral) */
   bellyGain?: number;
-  /** -1..1: makes start(-) or end(+) thicker */
   endBias?: number;
-  /** 0..1: pushes thickness toward center (0=normal, 1=uniform marker) */
   uniformity?: number;
-
-  /** 0..1: round the tip profile (0=pointier, 1=rounder) */
   tipRoundness?: number;
-  /** 0.2..3: global thickness curve shaping (1 = neutral) */
   thicknessCurve?: number;
 
-  /** Taper shape controls (ease/exp/custom curves) */
-  taperProfileStart?: TaperProfile;
-  taperProfileEnd?: TaperProfile;
-  taperProfileStartCurve?: CurvePoint[]; // when 'custom'
-  taperProfileEndCurve?: CurvePoint[]; // when 'custom'
+  taperProfileStart?:
+    | "linear"
+    | "easeIn"
+    | "easeOut"
+    | "easeInOut"
+    | "expo"
+    | "custom";
+  taperProfileEnd?:
+    | "linear"
+    | "easeIn"
+    | "easeOut"
+    | "easeInOut"
+    | "expo"
+    | "custom";
+  taperProfileStartCurve?: number[];
+  taperProfileEndCurve?: number[];
 
-  /* -------- Split nibs / multi-track -------- */
-  splitCount?: number; // 1..16
-  splitSpacing?: number; // px between tracks
-  splitSpacingJitter?: number; // 0..100 (% of spacing)
-  splitCurvature?: number; // -1..+1 (fan bend)
-  splitAsymmetry?: number; // -1..+1 (offset bias)
-  splitScatter?: number; // px random normal scatter
-  splitAngle?: number; // deg base fan rotation
+  /* Split nibs */
+  splitCount?: number;
+  splitSpacing?: number;
+  splitSpacingJitter?: number;
+  splitCurvature?: number;
+  splitAsymmetry?: number;
+  splitScatter?: number;
+  splitAngle?: number;
+  pressureToSplitSpacing?: number;
+  tiltToSplitFan?: number;
 
-  /* Pressure/tilt routing into split layout */
-  pressureToSplitSpacing?: number; // 0..1
-  tiltToSplitFan?: number; // deg
+  /* Speed dynamics */
+  speedToWidth?: number;
+  speedToFlow?: number;
+  speedSmoothingMs?: number;
 
-  /* -------- Speed dynamics (stroke velocity) -------- */
-  speedToWidth?: number; // -1..+1
-  speedToFlow?: number; // -1..+1
-  speedSmoothingMs?: number; // ms averaging
+  /* Tilt routing */
+  tiltToSize?: number;
+  tiltToFan?: number;
+  tiltToGrainScale?: number;
+  tiltToEdgeNoise?: number;
 
-  /* -------- Tilt routing -------- */
-  tiltToSize?: number; // -1..+1
-  tiltToFan?: number; // -1..+1 (generic fan)
-  tiltToGrainScale?: number; // -1..+1
-  tiltToEdgeNoise?: number; // -1..+1
+  /* Edge noise / dry fringe */
+  edgeNoiseStrength?: number;
+  edgeNoiseScale?: number;
+  dryThreshold?: number;
 
-  /* -------- Edge noise / dry fringe -------- */
-  edgeNoiseStrength?: number; // 0..1
-  edgeNoiseScale?: number; // 2..64 px (noise period)
-  dryThreshold?: number; // 0..1 (flow under this -> dry)
+  /* Extra knobs (future-proof; optional in backends) */
+  innerGrainAlpha?: number; // 0..1
+  edgeCarveAlpha?: number; // 0..1
+
+  /* ------- NEW (Step-4) input quality knobs ------- */
+  /** Predictive forward nudge in CSS px (0 disables). */
+  predictPx?: number;
+  /**
+   * Velocity → spacing gain (−0.3..+0.5). Positive loosens spacing at speed,
+   * negative tightens. Backends pass to stroke.ts modulated stepping.
+   */
+  speedToSpacing?: number;
+  /** Minimum absolute step in px after modulation. */
+  minStepPx?: number;
 };
 
 export type EngineConfig = {
-  backend?: BrushBackend; // if "auto", we pick via heuristics
+  /** Bump when you change the config/override surface in breaking ways. */
+  version?: number; // default: 1
+  backend?: BrushBackend;
   shape?: EngineShape;
   strokePath?: EngineStrokePath;
   grain?: EngineGrain;
   rendering?: EngineRendering;
-  overrides?: Partial<RenderOverrides>; // engine defaults
-  /** Advanced modulation routes (optional). */
-  modulations?: EngineModulations;
+  overrides?: Partial<RenderOverrides>;
+  /** Reserved for curves/envelopes etc. */
+  modulations?: unknown;
 };
-
-/** Back-compat alias */
-export type BrushEngineConfig = EngineConfig;
 
 export type RenderPathPoint = {
   x: number;
@@ -213,7 +240,9 @@ export type RenderPathPoint = {
 
 export type RenderOptions = {
   engine: EngineConfig;
-  baseSizePx: number; // diameter in CSS px
+  /** Nominal diameter (CSS px) before shape.sizeScale. */
+  baseSizePx: number;
+
   color?: string; // hex "#000000"
   width: number; // CSS px
   height: number; // CSS px
@@ -223,71 +252,164 @@ export type RenderOptions = {
   path?: Array<RenderPathPoint>;
 
   colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
+  /** Per-stroke runtime overrides (merged over engine.overrides). */
   overrides?: Partial<RenderOverrides>;
 };
 
-/* ============================== Utils =============================== */
+/* ========================================================================== */
+/*                                   Helpers                                  */
+/* ========================================================================== */
 
-function resolveDpr(pixelRatio?: number): number {
-  if (typeof window !== "undefined") {
-    const sys =
-      typeof window.devicePixelRatio === "number" ? window.devicePixelRatio : 1;
-    const pr = pixelRatio ?? sys ?? 1;
-    return Math.max(1, Math.min(pr, 2));
-  }
-  const pr = pixelRatio ?? 1;
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+function isCanvas2DContext(ctx: unknown): ctx is Ctx2D {
+  return (
+    !!ctx &&
+    typeof (ctx as CanvasRenderingContext2D).setTransform === "function" &&
+    typeof (ctx as CanvasRenderingContext2D).clearRect === "function" &&
+    typeof (ctx as CanvasRenderingContext2D).drawImage === "function"
+  );
+}
+
+/** Create a DOM-based canvas (prefer createLayer() for offscreen). */
+export function createDomCanvas(
+  width: number,
+  height: number
+): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.floor(width));
+  c.height = Math.max(1, Math.floor(height));
+  return c;
+}
+
+function resolveDevicePixelRatio(pixelRatio?: number): number {
+  const sys =
+    typeof window !== "undefined" && typeof window.devicePixelRatio === "number"
+      ? window.devicePixelRatio
+      : 1;
+  const pr = pixelRatio ?? sys ?? 1;
   return Math.max(1, Math.min(pr, 2));
+}
+
+function ensureCanvasDprSize(
+  canvas: HTMLCanvasElement,
+  cssWidth: number,
+  cssHeight: number,
+  dpr: number
+): void {
+  const w = Math.max(1, Math.floor(cssWidth * dpr));
+  const h = Math.max(1, Math.floor(cssHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  if (canvas.style.width === "" || canvas.style.height === "") {
+    canvas.style.width = `${Math.max(1, Math.floor(cssWidth))}px`;
+    canvas.style.height = `${Math.max(1, Math.floor(cssHeight))}px`;
+  }
+}
+
+/* ========================================================================== */
+/*                         Normalization (Config & Overrides)                 */
+/* ========================================================================== */
+
+function normalizeShape(shape?: EngineShape): Required<EngineShape> {
+  const s = shape ?? {};
+  return {
+    type: s.type ?? "oval",
+    angle: s.angle ?? 0,
+    softness: s.softness ?? 50,
+    roundness: s.roundness ?? 100,
+    sizeScale: s.sizeScale ?? 1.0,
+  };
+}
+
+function normalizeStrokePath(
+  path?: EngineStrokePath
+): Required<EngineStrokePath> {
+  const p = path ?? {};
+  return {
+    spacing: p.spacing ?? 6,
+    jitter: p.jitter ?? 0.5,
+    scatter: p.scatter ?? 0,
+    streamline: p.streamline ?? 22,
+    count: Math.max(1, Math.round(p.count ?? 1)),
+  };
+}
+
+function normalizeGrain(grain?: EngineGrain): Required<EngineGrain> {
+  const g = grain ?? {};
+  return {
+    kind: g.kind ?? "none",
+    depth: g.depth ?? 0,
+    scale: g.scale ?? 1.0,
+    rotate: g.rotate ?? 0,
+    motion: (g.motion ?? "paperLocked") as
+      | "paperLocked"
+      | "tipLocked"
+      | "smudgeLocked",
+  };
+}
+
+function normalizeRendering(r?: EngineRendering): Required<EngineRendering> {
+  const ren = r ?? {};
+  return {
+    mode: ren.mode ?? "blended",
+    wetEdges: ren.wetEdges ?? false,
+    flow: ren.flow ?? 100,
+    blendMode: ren.blendMode ?? "source-over",
+  };
 }
 
 function mergeOverrides(
   engineDefaults: Partial<RenderOverrides> | undefined,
-  ui: Partial<RenderOverrides> | undefined
+  runtime: Partial<RenderOverrides> | undefined
 ): Required<RenderOverrides> {
   const e = engineDefaults ?? {};
-  const u = ui ?? {};
+  const u = runtime ?? {};
 
-  // Central default values — tuned to be visually neutral.
   const DEF: Required<RenderOverrides> = {
-    /* placement */
+    /* Placement */
     spacing: 4,
     jitter: 0.5,
     scatter: 0,
     count: 1,
 
-    /* tip/orientation */
+    /* Tip / orientation */
     angle: 0,
     softness: 50,
+    sizeJitter: 0,
     angleJitter: 0,
     angleFollowDirection: 0,
 
-    /* dynamics */
+    /* Dynamics */
     flow: 100,
     opacity: 100,
     buildup: false,
     coreStrength: 140,
 
-    /* grain */
+    /* Grain */
     grainKind: "none",
     grainScale: 1.0,
     grainDepth: 0,
     grainRotate: 0,
     grainMotion: "paperLocked",
 
-    /* wet */
+    /* Wet hint */
     wetEdges: false,
 
-    /* rim / pencil */
+    /* Pencil / rim */
     centerlinePencil: false,
     rimMode: "auto",
     rimStrength: 0.18,
     bgIsLight: true,
 
-    /* paper tooth */
+    /* Paper tooth */
     toothBody: 0.55,
     toothFlank: 0.9,
     toothScale: 0,
 
-    /* stroke geometry */
+    /* Stroke geometry */
     tipScaleStart: 0.85,
     tipScaleEnd: 0.85,
     tipMinPx: 0,
@@ -296,12 +418,13 @@ function mergeOverrides(
     uniformity: 0.0,
     tipRoundness: 0.0,
     thicknessCurve: 1.0,
+
     taperProfileStart: "easeOut",
     taperProfileEnd: "easeIn",
     taperProfileStartCurve: [],
     taperProfileEndCurve: [],
 
-    /* split nibs */
+    /* Split nibs */
     splitCount: 1,
     splitSpacing: 0,
     splitSpacingJitter: 0,
@@ -309,33 +432,47 @@ function mergeOverrides(
     splitAsymmetry: 0,
     splitScatter: 0,
     splitAngle: 0,
-
     pressureToSplitSpacing: 0,
     tiltToSplitFan: 0,
 
-    /* speed dynamics */
+    /* Speed */
     speedToWidth: 0,
     speedToFlow: 0,
     speedSmoothingMs: 30,
 
-    /* tilt routing */
+    /* Tilt routing */
     tiltToSize: 0,
     tiltToFan: 0,
     tiltToGrainScale: 0,
     tiltToEdgeNoise: 0,
 
-    /* edge noise */
+    /* Edge noise / dry fringe */
     edgeNoiseStrength: 0,
     edgeNoiseScale: 8,
     dryThreshold: 0.0,
+
+    /* Extra knobs */
+    innerGrainAlpha: 0.55,
+    edgeCarveAlpha: 0.26,
+
+    /* Smudge defaults */
+    smudgeStrength: 0.65,
+    smudgeAlpha: 0.85,
+    smudgeBlur: 0,
+    smudgeSpacing: 6,
+
+    /* NEW input-quality defaults (safe no-ops) */
+    predictPx: 0,
+    speedToSpacing: 0,
+    minStepPx: 0.5,
   };
 
-  // Merge ui over engine defaults over DEF.
   return {
     spacing: u.spacing ?? e.spacing ?? DEF.spacing,
     jitter: u.jitter ?? e.jitter ?? DEF.jitter,
     scatter: u.scatter ?? e.scatter ?? DEF.scatter,
     count: Math.max(1, Math.round(u.count ?? e.count ?? DEF.count)),
+    sizeJitter: u.sizeJitter ?? e.sizeJitter ?? DEF.sizeJitter,
 
     angle: u.angle ?? e.angle ?? DEF.angle,
     softness: u.softness ?? e.softness ?? DEF.softness,
@@ -354,7 +491,10 @@ function mergeOverrides(
     grainScale: u.grainScale ?? e.grainScale ?? DEF.grainScale,
     grainDepth: u.grainDepth ?? e.grainDepth ?? DEF.grainDepth,
     grainRotate: u.grainRotate ?? e.grainRotate ?? DEF.grainRotate,
-    grainMotion: u.grainMotion ?? e.grainMotion ?? DEF.grainMotion,
+    grainMotion: (u.grainMotion ?? e.grainMotion ?? DEF.grainMotion) as
+      | "paperLocked"
+      | "tipLocked"
+      | "smudgeLocked",
 
     wetEdges: u.wetEdges ?? e.wetEdges ?? DEF.wetEdges,
 
@@ -401,7 +541,6 @@ function mergeOverrides(
     splitAsymmetry: u.splitAsymmetry ?? e.splitAsymmetry ?? DEF.splitAsymmetry,
     splitScatter: u.splitScatter ?? e.splitScatter ?? DEF.splitScatter,
     splitAngle: u.splitAngle ?? e.splitAngle ?? DEF.splitAngle,
-
     pressureToSplitSpacing:
       u.pressureToSplitSpacing ??
       e.pressureToSplitSpacing ??
@@ -428,17 +567,56 @@ function mergeOverrides(
       u.edgeNoiseStrength ?? e.edgeNoiseStrength ?? DEF.edgeNoiseStrength,
     edgeNoiseScale: u.edgeNoiseScale ?? e.edgeNoiseScale ?? DEF.edgeNoiseScale,
     dryThreshold: u.dryThreshold ?? e.dryThreshold ?? DEF.dryThreshold,
+
+    innerGrainAlpha:
+      u.innerGrainAlpha ?? e.innerGrainAlpha ?? DEF.innerGrainAlpha,
+    edgeCarveAlpha: u.edgeCarveAlpha ?? e.edgeCarveAlpha ?? DEF.edgeCarveAlpha,
+
+    smudgeStrength: u.smudgeStrength ?? e.smudgeStrength ?? DEF.smudgeStrength,
+    smudgeAlpha: u.smudgeAlpha ?? e.smudgeAlpha ?? DEF.smudgeAlpha,
+    smudgeBlur: u.smudgeBlur ?? e.smudgeBlur ?? DEF.smudgeBlur,
+    smudgeSpacing: u.smudgeSpacing ?? e.smudgeSpacing ?? DEF.smudgeSpacing,
+
+    /* NEW input-quality */
+    predictPx: u.predictPx ?? e.predictPx ?? DEF.predictPx,
+    speedToSpacing: u.speedToSpacing ?? e.speedToSpacing ?? DEF.speedToSpacing,
+    minStepPx: u.minStepPx ?? e.minStepPx ?? DEF.minStepPx,
   };
 }
 
-function normalizeOptions(opt: RenderOptions): RenderOptions {
-  const engine = opt.engine ?? {};
-  const overrides = mergeOverrides(engine.overrides, opt.overrides);
-  const pixelRatio = resolveDpr(opt.pixelRatio);
+function normalizeEngineConfig(
+  cfg: EngineConfig | undefined
+): Required<EngineConfig> {
+  const engine = cfg ?? {};
+  return {
+    version: engine.version ?? 1,
+    backend: engine.backend ?? "auto",
+    shape: normalizeShape(engine.shape),
+    strokePath: normalizeStrokePath(engine.strokePath),
+    grain: normalizeGrain(engine.grain),
+    rendering: normalizeRendering(engine.rendering),
+    overrides: mergeOverrides(engine.overrides, undefined),
+    modulations: engine.modulations ?? null,
+  };
+}
+
+function normalizeOptions(opt: RenderOptions): RenderOptions & {
+  engine: Required<EngineConfig>;
+  pixelRatio: number;
+  width: number;
+  height: number;
+  baseSizePx: number;
+  color: string;
+} {
+  const engine = normalizeEngineConfig(opt.engine);
+  const pixelRatio = resolveDevicePixelRatio(opt.pixelRatio);
 
   const width = Math.max(1, Math.floor(opt.width));
   const height = Math.max(1, Math.floor(opt.height));
   const baseSizePx = Math.max(1, opt.baseSizePx);
+
+  // Merge runtime overrides on top of normalized engine overrides
+  const overrides = mergeOverrides(engine.overrides, opt.overrides);
 
   return {
     ...opt,
@@ -449,104 +627,267 @@ function normalizeOptions(opt: RenderOptions): RenderOptions {
     color: opt.color ?? "#000000",
     engine: {
       ...engine,
-      overrides, // merged defaults + UI
+      overrides,
     },
   };
 }
 
-/* ========================== Backend selection ======================= */
+/* ========================================================================== */
+/*                              Backend Scoring (auto)                        */
+/* ========================================================================== */
 
-function pickBackend(opt: RenderOptions): Exclude<BrushBackend, "auto"> {
-  const cfg = opt.engine ?? {};
-  const ov = (cfg.overrides ?? {}) as Required<RenderOverrides>;
-  const ui = opt.overrides ?? {};
+type NormalizedOpts = RenderOptions & { engine: Required<EngineConfig> };
 
-  const chosen = cfg.backend ?? "auto";
-  if (chosen !== "auto") return chosen;
+function scoreBackends(
+  opts: NormalizedOpts
+): Record<Exclude<BrushBackend, "auto">, number> {
+  const { engine: cfg } = opts;
+  const ui = opts.overrides ?? {};
+  const ov = cfg.overrides;
 
-  const isWet =
-    Boolean(ui.wetEdges ?? cfg.rendering?.wetEdges ?? ov.wetEdges ?? false) ||
-    cfg.rendering?.mode === "wet";
+  const mode = cfg.rendering.mode;
+  const shape = cfg.shape.type;
+
+  const wetEdges =
+    cfg.rendering.wetEdges || ui.wetEdges === true || ov.wetEdges === true;
 
   const scatter = Math.max(
-    ui.scatter ?? cfg.strokePath?.scatter ?? ov.scatter ?? 0,
+    ui.scatter ?? cfg.strokePath.scatter ?? ov.scatter ?? 0,
     0
   );
   const count = Math.max(
-    Math.round(ui.count ?? cfg.strokePath?.count ?? ov.count ?? 1),
-    1
+    1,
+    Math.round(ui.count ?? cfg.strokePath.count ?? ov.count ?? 1)
+  );
+  const spacing = Math.max(
+    0,
+    ui.spacing ?? cfg.strokePath.spacing ?? ov.spacing ?? 6
   );
 
-  if (isWet) return "wet";
-  if (scatter >= 12 || count >= 12) return "spray";
-  // NOTE: keep pencils/charcoal in stamping unless presets pick otherwise.
-  return "stamping";
+  const softness = Math.max(0, ui.softness ?? ov.softness ?? 50);
+  const angleJitter = Math.max(0, ui.angleJitter ?? ov.angleJitter ?? 0);
+
+  const smudgeStrength = Math.max(
+    0,
+    ui.smudgeStrength ?? ov.smudgeStrength ?? 0
+  );
+  const grainKind = (ui.grainKind ??
+    ov.grainKind ??
+    cfg.grain.kind ??
+    "none") as EngineGrain["kind"];
+  const grainDepth = Math.max(
+    0,
+    ui.grainDepth ?? ov.grainDepth ?? cfg.grain.depth ?? 0
+  );
+
+  // Derived hints
+  const wantsSpray =
+    mode === "spray" || shape === "spray" || scatter >= 12 || count >= 12;
+  const wantsMarker = mode === "marker";
+  const wantsWet = mode === "wet" || wetEdges;
+  const hasGrain =
+    grainKind !== "none" && (grainDepth > 0 || mode === "glazed");
+
+  const S: Record<Exclude<BrushBackend, "auto">, number> = {
+    ribbon: 0,
+    stamping: 0,
+    spray: 0,
+    wet: 0,
+    smudge: 0,
+    particle: 0,
+    pattern: 0,
+    impasto: 0,
+  };
+
+  // Wet
+  if (wantsWet) S.wet += 10;
+  S.wet += Math.min(10, (softness / 100) * 2);
+
+  // Smudge
+  if (smudgeStrength > 0.05) S.smudge += 9;
+  if (softness > 60 && spacing <= 6) S.smudge += 2;
+
+  // Spray
+  if (wantsSpray) S.spray += 9;
+  if (angleJitter >= 10 && scatter >= 6) S.spray += 2;
+
+  // Particle (fine/grainy scatter)
+  if (!wantsSpray && angleJitter >= 6 && scatter >= 2 && scatter < 14)
+    S.particle += 5;
+
+  // Pattern (pattern/grain fill)
+  if (hasGrain) S.pattern += 5;
+  if (wantsMarker && hasGrain) S.pattern += 2;
+
+  // Ribbon (marker/ink continuous silhouette)
+  if (wantsMarker) S.ribbon += 7;
+  if (
+    (shape === "nib" || shape === "chisel" || shape === "oval") &&
+    scatter < 4 &&
+    count <= 3
+  ) {
+    S.ribbon += 3;
+  }
+  if (spacing <= 4) S.ribbon += 1;
+
+  // Impasto (light nudge via painterly/glazed + canvas grain)
+  if (mode === "glazed" && grainKind === "canvas") S.impasto += 1;
+
+  // Stamping (safe default baseline)
+  S.stamping += 3;
+  const splitCount = Math.max(
+    1,
+    Math.round(ui.splitCount ?? ov.splitCount ?? 1)
+  );
+  if (splitCount > 1) S.stamping += 2;
+
+  return S;
 }
 
-/* ============================== Orchestrator ======================== */
+function pickMax<K extends string>(scores: Record<K, number>): K {
+  let bestK: K = Object.keys(scores)[0] as K;
+  let bestV = -Infinity;
+  for (const k in scores) {
+    const v = scores[k];
+    if (v > bestV) {
+      bestV = v;
+      bestK = k as K;
+    }
+  }
+  return bestK;
+}
+
+/* ========================================================================== */
+/*                              Backend Selection                             */
+/* ========================================================================== */
+
+function chooseBackend(
+  opts: RenderOptions & { engine: Required<EngineConfig> }
+): Exclude<BrushBackend, "auto"> {
+  const cfg = opts.engine;
+  if (cfg.backend !== "auto") return cfg.backend; // Respect explicit selection
+
+  const scores = scoreBackends(opts as NormalizedOpts);
+  return pickMax(scores);
+}
+
+/* ========================================================================== */
+/*                                Orchestration                               */
+/* ========================================================================== */
 
 export async function drawStrokeToCanvas(
   canvas: HTMLCanvasElement,
   opt: RenderOptions
 ): Promise<void> {
-  // Normalize
+  // Normalize & choose backend
   const nopt = normalizeOptions(opt);
-  const backend = pickBackend(nopt);
+  const brushCtx = createBrushContext({
+    width: nopt.width,
+    height: nopt.height,
+    dpr: nopt.pixelRatio,
+    seed: nopt.seed ?? 1,
+    colorHex: nopt.color,
+    speedSmoothingMs: nopt.engine.overrides.speedSmoothingMs,
+    smudgeDefaults: {
+      strength: nopt.engine.overrides.smudgeStrength,
+      alphaMul: nopt.engine.overrides.smudgeAlpha,
+      blurPx: nopt.engine.overrides.smudgeBlur,
+      spacingOverride: nopt.engine.overrides.smudgeSpacing,
+    },
+    rngFactory: (s) => mulberry32(s),
+  });
 
-  // Ensure bitmap size matches DPR
-  const dpr = nopt.pixelRatio ?? 1;
-  const targetW = Math.max(1, Math.floor(nopt.width * dpr));
-  const targetH = Math.max(1, Math.floor(nopt.height * dpr));
-  if (canvas.width !== targetW || canvas.height !== targetH) {
-    canvas.width = targetW;
-    canvas.height = targetH;
-  }
-  if (canvas.style.width === "" || canvas.style.height === "") {
-    canvas.style.width = `${nopt.width}px`;
-    canvas.style.height = `${nopt.height}px`;
-  }
+  // Extend the options object you pass to backends with BrushContext
+  const optWithCtx = { ...nopt, brushCtx } as typeof nopt & {
+    brushCtx: typeof brushCtx;
+  };
 
-  // Clear
-  const ctx = canvas.getContext("2d", { alpha: true })!;
+  const backend = chooseBackend(nopt);
+
+  // Target canvas DPR sizing
+  const dpr = nopt.pixelRatio;
+  ensureCanvasDprSize(canvas, nopt.width, nopt.height, dpr);
+
+  // Prepare target 2D context
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!isCanvas2DContext(ctx)) throw new Error("2D context unavailable");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, nopt.width, nopt.height);
 
-  // Dispatch. Some backends expect canvas, others expect ctx.
+  // Offscreen layer to composite at the end
+  const layer = createLayer(
+    Math.max(1, Math.floor(nopt.width * dpr)),
+    Math.max(1, Math.floor(nopt.height * dpr))
+  );
+  const lctx = layer.getContext("2d", { alpha: true });
+  if (!isCanvas2DContext(lctx)) throw new Error("2D layer context unavailable");
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  lctx.clearRect(0, 0, nopt.width, nopt.height);
+
+  // Dispatch — canvas-based draw directly to the offscreen layer
   switch (backend) {
     case "ribbon":
-      await drawRibbonToCanvas(canvas, nopt);
+      await drawRibbonToCanvas(layer as HTMLCanvasElement, optWithCtx);
       break;
     case "spray":
-      await drawSprayToCanvas(canvas, nopt);
+      await drawSprayToCanvas(layer as HTMLCanvasElement, optWithCtx);
       break;
     case "wet":
-      await drawWetToCanvas(canvas, nopt);
+      await drawWetToCanvas(layer as HTMLCanvasElement, optWithCtx);
       break;
-
-    // ctx-based backends
     case "stamping":
-      drawStamping(ctx, nopt);
+      if (typeof drawStampingToCanvas === "function") {
+        await drawStampingToCanvas(layer as HTMLCanvasElement, optWithCtx);
+      } else {
+        await drawStamping(lctx, optWithCtx);
+      }
       break;
     case "smudge":
-      drawSmudge(ctx, nopt);
+      if (typeof drawSmudgeToCanvas === "function") {
+        await drawSmudgeToCanvas(layer as HTMLCanvasElement, optWithCtx);
+      } else {
+        await drawSmudge(lctx, optWithCtx);
+      }
       break;
     case "particle":
-      drawParticle(ctx, nopt);
+      if (typeof drawParticleToCanvas === "function") {
+        await drawParticleToCanvas(layer as HTMLCanvasElement, optWithCtx);
+      } else {
+        await drawParticle(lctx, optWithCtx);
+      }
       break;
     case "pattern":
-      drawPattern(ctx, nopt);
+      if (typeof drawPatternToCanvas === "function") {
+        await drawPatternToCanvas(layer as HTMLCanvasElement, optWithCtx);
+      } else {
+        await drawPattern(lctx, optWithCtx);
+      }
       break;
     case "impasto":
-      drawImpasto(ctx, nopt);
+      await drawImpastoToCanvas(layer as HTMLCanvasElement, optWithCtx);
       break;
-
     default:
-      // Fallback to stamping
-      drawStamping(ctx, nopt);
+      if (typeof drawStampingToCanvas === "function") {
+        await drawStampingToCanvas(layer as HTMLCanvasElement, optWithCtx);
+      } else {
+        await drawStamping(lctx, optWithCtx);
+      }
       break;
   }
+
+  // Global composite: blendMode + opacity
+  const blend = nopt.engine.rendering.blendMode ?? "source-over";
+  const opacity01 = Math.max(
+    0,
+    Math.min(1, (nopt.engine.overrides.opacity ?? 100) / 100)
+  );
+
+  withCompositeAndAlpha(ctx, toCompositeOp(blend), opacity01, () => {
+    // ctx is already scaled to DPR; draw in CSS space
+    ctx.drawImage(layer as CanvasImageSource, 0, 0, nopt.width, nopt.height);
+  });
 }
 
-/** Back-compat alias */
+/** Backward-compatible alias */
 export const renderBrushPreview = drawStrokeToCanvas;
 export default drawStrokeToCanvas;

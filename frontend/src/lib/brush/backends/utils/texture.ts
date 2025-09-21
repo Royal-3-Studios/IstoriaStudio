@@ -1,3 +1,4 @@
+// FILE: src/lib/brush/backends/utils/texture.ts
 import type { PixelBuf } from "@/lib/brush/core/types";
 import {
   sampleNearest,
@@ -7,6 +8,10 @@ import {
 } from "./sampler";
 
 /* ============================== Type guards ============================== */
+
+type Any2DContext =
+  | CanvasRenderingContext2D
+  | OffscreenCanvasRenderingContext2D;
 
 function isPixelBuf(x: unknown): x is PixelBuf {
   return (
@@ -24,7 +29,6 @@ function hasNaturalSize(x: unknown): x is HTMLImageElement {
 }
 
 function isImageBitmapLike(x: unknown): x is ImageBitmap {
-  // In some environments ImageBitmap may be undefined
   return typeof ImageBitmap !== "undefined" && x instanceof ImageBitmap;
 }
 
@@ -52,7 +56,7 @@ function isCanvas2DContext(
 /* ============================== Core types ============================== */
 
 export type TextureSource =
-  | string // URL
+  | string
   | HTMLImageElement
   | ImageBitmap
   | ImageData
@@ -62,14 +66,19 @@ export type Texture = {
   id: string;
   width: number;
   height: number;
-  pixels: PixelBuf; // sRGB bytes (Uint8ClampedArray RGBA)
+  pixels: PixelBuf; // sRGB bytes RGBA
   wrapMode: WrapMode; // default sampler wrap
 };
 
-export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (floats 0..255)
-export type SampleLinear = { r: number; g: number; b: number; a: number }; // linear floats 0..1
+export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (0..255 floats)
+export type SampleLinear = { r: number; g: number; b: number; a: number }; // linear 0..1
 
-/* ============================== Helpers ============================== */
+/* ============================== Small utils ============================== */
+
+function clampTileSizePx(sz: number | undefined, min = 2, max = 512): number {
+  const n = Number.isFinite(sz as number) ? Math.floor(sz as number) : 0;
+  return Math.max(min, Math.min(max, n));
+}
 
 function createPixelBuf(
   width: number,
@@ -84,7 +93,6 @@ function createPixelBuf(
 }
 
 function imageDataToPixelBuf(img: ImageData): PixelBuf {
-  // Copy to avoid external mutation
   return {
     width: img.width,
     height: img.height,
@@ -150,9 +158,13 @@ async function imageBitmapFromURL(url: string): Promise<ImageBitmap> {
 function textureIdForSource(src: TextureSource): string {
   if (typeof src === "string") return `url:${src}`;
   if (isImageBitmapLike(src))
-    return `bitmap:${src.width}x${src.height}:${(src as object as { _id?: string })?._id ?? ""}`;
+    return `bitmap:${src.width}x${src.height}:${
+      (src as object as { _id?: string })?._id ?? ""
+    }`;
   if (hasNaturalSize(src))
-    return `img:${src.naturalWidth}x${src.naturalHeight}:${(src as object as { _id?: string })?._id ?? ""}`;
+    return `img:${src.naturalWidth}x${src.naturalHeight}:${
+      (src as object as { _id?: string })?._id ?? ""
+    }`;
   if (isImageDataLike(src))
     return `data:${src.width}x${src.height}:${src.data.byteLength}`;
   if (isPixelBuf(src))
@@ -166,9 +178,8 @@ function textureIdForSource(src: TextureSource): string {
 const cacheByObject = new WeakMap<object, Texture>();
 const cacheByURL = new Map<string, Texture>();
 
-/* ============================== Public API ============================== */
+/* ============================== Public API: load/wrap ============================== */
 
-/** Load or wrap a texture source into a normalized Texture with caching. */
 export async function loadTexture(
   source: TextureSource,
   wrapMode: WrapMode = "repeat"
@@ -268,6 +279,142 @@ export function sampleTexUVLinear(
   return sampleBilinearLinear(tex.pixels, x, y, wrap ?? tex.wrapMode);
 }
 
+/* ============================== Pattern tiles (used by backends) ============================== */
+
+/** Near-white speckle for multiply compositing (graphite sheen). */
+export function makeMultiplyTile(
+  seed: number,
+  size = 24,
+  alpha = 0.16
+): CanvasPattern {
+  const c = document.createElement("canvas");
+  c.width = c.height = Math.max(2, Math.floor(size));
+  const x = c.getContext("2d", { alpha: true });
+  if (!isCanvas2DContext(x)) throw new Error("2D context unavailable");
+
+  // Mulberry-like tiny RNG
+  let s = seed >>> 0 || 1;
+  const rnd = () => {
+    s += 0x6d2b79f5;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const img = x.createImageData(c.width, c.height);
+  const a8 = Math.round(255 * alpha);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 215 + rnd() * 40;
+    img.data[i + 0] = v;
+    img.data[i + 1] = v;
+    img.data[i + 2] = v;
+    img.data[i + 3] = a8;
+  }
+  x.putImageData(img, 0, 0);
+  const pat = x.createPattern(c, "repeat");
+  if (!pat) throw new Error("Failed to create pattern");
+  return pat;
+}
+
+/** Soft alpha noise used to subtly vary hole density along stroke. */
+export function makeAlphaNoiseTile(
+  seed: number,
+  size = 28,
+  bias = 0.6,
+  contrast = 1.0
+): CanvasPattern {
+  const c = document.createElement("canvas");
+  c.width = c.height = clampTileSizePx(size);
+  const x = c.getContext("2d", { alpha: true });
+  if (!isCanvas2DContext(x)) throw new Error("2D context unavailable");
+
+  let s = seed >>> 0 || 1;
+  const rnd = () => {
+    s += 0x6d2b79f5;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const img = x.createImageData(c.width, c.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    let v = rnd();
+    // contrast exponent
+    v = Math.pow(v, Math.max(0.01, contrast));
+    // map to alpha around bias
+    const a = Math.max(0, Math.min(1, (v - (1 - bias)) / bias));
+    img.data[i + 0] = 0;
+    img.data[i + 1] = 0;
+    img.data[i + 2] = 0;
+    img.data[i + 3] = Math.round(255 * a);
+  }
+  x.putImageData(img, 0, 0);
+  const pat = x.createPattern(c, "repeat");
+  if (!pat) throw new Error("Failed to create pattern");
+  return pat;
+}
+
+/** Opaque dot tile for hard paper-tooth cutouts (destination-out). */
+export function makeHoleDotTile(
+  seed: number,
+  sizePx: number,
+  density = 0.14, // ~0..0.4
+  rMin = 0.45,
+  rMax = 1.25
+): CanvasPattern {
+  const size = clampTileSizePx(sizePx);
+  let s = seed >>> 0 || 1;
+  const rnd = () => {
+    s += 0x6d2b79f5;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const x = c.getContext("2d", { alpha: true });
+  if (!isCanvas2DContext(x)) throw new Error("2D context unavailable");
+  x.clearRect(0, 0, size, size);
+
+  const avgR = (rMin + rMax) * 0.5;
+  const dots = Math.max(
+    1,
+    Math.round((size * size * density) / (Math.PI * avgR * avgR))
+  );
+
+  x.fillStyle = "#fff";
+  for (let i = 0; i < dots; i++) {
+    const r = rMin + rnd() * (rMax - rMin);
+    const px = (rnd() * size) | 0;
+    const py = (rnd() * size) | 0;
+    x.beginPath();
+    x.arc(px + 0.5, py + 0.5, r, 0, Math.PI * 2);
+    x.fill();
+  }
+
+  const pat = x.createPattern(c, "repeat");
+  if (!pat) throw new Error("Failed to create pattern");
+  return pat;
+}
+
+/** Fill with a pattern but randomize the phase so tiling seams don’t align. */
+export function fillPatternWithRandomPhase(
+  ctx: Any2DContext,
+  pat: CanvasPattern,
+  w: number,
+  h: number,
+  rand: () => number
+): void {
+  const ox = Math.floor((rand() - 0.5) * 128);
+  const oy = Math.floor((rand() - 0.5) * 128);
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.fillStyle = pat;
+  ctx.fillRect(-ox, -oy, w + Math.abs(ox) * 2, h + Math.abs(oy) * 2);
+  ctx.restore();
+}
+
 /* ============================== Generators ============================== */
 
 /**
@@ -291,7 +438,7 @@ export function generateFbmNoiseTexture(
     h = (h ^ (h >>> 13)) >>> 0;
     return ((h * 1274126177) >>> 0) / 0xffffffff;
   };
-  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+  const _lerp = (a: number, b: number, t: number) => a + (b - a) * t;
   const smooth = (t: number) => t * t * (3 - 2 * t);
 
   const data = buf.data;
@@ -316,10 +463,10 @@ export function generateFbmNoiseTexture(
           v10 = hashTo01(x1, y0);
         const v01 = hashTo01(x0, y1),
           v11 = hashTo01(x1, y1);
-        const v0 = lerp(v00, v10, tx);
-        const v1 = lerp(v01, v11, tx);
+        const v0 = _lerp(v00, v10, tx);
+        const v1 = _lerp(v01, v11, tx);
 
-        sum += lerp(v0, v1, ty) * amp;
+        sum += _lerp(v0, v1, ty) * amp;
         amp *= gain;
         freq *= lacunarity;
       }

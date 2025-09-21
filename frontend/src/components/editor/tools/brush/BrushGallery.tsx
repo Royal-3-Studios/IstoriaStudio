@@ -1,5 +1,6 @@
 // src/components/editor/tools/BrushGallery.tsx
 "use client";
+
 import * as React from "react";
 import { BRUSH_CATEGORIES, type BrushCategory } from "@/data/brushPresets";
 import { BrushCard } from "./BrushCard";
@@ -21,18 +22,35 @@ export function BrushGallery({
   onSelectAction: (id: string) => void;
   categories?: BrushCategory[];
 }) {
-  const [catId, setCatId] = React.useState<string>(categories[0]?.id ?? "");
+  // Lazy init so SSR/CSR match
+  const [catId, setCatId] = React.useState<string>(
+    () => categories[0]?.id ?? ""
+  );
+
+  // Keep selected category valid if the list changes
   React.useEffect(() => {
-    if (!categories.some((c) => c.id === catId) && categories.length) {
+    if (!categories.length) {
+      setCatId("");
+      return;
+    }
+    if (!categories.some((c) => c.id === catId)) {
       setCatId(categories[0].id);
     }
   }, [categories, catId]);
+
+  if (!categories.length) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        No brush categories available.
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">
       {/* Mobile (sm): category select */}
       <div className="md:hidden mb-2">
-        <Select value={catId} onValueChange={setCatId}>
+        <Select value={catId} onValueChange={(v) => setCatId(v)}>
           <SelectTrigger className="h-8 w-full">
             <SelectValue placeholder="Brush category" />
           </SelectTrigger>
@@ -46,9 +64,13 @@ export function BrushGallery({
         </Select>
       </div>
 
-      {/* Desktop/Tablet (md+): shadcn Tabs */}
+      {/* Desktop/Tablet (md+): Tabs */}
       <div className="hidden md:block">
-        <Tabs value={catId} onValueChange={setCatId} className="w-full">
+        <Tabs
+          value={catId}
+          onValueChange={(v) => setCatId(v)}
+          className="w-full"
+        >
           <TabsList className="flex flex-wrap justify-start gap-1">
             {categories.map((c) => (
               <TabsTrigger key={c.id} value={c.id} className="text-xs">
@@ -60,7 +82,7 @@ export function BrushGallery({
           {categories.map((c) => (
             <TabsContent key={c.id} value={c.id} className="mt-2">
               <CategoryGrid
-                categoryId={c.id}
+                category={c}
                 activeBrushId={activeBrushId}
                 onSelectAction={onSelectAction}
               />
@@ -72,7 +94,7 @@ export function BrushGallery({
       {/* Mobile (sm): grid under the select */}
       <div className="md:hidden">
         <CategoryGrid
-          categoryId={catId}
+          category={categories.find((c) => c.id === catId) ?? categories[0]}
           activeBrushId={activeBrushId}
           onSelectAction={onSelectAction}
         />
@@ -82,24 +104,25 @@ export function BrushGallery({
 }
 
 function CategoryGrid({
-  categoryId,
+  category,
   activeBrushId,
   onSelectAction,
 }: {
-  categoryId: string;
+  category: BrushCategory;
   activeBrushId: string;
   onSelectAction: (id: string) => void;
 }) {
-  const category = React.useMemo(
-    () => BRUSH_CATEGORIES.find((c) => c.id === categoryId),
-    [categoryId]
-  );
-  if (!category) return null;
+  if (!category?.brushes?.length) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        No brushes in this category.
+      </div>
+    );
+  }
 
   return (
     <div
       className="grid gap-6"
-      // Wider cards with auto-fit; each card >= 240px
       style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}
     >
       {category.brushes.map((b) => (

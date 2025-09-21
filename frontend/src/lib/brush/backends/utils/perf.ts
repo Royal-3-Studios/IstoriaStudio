@@ -1,4 +1,4 @@
-// src/lib/brush/backends/utils/perf.ts
+// FILE: src/lib/brush/backends/utils/perf.ts
 
 // Safe "now" across browser/SSR/Node
 const now =
@@ -16,7 +16,7 @@ export function mark(name: string): void {
 
 /**
  * Stop the timer `name`, add its duration to `stats[name]`, and return the delta (ms).
- * If mark doesn't exist, returns 0 and does not modify stats.
+ * If no prior mark exists, returns 0 and does not modify stats.
  */
 export function measure(name: string): number {
   const t0 = marks.get(name);
@@ -64,6 +64,18 @@ export function withMeasure<T>(name: string, fn: () => T): T {
   mark(name);
   try {
     return fn();
+  } finally {
+    measure(name);
+  }
+}
+
+export async function withMeasureAsync<T>(
+  name: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  mark(name);
+  try {
+    return await fn();
   } finally {
     measure(name);
   }

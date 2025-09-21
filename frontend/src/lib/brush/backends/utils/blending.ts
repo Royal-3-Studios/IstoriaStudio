@@ -1,3 +1,4 @@
+// FILE: src/lib/brush/backends/utils/blending.ts
 import type { BlendMode } from "@/lib/brush/core/types";
 
 /** Union for both HTML and Offscreen 2D contexts */
@@ -151,3 +152,14 @@ export function withCompositeAndAlpha<T>(
     popBlend();
   }
 }
+
+/** Optional: object-style export for call sites that use `Blend.withComposite(...)`. */
+export const Blend = {
+  toCompositeOp,
+  isCompositeSupported,
+  pushComposite,
+  withComposite,
+  pushAlpha,
+  withAlpha,
+  withCompositeAndAlpha,
+};

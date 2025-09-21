@@ -1,3 +1,5 @@
+// src/lib/brush/backends/utils/canvas.ts
+
 import type { BlendMode } from "@/lib/brush/core/types";
 import type { PixelBuf } from "@/lib/brush/core/types";
 import {
@@ -23,8 +25,35 @@ function isOffscreenCanvas(x: unknown): x is OffscreenCanvas {
 function isCanvas2DContext(ctx: RenderingContext | Ctx2D | null): ctx is Ctx2D {
   return (
     !!ctx &&
-    typeof (ctx as CanvasRenderingContext2D).getImageData === "function"
+    typeof (ctx as CanvasRenderingContext2D).getImageData === "function" &&
+    typeof (ctx as CanvasRenderingContext2D).drawImage === "function"
   );
+}
+
+/** Public guard if you need it elsewhere. */
+export function isCtx2D(
+  ctx: unknown
+): ctx is CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
+  return isCanvas2DContext(ctx as RenderingContext | Ctx2D | null);
+}
+
+/** Try to get a 2D context; return null if unavailable (no throw). */
+export function get2DOrNull(
+  canvas: CanvasLike,
+  attrs: CanvasRenderingContext2DSettings = { alpha: true }
+): Ctx2D | null {
+  const ctx = canvas.getContext("2d", attrs);
+  return isCanvas2DContext(ctx) ? (ctx as Ctx2D) : null;
+}
+
+/** Get a 2D context or throw (useful in code paths that must have 2D). */
+export function get2D(
+  canvas: CanvasLike,
+  attrs: CanvasRenderingContext2DSettings = { alpha: true }
+): Ctx2D {
+  const ctx = get2DOrNull(canvas, attrs);
+  if (!ctx) throw new Error("2D context unavailable");
+  return ctx;
 }
 
 /* ============================== DPR / Sizing =============================== */

@@ -19,8 +19,10 @@ export function sleep(ms: number): Promise<void> {
   });
 }
 
-/** Resolve on the next microtask. */
 export function nextMicrotask(): Promise<void> {
+  if (typeof queueMicrotask === "function") {
+    return new Promise((r) => queueMicrotask(r));
+  }
   return Promise.resolve();
 }
 
@@ -340,7 +342,7 @@ export function scheduleIdle(
   timeoutMs = 100
 ): number {
   if (hasRequestIdleCallback()) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    /// eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (
       globalThis as unknown as {
         requestIdleCallback: (
@@ -366,7 +368,7 @@ export function scheduleIdle(
 
 export function cancelIdle(id: number): void {
   if (hasRequestIdleCallback()) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    /// eslint-disable-next-line @typescript-eslint/no-explicit-any
     (
       globalThis as unknown as { cancelIdleCallback: (handle: number) => void }
     ).cancelIdleCallback(id);
@@ -420,3 +422,5 @@ export class RafTicker {
     return this.running;
   }
 }
+
+export const timeNow = now;
