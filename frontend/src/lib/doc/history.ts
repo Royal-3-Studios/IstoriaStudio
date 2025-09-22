@@ -1,6 +1,7 @@
 // FILE: src/lib/painting/history.ts
 // Command log for instant undo/redo using full-layer snapshots.
-// Tiny, deterministic, and backend-agnostic.
+// Tiny, deterministic, and backend-agnostic. Draws & hashes in CSS space
+// (engine handles DPR on the painting layers).
 
 import type { LayerStack, Layer, LayerSnapshot } from "./layers";
 import { snapshotLayer, restoreLayer, findLayer } from "./layers";
@@ -43,8 +44,10 @@ function uuid(): string {
 let _uidCounter = 0;
 
 /* ----------------------------------------------------------------------------
- * Snapshot hashing / equality (cheap, downscaled)
+ * Canvas helpers (guards keep TS happy across DOM/Offscreen)
  * -------------------------------------------------------------------------- */
+
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 function createCanvas(
   w: number,
@@ -57,15 +60,31 @@ function createCanvas(
   return c;
 }
 
-function get2D(
-  c: HTMLCanvasElement | OffscreenCanvas
-): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
-  const ctx = c.getContext("2d");
-  if (!ctx) throw new Error("2D context unavailable");
+function isCtx2D(ctx: unknown): ctx is Ctx2D {
+  if (!ctx || typeof ctx !== "object") return false;
+  const c = ctx as Partial<CanvasRenderingContext2D>;
+  return (
+    typeof c.clearRect === "function" &&
+    typeof c.drawImage === "function" &&
+    typeof c.getImageData === "function"
+  );
+}
+
+function get2D(c: HTMLCanvasElement | OffscreenCanvas): Ctx2D {
+  const ctx = c.getContext("2d", { alpha: true });
+  if (!isCtx2D(ctx)) throw new Error("2D context unavailable");
   return ctx;
 }
 
-/** Draw any LayerSnapshot into a tiny canvas, then return a fast rolling hash. */
+/* ----------------------------------------------------------------------------
+ * Snapshot hashing / equality (cheap, downscaled)
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Draw any LayerSnapshot into a tiny canvas, then return a fast rolling hash.
+ * We intentionally downscale (default 64×64) to keep it cheap and robust to
+ * tiny pixel fluctuations while still detecting visual changes.
+ */
 async function hashSnapshot(
   snap: LayerSnapshot,
   thumbW = 64,
@@ -76,25 +95,26 @@ async function hashSnapshot(
   let srcW = 0;
   let srcH = 0;
 
-  if (snap instanceof ImageBitmap) {
+  if (typeof ImageBitmap !== "undefined" && snap instanceof ImageBitmap) {
     srcW = snap.width;
     srcH = snap.height;
     srcCanvas = createCanvas(srcW, srcH);
     const x = get2D(srcCanvas);
     x.drawImage(snap, 0, 0);
   } else {
-    // ImageData
-    srcW = snap.width;
-    srcH = snap.height;
+    // ImageData path
+    const s = snap as ImageData;
+    srcW = s.width;
+    srcH = s.height;
     srcCanvas = createCanvas(srcW, srcH);
     const x = get2D(srcCanvas) as CanvasRenderingContext2D;
-    x.putImageData(snap, 0, 0);
+    x.putImageData(s, 0, 0);
   }
 
   // Stage 2: draw to tiny thumbnail
   const thumb = createCanvas(thumbW, thumbH);
   const tx = get2D(thumb);
-  tx.drawImage(srcCanvas as CanvasImageSource, 0, 0, thumbW, thumbH);
+  tx.drawImage(srcCanvas as unknown as CanvasImageSource, 0, 0, thumbW, thumbH);
 
   // Stage 3: hash the pixels (xor/imul rolling hash over bytes)
   const id = (tx as CanvasRenderingContext2D).getImageData(
@@ -128,8 +148,13 @@ async function snapshotsEqual(
   if (a === b) return true; // same object or both null
   if (!a || !b) return false;
   // Quick dimension check when both ImageData
-  if (!(a instanceof ImageBitmap) && !(b instanceof ImageBitmap)) {
-    if (a.width !== b.width || a.height !== b.height) return false;
+  if (
+    !(typeof ImageBitmap !== "undefined" && a instanceof ImageBitmap) &&
+    !(typeof ImageBitmap !== "undefined" && b instanceof ImageBitmap)
+  ) {
+    const ia = a as ImageData;
+    const ib = b as ImageData;
+    if (ia.width !== ib.width || ia.height !== ib.height) return false;
   }
   const [ha, hb] = await Promise.all([hashSnapshot(a), hashSnapshot(b)]);
   return ha === hb;
@@ -148,7 +173,6 @@ async function pushEntry(
 ): Promise<void> {
   // If nothing visually changed, skip recording.
   if (await snapshotsEqual(entry.before, entry.after)) {
-    // Still advance index to the last kept entry (no-op push).
     return;
   }
 
@@ -226,6 +250,7 @@ export async function recordErase(
 /**
  * Record an arbitrary layer operation (transform, move, reorder, merge, etc.)
  * The mutator may change multiple layers; `layerId` should be the primary target.
+ * You can choose which layer to snapshot for visual-diffing via `takeSnapshotOf`.
  */
 export async function recordLayerOp(
   hist: History,

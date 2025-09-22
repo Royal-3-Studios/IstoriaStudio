@@ -1,0 +1,1219 @@
+{
+  "version": 1,
+  "defaults": {
+    "pressureDefaults": {
+      "clamp": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "curve": {
+        "type": "gamma",
+        "gamma": 1.0
+      },
+      "smoothing": {
+        "mode": "oneEuro",
+        "oneEuro": {
+          "minCutoff": 1.5,
+          "beta": 0.03,
+          "dCutoff": 1.0
+        }
+      },
+      "velocityComp": {
+        "k": 0.15,
+        "refSpeed": 1500
+      },
+      "synth": {
+        "enabled": true,
+        "speedRange": [0, 2000],
+        "minPressure": 0.15,
+        "maxPressure": 1.0,
+        "curve": "easeOut"
+      }
+    },
+    "inputQualityDefaults": {
+      "predictPx": 8,
+      "speedToSpacing": 0.12,
+      "minStepPx": 0.6
+    }
+  },
+  "bases": {
+    "pencil": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 4,
+        "jitter": 2,
+        "scatter": 0.4,
+        "count": 1,
+        "tipScaleStart": 0.9,
+        "tipScaleEnd": 0.85,
+        "taperProfileStart": "easeOut",
+        "taperProfileEnd": "linear",
+        "angleFollowDirection": 0.9,
+        "uniformity": 0.1
+      },
+      "pressureMap": {
+        "deadZone": 0.03,
+        "gamma": 1.2,
+        "gain": 1.0
+      },
+      "inputQuality": {
+        "predictPx": 10,
+        "speedToSpacing": 0.18,
+        "minStepPx": 0.5
+      }
+    },
+    "ink": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 4,
+        "jitter": 0.8,
+        "scatter": 0.1,
+        "count": 1,
+        "tipScaleStart": 0.92,
+        "tipScaleEnd": 0.9,
+        "taperProfileStart": "linear",
+        "taperProfileEnd": "easeIn",
+        "angleFollowDirection": 1.0,
+        "uniformity": 0.35
+      },
+      "pressureMap": {
+        "deadZone": 0.02,
+        "gamma": 0.95,
+        "gain": 1.0
+      },
+      "inputQuality": {
+        "predictPx": 6,
+        "speedToSpacing": 0.1,
+        "minStepPx": 0.6
+      }
+    },
+    "marker": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 5,
+        "jitter": 0.6,
+        "scatter": 0.6,
+        "count": 1,
+        "tipScaleStart": 0.98,
+        "tipScaleEnd": 0.98,
+        "taperProfileStart": "linear",
+        "taperProfileEnd": "linear",
+        "angleFollowDirection": 1.0,
+        "uniformity": 0.8
+      },
+      "pressureMap": {
+        "deadZone": 0.02,
+        "gamma": 0.85,
+        "gain": 1.0
+      },
+      "inputQuality": {
+        "predictPx": 6,
+        "speedToSpacing": 0.06,
+        "minStepPx": 0.7
+      }
+    },
+    "charcoal": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 6,
+        "jitter": 8,
+        "scatter": 0.8,
+        "count": 1,
+        "tipScaleStart": 0.85,
+        "tipScaleEnd": 0.8,
+        "taperProfileStart": "easeOut",
+        "taperProfileEnd": "linear",
+        "angleFollowDirection": 0.8,
+        "uniformity": 0.0
+      },
+      "pressureMap": {
+        "deadZone": 0.04,
+        "gamma": 1.3,
+        "gain": 1.1
+      },
+      "inputQuality": {
+        "predictPx": 12,
+        "speedToSpacing": 0.25,
+        "minStepPx": 0.5
+      }
+    },
+    "paint": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 5,
+        "jitter": 2,
+        "scatter": 0.5,
+        "count": 2,
+        "tipScaleStart": 0.9,
+        "tipScaleEnd": 0.88,
+        "taperProfileStart": "easeOut",
+        "taperProfileEnd": "easeIn",
+        "angleFollowDirection": 0.8,
+        "uniformity": 0.25
+      },
+      "pressureMap": {
+        "deadZone": 0.03,
+        "gamma": 1.0,
+        "gain": 1.0
+      },
+      "inputQuality": {
+        "predictPx": 8,
+        "speedToSpacing": 0.12,
+        "minStepPx": 0.7
+      }
+    },
+    "airbrush": {
+      "backend": "particle",
+      "particle": {
+        "emissionBase": 3,
+        "sizeK": 0.28,
+        "speedK": 0.75,
+        "damping": 0.88,
+        "lifeMin": 5,
+        "lifeMax": 7,
+        "coneDeg": 12,
+        "blurPx": 0.6,
+        "composite": "source-over",
+        "fadePow": 1.8
+      }
+    },
+    "spray": {
+      "backend": "particle",
+      "particle": {
+        "emissionBase": 5,
+        "sizeK": 0.18,
+        "speedK": 0.9,
+        "damping": 0.85,
+        "lifeMin": 4,
+        "lifeMax": 6,
+        "coneDeg": 24,
+        "blurPx": 0.0,
+        "composite": "source-over",
+        "fadePow": 1.2
+      }
+    },
+    "texture": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 8,
+        "jitter": 15,
+        "scatter": 1.2,
+        "count": 2,
+        "tipScaleStart": 1.0,
+        "tipScaleEnd": 1.0,
+        "taperProfileStart": "linear",
+        "taperProfileEnd": "linear",
+        "angleFollowDirection": 0.0,
+        "uniformity": 0.0
+      },
+      "pressureMap": {
+        "deadZone": 0.05,
+        "gamma": 1.1,
+        "gain": 1.0
+      },
+      "inputQuality": {
+        "predictPx": 6,
+        "speedToSpacing": 0.0,
+        "minStepPx": 0.8
+      }
+    },
+    "fxGlow": {
+      "backend": "particle",
+      "particle": {
+        "emissionBase": 6,
+        "sizeK": 0.35,
+        "speedK": 0.6,
+        "damping": 0.9,
+        "lifeMin": 6,
+        "lifeMax": 9,
+        "coneDeg": 10,
+        "blurPx": 2.0,
+        "composite": "screen",
+        "fadePow": 2.2
+      }
+    },
+    "halftone": {
+      "backend": "stamping",
+      "strokePath": {
+        "spacing": 10,
+        "jitter": 0,
+        "scatter": 0,
+        "count": 1,
+        "uniformity": 1.0,
+        "angleFollowDirection": 0.0,
+        "tipScaleStart": 1.0,
+        "tipScaleEnd": 1.0,
+        "taperProfileStart": "linear",
+        "taperProfileEnd": "linear"
+      },
+      "pressureMap": {
+        "deadZone": 0.04,
+        "gamma": 0.9,
+        "gain": 1.0
+      },
+      "pattern": "halftone"
+    }
+  },
+  "brushes": [
+    {
+      "name": "Peppermint",
+      "base": "pencil",
+      "baseSizePx": 10,
+      "color": "#000000",
+      "category": "Pencils"
+    },
+    {
+      "name": "Derwent",
+      "base": "pencil",
+      "baseSizePx": 11,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "pressureMap": {
+          "gamma": 1.15,
+          "gain": 1.05
+        }
+      }
+    },
+    {
+      "name": "Procreate Pencil",
+      "base": "pencil",
+      "baseSizePx": 12,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.15
+        }
+      }
+    },
+    {
+      "name": "Technical Pencil",
+      "base": "pencil",
+      "baseSizePx": 8,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.4,
+          "spacing": 3
+        }
+      }
+    },
+    {
+      "name": "HB Pencil",
+      "base": "pencil",
+      "baseSizePx": 10,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "pressureMap": {
+          "gamma": 1.25
+        }
+      }
+    },
+    {
+      "name": "6B Pencil",
+      "base": "pencil",
+      "baseSizePx": 14,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "pressureMap": {
+          "gamma": 1.35,
+          "gain": 1.1
+        }
+      }
+    },
+    {
+      "name": "Soft Pencil",
+      "base": "pencil",
+      "baseSizePx": 13,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "strokePath": {
+          "jitter": 3,
+          "scatter": 0.5
+        }
+      }
+    },
+    {
+      "name": "Oil Pastel",
+      "base": "charcoal",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Pencils"
+    },
+    {
+      "name": "Artist Crayon",
+      "base": "charcoal",
+      "baseSizePx": 16,
+      "color": "#000000",
+      "category": "Pencils",
+      "overrides": {
+        "strokePath": {
+          "jitter": 6
+        }
+      }
+    },
+    {
+      "name": "Mercury",
+      "base": "ink",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Inkers"
+    },
+    {
+      "name": "Inka",
+      "base": "ink",
+      "baseSizePx": 14,
+      "color": "#000000",
+      "category": "Inkers"
+    },
+    {
+      "name": "Fine Tip",
+      "base": "ink",
+      "baseSizePx": 6,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.6,
+          "spacing": 3
+        }
+      }
+    },
+    {
+      "name": "Technical Pen",
+      "base": "ink",
+      "baseSizePx": 10,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.75,
+          "spacing": 3
+        }
+      }
+    },
+    {
+      "name": "Gel Pen",
+      "base": "ink",
+      "baseSizePx": 12,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.9
+        },
+        "pressureMap": {
+          "gamma": 0.85
+        }
+      }
+    },
+    {
+      "name": "Inkbleed",
+      "base": "ink",
+      "baseSizePx": 16,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "scatter": 1.2,
+          "jitter": 4
+        },
+        "pressureMap": {
+          "gamma": 1.1
+        }
+      }
+    },
+    {
+      "name": "Studio Pen",
+      "base": "ink",
+      "baseSizePx": 16,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 1.0,
+          "jitter": 0
+        }
+      }
+    },
+    {
+      "name": "Dry Ink",
+      "base": "ink",
+      "baseSizePx": 15,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "jitter": 6,
+          "scatter": 0.8
+        }
+      }
+    },
+    {
+      "name": "Gesinski Ink",
+      "base": "ink",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Inkers",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.6
+        }
+      }
+    },
+    {
+      "name": "Marker",
+      "base": "marker",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Inkers"
+    },
+    {
+      "name": "Round Brush",
+      "base": "paint",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Paint"
+    },
+    {
+      "name": "Flat Brush",
+      "base": "paint",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "count": 3,
+          "uniformity": 0.35
+        }
+      }
+    },
+    {
+      "name": "Acrylic",
+      "base": "paint",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "count": 3,
+          "scatter": 0.8
+        }
+      }
+    },
+    {
+      "name": "Wet Acrylic",
+      "base": "paint",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "scatter": 1.0,
+          "jitter": 4
+        }
+      }
+    },
+    {
+      "name": "Jagged Brush",
+      "base": "paint",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "jitter": 8,
+          "scatter": 1.2,
+          "count": 1
+        }
+      }
+    },
+    {
+      "name": "Salamanca",
+      "base": "paint",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.15
+        },
+        "pressureMap": {
+          "gamma": 0.95
+        }
+      }
+    },
+    {
+      "name": "Nikko Rull",
+      "base": "paint",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "jitter": 5,
+          "scatter": 1.0
+        }
+      }
+    },
+    {
+      "name": "Spectra",
+      "base": "paint",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.9,
+          "count": 1
+        }
+      }
+    },
+    {
+      "name": "Tamar",
+      "base": "paint",
+      "baseSizePx": 16,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.0,
+          "jitter": 3
+        }
+      }
+    },
+    {
+      "name": "Old Brush",
+      "base": "paint",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "jitter": 10,
+          "scatter": 1.1
+        }
+      }
+    },
+    {
+      "name": "Dry Brush",
+      "base": "paint",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "jitter": 12,
+          "scatter": 1.3,
+          "count": 1
+        }
+      }
+    },
+    {
+      "name": "Stucco",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Paint"
+    },
+    {
+      "name": "Oil Paint",
+      "base": "paint",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "count": 4,
+          "uniformity": 0.05
+        }
+      }
+    },
+    {
+      "name": "Turpentine",
+      "base": "paint",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "scatter": 1.2
+        },
+        "pressureMap": {
+          "gamma": 0.9
+        }
+      }
+    },
+    {
+      "name": "Gouache",
+      "base": "paint",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.45,
+          "count": 2
+        }
+      }
+    },
+    {
+      "name": "Fresco",
+      "base": "texture",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "jitter": 8,
+          "scatter": 1.4
+        }
+      }
+    },
+    {
+      "name": "Watercolor",
+      "base": "paint",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Paint",
+      "overrides": {
+        "strokePath": {
+          "scatter": 1.1,
+          "count": 3
+        },
+        "pressureMap": {
+          "gamma": 1.05
+        }
+      }
+    },
+    {
+      "name": "2B Compressed",
+      "base": "charcoal",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Charcoal"
+    },
+    {
+      "name": "4B Compressed",
+      "base": "charcoal",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "pressureMap": {
+          "gain": 1.05
+        }
+      }
+    },
+    {
+      "name": "6B Compressed",
+      "base": "charcoal",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "pressureMap": {
+          "gain": 1.15
+        }
+      }
+    },
+    {
+      "name": "Vine Charcoal",
+      "base": "charcoal",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "strokePath": {
+          "jitter": 10,
+          "scatter": 1.2
+        }
+      }
+    },
+    {
+      "name": "Willow Charcoal",
+      "base": "charcoal",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "strokePath": {
+          "jitter": 12,
+          "scatter": 1.3
+        }
+      }
+    },
+    {
+      "name": "Carbon Stick",
+      "base": "charcoal",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "strokePath": {
+          "uniformity": 0.2
+        }
+      }
+    },
+    {
+      "name": "Charcoal Block",
+      "base": "charcoal",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "strokePath": {
+          "count": 2,
+          "scatter": 1.2
+        }
+      }
+    },
+    {
+      "name": "Burnt Tree",
+      "base": "charcoal",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Charcoal",
+      "overrides": {
+        "strokePath": {
+          "jitter": 14,
+          "scatter": 1.4
+        }
+      }
+    },
+    {
+      "name": "Soft Airbrush",
+      "base": "airbrush",
+      "baseSizePx": 28,
+      "color": "#000000",
+      "category": "Airbrush"
+    },
+    {
+      "name": "Medium Airbrush",
+      "base": "airbrush",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Airbrush"
+    },
+    {
+      "name": "Hard Airbrush",
+      "base": "airbrush",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Airbrush",
+      "overrides": {
+        "particle": {
+          "blurPx": 0.2,
+          "fadePow": 1.2
+        }
+      }
+    },
+    {
+      "name": "Ultra Fine Nozzle",
+      "base": "spray",
+      "baseSizePx": 10,
+      "color": "#000000",
+      "category": "Spray",
+      "overrides": {
+        "particle": {
+          "emissionBase": 3,
+          "coneDeg": 8
+        }
+      }
+    },
+    {
+      "name": "Fine Nozzle",
+      "base": "spray",
+      "baseSizePx": 14,
+      "color": "#000000",
+      "category": "Spray"
+    },
+    {
+      "name": "Medium Nozzle",
+      "base": "spray",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Spray"
+    },
+    {
+      "name": "Fat Nozzle",
+      "base": "spray",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Spray"
+    },
+    {
+      "name": "Splatter",
+      "base": "spray",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Spray",
+      "overrides": {
+        "particle": {
+          "emissionBase": 9,
+          "coneDeg": 40,
+          "sizeK": 0.22
+        }
+      }
+    },
+    {
+      "name": "Flicks",
+      "base": "spray",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Spray",
+      "overrides": {
+        "particle": {
+          "emissionBase": 12,
+          "coneDeg": 55,
+          "sizeK": 0.16,
+          "speedK": 1.2
+        }
+      }
+    },
+    {
+      "name": "Burst",
+      "base": "spray",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Spray",
+      "overrides": {
+        "particle": {
+          "lifeMin": 2,
+          "lifeMax": 3,
+          "coneDeg": 4,
+          "sizeK": 0.3
+        }
+      }
+    },
+    {
+      "name": "Drip",
+      "base": "spray",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "Spray",
+      "overrides": {
+        "particle": {
+          "lifeMin": 10,
+          "lifeMax": 12,
+          "damping": 0.98
+        }
+      }
+    },
+    {
+      "name": "Smoke",
+      "base": "fxGlow",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "composite": "screen",
+          "blurPx": 1.2,
+          "sizeK": 0.32
+        }
+      }
+    },
+    {
+      "name": "Flames",
+      "base": "fxGlow",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "composite": "screen",
+          "blurPx": 0.8
+        }
+      }
+    },
+    {
+      "name": "Water",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "strokePath": {
+          "spacing": 7,
+          "count": 2
+        }
+      }
+    },
+    {
+      "name": "Oceans",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "strokePath": {
+          "spacing": 6,
+          "uniformity": 0.6
+        }
+      }
+    },
+    {
+      "name": "Driven Snow",
+      "base": "spray",
+      "baseSizePx": 14,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "emissionBase": 14,
+          "sizeK": 0.12,
+          "coneDeg": 35
+        }
+      }
+    },
+    {
+      "name": "Hard Rain",
+      "base": "spray",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "emissionBase": 10,
+          "sizeK": 0.12,
+          "coneDeg": 5,
+          "speedK": 1.35
+        }
+      }
+    },
+    {
+      "name": "Crystals",
+      "base": "spray",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "emissionBase": 7,
+          "sizeK": 0.16,
+          "coneDeg": 16
+        }
+      }
+    },
+    {
+      "name": "Clouds",
+      "base": "fxGlow",
+      "baseSizePx": 30,
+      "color": "#000000",
+      "category": "FX",
+      "overrides": {
+        "particle": {
+          "emissionBase": 10,
+          "sizeK": 0.4,
+          "blurPx": 2.4
+        }
+      }
+    },
+    {
+      "name": "Grid",
+      "base": "halftone",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Decimals",
+      "base": "halftone",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Diagonal",
+      "base": "halftone",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Victorian",
+      "base": "texture",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Wood",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Cubes",
+      "base": "texture",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Rosette",
+      "base": "halftone",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Grunge",
+      "base": "texture",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "Patterns",
+      "overrides": {
+        "strokePath": {
+          "jitter": 18,
+          "scatter": 1.6
+        }
+      }
+    },
+    {
+      "name": "Newsprint",
+      "base": "halftone",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Buzz",
+      "base": "texture",
+      "baseSizePx": 20,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Disco",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Flower Power",
+      "base": "texture",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Patterns"
+    },
+    {
+      "name": "Flare",
+      "base": "fxGlow",
+      "baseSizePx": 22,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 4,
+          "sizeK": 0.5,
+          "blurPx": 2.8
+        }
+      }
+    },
+    {
+      "name": "Light Pen",
+      "base": "fxGlow",
+      "baseSizePx": 14,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 3,
+          "sizeK": 0.26,
+          "blurPx": 1.2
+        }
+      }
+    },
+    {
+      "name": "Light Brush",
+      "base": "fxGlow",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 7,
+          "sizeK": 0.34
+        }
+      }
+    },
+    {
+      "name": "Pulse",
+      "base": "fxGlow",
+      "baseSizePx": 18,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 10,
+          "sizeK": 0.18,
+          "lifeMin": 3,
+          "lifeMax": 4
+        }
+      }
+    },
+    {
+      "name": "Bokeh Lights",
+      "base": "fxGlow",
+      "baseSizePx": 24,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 16,
+          "sizeK": 0.22
+        }
+      }
+    },
+    {
+      "name": "Light Leaks",
+      "base": "fxGlow",
+      "baseSizePx": 26,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 6,
+          "sizeK": 0.38,
+          "blurPx": 1.6
+        }
+      }
+    },
+    {
+      "name": "Glimmer",
+      "base": "fxGlow",
+      "baseSizePx": 16,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 20,
+          "sizeK": 0.1
+        }
+      }
+    },
+    {
+      "name": "Nebula",
+      "base": "fxGlow",
+      "baseSizePx": 30,
+      "color": "#000000",
+      "category": "Light",
+      "overrides": {
+        "particle": {
+          "emissionBase": 12,
+          "sizeK": 0.42,
+          "blurPx": 2.4
+        }
+      }
+    }
+  ]
+}

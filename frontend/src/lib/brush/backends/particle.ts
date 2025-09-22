@@ -2,7 +2,7 @@
 /**
  * Particle backend — pressure-scaled emission of short-lived dots.
  * - Uses stroke spacing from engine.strokePath / overrides.
- * - Pressure maps to emission count and particle size.
+ * - Pressure maps to emission count and particle size (via mapPressure).
  * - Motion integrates a few steps with damping + scatter.
  * - Draws into an offscreen "ink" layer once, then composites to ctx.
  *
@@ -12,6 +12,9 @@
 
 import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
 import { Rand, Stroke as StrokeUtil, CanvasUtil, Blend } from "@backends";
+
+import type { BrushInputConfig } from "@/data/brushPresets";
+import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
 type Ctx2D = CanvasUtil.Ctx2D;
 
@@ -24,9 +27,28 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 type SamplePoint = { x: number; y: number; t: number; p: number; ang: number };
 
+/** Build a simple PressureMap from normalized input. */
+function toPressureMapFromInput(
+  input?: BrushInputConfig
+): PressureMapOpts | undefined {
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  return gamma === undefined && deadZone === undefined
+    ? undefined
+    : { gamma, deadZone };
+}
+
 function resamplePathWithAngle(
   points: ReadonlyArray<RenderPathPoint>,
-  stepPx: number
+  stepPx: number,
+  pmap?: PressureMapOpts
 ): SamplePoint[] {
   // Prefer shared resampler if available
   if (StrokeUtil?.resamplePath) {
@@ -42,7 +64,8 @@ function resamplePathWithAngle(
         typeof pts[i].angle === "number"
           ? (pts[i].angle as number)
           : Math.atan2(b.y - a.y, b.x - a.x);
-      out.push({ x: pts[i].x, y: pts[i].y, t: pts[i].t, p: pts[i].p, ang });
+      const p = clamp01(mapPressure(clamp01(pts[i].p), pmap));
+      out.push({ x: pts[i].x, y: pts[i].y, t: pts[i].t, p, ang });
     }
     return out;
   }
@@ -86,7 +109,7 @@ function resamplePathWithAngle(
     const y = a.y + (b.y - a.y) * u;
     const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
     const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
-    const p = lerp(ap, bp, u);
+    const p = clamp01(mapPressure(lerp(ap, bp, u), pmap));
     const ang = Math.atan2(b.y - a.y, b.x - a.x);
     return { x, y, p, ang };
   }
@@ -182,8 +205,13 @@ export default function drawParticle(ctx: Ctx2D, opt: RenderOptions): void {
   const seed = (opt.seed ?? 12345) >>> 0;
   const rng = Rand.mulberry32(seed);
 
+  // Pressure shaping from engine-normalized input
+  const pmap = toPressureMapFromInput(
+    (opt as unknown as { input?: BrushInputConfig }).input
+  );
+
   // Resample the path
-  const samples = resamplePathWithAngle(pts, stepPx);
+  const samples = resamplePathWithAngle(pts, stepPx, pmap);
   if (samples.length < 2) return;
 
   // Offscreen ink (use CSS-size layer; engine already set DPR on parent)

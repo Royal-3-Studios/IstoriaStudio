@@ -1,7 +1,9 @@
+// FILE: src/components/editor/tools/brush/BrushSettings.tsx
 "use client";
 
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
+import { BRUSH_CATEGORIES, BRUSH_BY_ID } from "@/data/brushPresets";
 import type { EngineConfig, RenderOptions } from "@/lib/brush/engine";
 import {
   BRUSH_SECTIONS,
@@ -19,7 +21,7 @@ import {
 import { drawStrokeToCanvas } from "@/lib/brush/engine";
 import { debounce } from "@/lib/shared/timing";
 
-/** Enum-like sets mirrored by select controls (indices map to strings). */
+/* ---------- enums mirrored by select controls (indices map to strings) ---------- */
 const GRAIN_KIND = ["none", "paper", "canvas", "noise"] as const;
 const RIM_MODE = ["auto", "on", "off"] as const;
 const GRAIN_MOTION = ["paperLocked", "tipLocked", "smudgeLocked"] as const;
@@ -32,24 +34,88 @@ const TAPER_PROFILE = [
   "custom",
 ] as const;
 
+/* ---------- deterministic fallbacks so hooks never run conditionally ---------- */
+const FALLBACK_ENGINE: EngineConfig = {
+  backend: "stamping",
+  strokePath: { spacing: 4, jitter: 0, scatter: 0, streamline: 20, count: 1 },
+  shape: { type: "round", softness: 50, sizeScale: 1 },
+  grain: { kind: "none", depth: 0, scale: 1 },
+  rendering: { mode: "marker", wetEdges: false, flow: 100 },
+};
+
+const DEFAULT_PRESET: BrushPreset = {
+  id: "fallback",
+  name: "Fallback Brush",
+  params: [
+    {
+      key: "size",
+      label: "Size",
+      type: "size",
+      defaultValue: 12,
+      min: 1,
+      max: 100,
+      step: 1,
+    },
+    {
+      key: "flow",
+      label: "Flow",
+      type: "flow",
+      defaultValue: 100,
+      min: 0,
+      max: 100,
+      step: 1,
+    },
+    {
+      key: "spacing",
+      label: "Spacing",
+      type: "spacing",
+      defaultValue: 6,
+      min: 0,
+      max: 100,
+      step: 1,
+    },
+    {
+      key: "smoothing",
+      label: "Smoothing",
+      type: "smoothing",
+      defaultValue: 20,
+      min: 0,
+      max: 100,
+      step: 1,
+    },
+  ],
+  engine: FALLBACK_ENGINE,
+};
+
 export function BrushSettings({
   preset,
   values,
   onChangeAction,
   onReset,
 }: {
-  preset: BrushPreset;
-  /** Control values from the UI (sliders/toggles/selects). */
+  /** Optional. Parent can pass nothing or an unknown id; we handle it. */
+  preset?: BrushPreset;
   values: Record<string, number | string>;
   onChangeAction: (patch: Record<string, number | string>) => void;
   onReset?: () => void;
 }) {
+  /* ---------- stable, unconditional inputs ---------- */
   const sections = BRUSH_SECTIONS;
+
+  // Choose a catalog-based fallback once (no conditionals in render path):
+  const CATALOG_FALLBACK =
+    BRUSH_CATEGORIES[0]?.brushes?.[0] ??
+    Object.values(BRUSH_BY_ID ?? {})[0] ??
+    DEFAULT_PRESET;
+
+  // Always resolve a concrete preset (never undefined):
+  const safePreset: BrushPreset = preset ?? CATALOG_FALLBACK;
+
+  /* ---------- hooks (always called, no early returns) ---------- */
   const [activeSection, setActiveSection] = React.useState<SectionDef["id"]>(
-    sections[0].id
+    sections[0]?.id ?? "general"
   );
 
-  /* ---------- Live preview ---------- */
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
 
   /** Build runtime overrides from UI values. */
@@ -58,62 +124,48 @@ export function BrushSettings({
       const v = values;
       const o: Partial<NonNullable<RenderOptions["overrides"]>> = {};
 
-      /* -------- Placement / distribution (runtime) -------- */
-      if (v.spacing != null) o.spacing = Number(v.spacing); // % or fraction (backend clamps)
-      if (v.jitter != null) o.jitter = Number(v.jitter); // path jitter (0..100 UI)
-      if (v.scatter != null) o.scatter = Number(v.scatter); // px
-      if (v.count != null) o.count = Math.max(1, Math.round(Number(v.count)));
+      // NOTE: spacing/jitter/scatter/count are now handled on engine.strokePath
+      // so we intentionally DO NOT mirror them into overrides to avoid conflicts.
 
-      /* -------- Per-stamp jitter -------- */
+      // Per-stamp jitter
       if (v.jitterSize != null)
         o.sizeJitter = clamp01(Number(v.jitterSize) / 100);
-      if (v.jitterAngle != null) {
-        const ja = Number(v.jitterAngle);
-        o.angleJitter = Math.max(0, Math.min(180, ja));
-      }
+      if (v.jitterAngle != null)
+        o.angleJitter = clamp(Number(v.jitterAngle), 0, 180);
 
-      /* -------- Tip & orientation -------- */
-      if (v.angle != null) o.angle = Number(v.angle); // deg
-      if (v.hardness != null) o.softness = 100 - Number(v.hardness); // UI hardness -> engine softness
-      if (v.angleFollowDirection != null) {
-        const afd = Number(v.angleFollowDirection);
-        o.angleFollowDirection = Math.max(0, Math.min(1, afd));
-      }
+      // Tip & orientation
+      if (v.angle != null) o.angle = Number(v.angle);
+      if (v.hardness != null) o.softness = 100 - Number(v.hardness);
+      if (v.angleFollowDirection != null)
+        o.angleFollowDirection = clamp01(Number(v.angleFollowDirection));
 
-      /* -------- Dynamics -------- */
+      // Dynamics
       if (v.flow != null) o.flow = Number(v.flow);
-      if (v.opacity != null)
-        o.opacity = Math.max(0, Math.min(100, Number(v.opacity)));
+      if (v.opacity != null) o.opacity = clamp(Number(v.opacity), 0, 100);
       if (v.buildup != null) o.buildup = !!Number(v.buildup);
       if (v.wetEdges != null) o.wetEdges = !!Number(v.wetEdges);
 
-      /* -------- Grain -------- */
-      if (v.grainKind != null) {
-        const idx = clampIdx(Number(v.grainKind), GRAIN_KIND.length);
-        o.grainKind = GRAIN_KIND[idx];
-      }
+      // Grain
+      if (v.grainKind != null)
+        o.grainKind =
+          GRAIN_KIND[clampIdx(Number(v.grainKind), GRAIN_KIND.length)];
       if (v.grainDepth != null) o.grainDepth = Number(v.grainDepth);
-      if (v.grainScale != null) {
-        // UI uses 100 = 1.0; engine expects ~0.25..4
-        const s = Number(v.grainScale) / 100;
-        o.grainScale = clamp(s, 0.25, 4);
-      }
+      if (v.grainScale != null)
+        o.grainScale = clamp(Number(v.grainScale) / 100, 0.25, 4);
       if (v.grainRotate != null) o.grainRotate = Number(v.grainRotate);
-      if (v.grainMotion != null) {
-        const idx = clampIdx(Number(v.grainMotion), GRAIN_MOTION.length);
-        o.grainMotion = GRAIN_MOTION[idx];
-      }
+      if (v.grainMotion != null)
+        o.grainMotion =
+          GRAIN_MOTION[clampIdx(Number(v.grainMotion), GRAIN_MOTION.length)];
 
-      /* -------- Paper tooth (advanced) -------- */
+      // Paper tooth
       if (v.toothBody != null) o.toothBody = clamp01(Number(v.toothBody));
       if (v.toothFlank != null) o.toothFlank = clamp01(Number(v.toothFlank));
       if (v.toothScale != null) {
         const px = Math.round(Number(v.toothScale));
-        // 0 = auto (backend scales by brush diameter). Else clamp 2..64 px.
         o.toothScale = px <= 0 ? 0 : clamp(px, 2, 64);
       }
 
-      /* -------- Taper & body shaping -------- */
+      // Taper / body shaping
       if (v.tipScaleStart != null)
         o.tipScaleStart = clamp01(Number(v.tipScaleStart));
       if (v.tipScaleEnd != null) o.tipScaleEnd = clamp01(Number(v.tipScaleEnd));
@@ -123,7 +175,7 @@ export function BrushSettings({
       if (v.endBias != null) o.endBias = clamp(Number(v.endBias), -1, 1);
       if (v.uniformity != null) o.uniformity = clamp01(Number(v.uniformity));
 
-      // Friendly aliases (if present in your schema)
+      // Friendly aliases
       if (v.taperStart != null) o.tipScaleStart = clamp01(Number(v.taperStart));
       if (v.taperEnd != null) o.tipScaleEnd = clamp01(Number(v.taperEnd));
       if (v.taperBias != null) o.endBias = clamp(Number(v.taperBias), -1, 1);
@@ -134,16 +186,18 @@ export function BrushSettings({
         o.thicknessCurve = clamp(Number(v.thicknessCurve), 0.2, 3);
 
       // Taper profile enums
-      if (v.taperProfileStart != null) {
-        const idx = clampIdx(Number(v.taperProfileStart), TAPER_PROFILE.length);
-        o.taperProfileStart = TAPER_PROFILE[idx];
-      }
-      if (v.taperProfileEnd != null) {
-        const idx = clampIdx(Number(v.taperProfileEnd), TAPER_PROFILE.length);
-        o.taperProfileEnd = TAPER_PROFILE[idx];
-      }
+      if (v.taperProfileStart != null)
+        o.taperProfileStart =
+          TAPER_PROFILE[
+            clampIdx(Number(v.taperProfileStart), TAPER_PROFILE.length)
+          ];
+      if (v.taperProfileEnd != null)
+        o.taperProfileEnd =
+          TAPER_PROFILE[
+            clampIdx(Number(v.taperProfileEnd), TAPER_PROFILE.length)
+          ];
 
-      // Optional: custom curves, only if you actually feed stringified JSON
+      // Optional JSON curves
       if (
         typeof v.taperProfileStartCurve === "string" &&
         v.taperProfileStartCurve.trim()
@@ -163,7 +217,7 @@ export function BrushSettings({
         } catch {}
       }
 
-      /* -------- Split nibs -------- */
+      // Split nibs
       if (v.splitCount != null)
         o.splitCount = Math.max(1, Math.round(Number(v.splitCount)));
       if (v.splitSpacing != null)
@@ -182,7 +236,7 @@ export function BrushSettings({
       if (v.tiltToSplitFan != null)
         o.tiltToSplitFan = clamp(Number(v.tiltToSplitFan), -45, 45);
 
-      /* -------- Speed dynamics -------- */
+      // Speed dynamics
       if (v.speedToWidth != null)
         o.speedToWidth = clamp(Number(v.speedToWidth), -1, 1);
       if (v.speedToFlow != null)
@@ -193,7 +247,7 @@ export function BrushSettings({
           Math.round(Number(v.speedSmoothingMs))
         );
 
-      /* -------- Tilt routing -------- */
+      // Tilt routing
       if (v.tiltToSize != null)
         o.tiltToSize = clamp(Number(v.tiltToSize), -1, 1);
       if (v.tiltToFan != null) o.tiltToFan = clamp(Number(v.tiltToFan), -1, 1);
@@ -202,7 +256,7 @@ export function BrushSettings({
       if (v.tiltToEdgeNoise != null)
         o.tiltToEdgeNoise = clamp(Number(v.tiltToEdgeNoise), -1, 1);
 
-      /* -------- Edge noise / dry fringe -------- */
+      // Edge noise / dry fringe
       if (v.edgeNoiseStrength != null)
         o.edgeNoiseStrength = clamp01(Number(v.edgeNoiseStrength));
       if (v.edgeNoiseScale != null)
@@ -210,28 +264,23 @@ export function BrushSettings({
       if (v.dryThreshold != null)
         o.dryThreshold = clamp01(Number(v.dryThreshold));
 
-      /* -------- Pencil rim / lighting -------- */
+      // Pencil rim / lighting
       if (v.rimStrength != null) o.rimStrength = clamp01(Number(v.rimStrength));
-      if (v.rimMode != null) {
-        const idx = clampIdx(Number(v.rimMode), RIM_MODE.length);
-        o.rimMode = RIM_MODE[idx];
-      }
+      if (v.rimMode != null)
+        o.rimMode = RIM_MODE[clampIdx(Number(v.rimMode), RIM_MODE.length)];
       if (v.bgIsLight != null) o.bgIsLight = !!Number(v.bgIsLight);
 
-      /* -------- Backend-specific knobs we added -------- */
-      // Smudge
+      // Backend-specific
       if (v.smudgeStrength != null) o.smudgeStrength = Number(v.smudgeStrength);
       if (v.smudgeAlpha != null) o.smudgeAlpha = Number(v.smudgeAlpha);
       if (v.smudgeBlur != null) o.smudgeBlur = Number(v.smudgeBlur);
       if (v.smudgeSpacing != null) o.smudgeSpacing = Number(v.smudgeSpacing);
 
-      // Stamping internals
       if (v.innerGrainAlpha != null)
         o.innerGrainAlpha = clamp01(Number(v.innerGrainAlpha));
       if (v.edgeCarveAlpha != null)
         o.edgeCarveAlpha = clamp01(Number(v.edgeCarveAlpha));
 
-      // Ribbon / general
       if (v.coreStrength != null) o.coreStrength = Number(v.coreStrength);
       if (v.centerlinePencil != null)
         o.centerlinePencil = !!Number(v.centerlinePencil);
@@ -239,38 +288,38 @@ export function BrushSettings({
       return o;
     }, [values]);
 
-  // Build preview EngineConfig by merging UI values into the preset engine
+  // Merge UI values into the base engine for preview
   const previewEngine: EngineConfig = React.useMemo(() => {
-    const src = preset.engine;
+    const src = safePreset.engine ?? FALLBACK_ENGINE;
 
-    // Stroke path (make a copy; only set keys the user might be adjusting)
+    // Ensure spacing/jitter/scatter/count live on strokePath (percent-based spacing)
     const strokePath = {
       ...src.strokePath,
-      ...(values.spacing != null ? { spacing: Number(values.spacing) } : {}),
+      ...(values.spacing != null
+        ? { spacing: Math.round(Number(values.spacing)) }
+        : {}),
       ...(values.jitter != null ? { jitter: Number(values.jitter) } : {}),
       ...(values.scatter != null ? { scatter: Number(values.scatter) } : {}),
       ...(values.count != null
         ? { count: Math.max(1, Math.round(Number(values.count))) }
         : {}),
-      // UI "smoothing" maps to engine.streamline (percentage)
       ...(values.smoothing != null
         ? { streamline: Number(values.smoothing) }
         : {}),
     };
 
-    // Shape
     const shape = {
       ...src.shape,
       ...(values.angle != null ? { angle: Number(values.angle) } : {}),
-      // If you want hardness to affect physical stamp softness, uncomment:
+      // If you want hardness->softness mapping at engine level:
       // ...(values.hardness != null ? { softness: 100 - Number(values.hardness) } : {}),
     };
 
-    // Grain (some backends read engine.grain directly, not runtime overrides)
     const gkIdx =
       values.grainKind != null
         ? clampIdx(Number(values.grainKind), GRAIN_KIND.length)
         : -1;
+
     const grain = {
       ...src.grain,
       ...(gkIdx >= 0 ? { kind: GRAIN_KIND[gkIdx] } : {}),
@@ -285,47 +334,36 @@ export function BrushSettings({
         : {}),
     };
 
-    // Rendering
     const rendering = {
       ...src.rendering,
       ...(values.wetEdges != null
         ? { wetEdges: !!Number(values.wetEdges) }
         : {}),
       ...(values.flow != null ? { flow: Number(values.flow) } : {}),
-      // Note: opacity is often applied at final composite; many backends
-      // read it from runtime overrides, but we can mirror here if desired.
     };
 
-    // Engine-level overrides (merge preset + runtime)
-    const engineOverrides = {
-      ...src.overrides,
-      ...runtimeOverrides,
-    };
-
-    const merged: EngineConfig = {
+    return {
       ...src,
       strokePath,
       shape,
       grain,
       rendering,
-      overrides: engineOverrides,
+      overrides: { ...src.overrides, ...runtimeOverrides },
     };
+  }, [safePreset, values, runtimeOverrides]);
 
-    return merged;
-  }, [preset.engine, values, runtimeOverrides]);
-
-  // Derive preview brush size (keep small for perf)
+  // Preview brush size
   const sizeParam = React.useMemo(
-    () => preset.params.find((p) => p.type === "size"),
-    [preset.params]
+    () => safePreset.params.find((p) => p.type === "size"),
+    [safePreset]
   );
   const baseSizePx = React.useMemo(() => {
     const uiSize = Number(values.size ?? sizeParam?.defaultValue ?? 12);
     const scale = previewEngine.shape?.sizeScale ?? 1;
     return clamp(Math.round(uiSize * scale), 2, 28);
-  }, [values.size, sizeParam?.defaultValue, previewEngine.shape?.sizeScale]);
+  }, [values.size, sizeParam, previewEngine.shape?.sizeScale]);
 
-  // Debounced preview renderer
+  // Debounced renderer (stable ref)
   const debouncedRenderPreview = React.useRef(
     debounce(
       (canvas: HTMLCanvasElement, opts: RenderOptions) => {
@@ -336,6 +374,7 @@ export function BrushSettings({
     )
   ).current;
 
+  // Always run effect; it no-ops if canvas missing
   React.useEffect(() => {
     const canvasEl = canvasRef.current;
     if (!canvasEl) return;
@@ -354,7 +393,7 @@ export function BrushSettings({
         l: Number(values.brightJitter ?? 0),
         perStamp: !!Number(values.perStamp),
       },
-      overrides: runtimeOverrides, // still pass runtime overrides for backends that honor them
+      overrides: runtimeOverrides,
     };
 
     debouncedRenderPreview(canvasEl, opts);
@@ -375,6 +414,7 @@ export function BrushSettings({
     };
   }, [debouncedRenderPreview]);
 
+  /* ---------- UI ---------- */
   return (
     <div className="space-y-2">
       {/* Preview strip */}
@@ -427,7 +467,7 @@ export function BrushSettings({
         </Select>
 
         <SectionPanel
-          section={sections.find((s) => s.id === activeSection)!}
+          section={sections.find((s) => s.id === activeSection) ?? sections[0]}
           values={values}
           onChangeAction={onChangeAction}
         />

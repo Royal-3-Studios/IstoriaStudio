@@ -13,13 +13,15 @@ import type {
   RenderOverrides,
   RenderPathPoint,
 } from "@/lib/brush/engine";
+import { Rand, Texture, CanvasUtil, Blend } from "@backends";
+
+// Input + stroke utilities
+import type { BrushInputConfig } from "@/data/brushPresets";
+import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 import {
-  Rand,
-  Stroke as StrokeUtil,
-  Texture,
-  CanvasUtil,
-  Blend,
-} from "@backends";
+  pathToStamps,
+  type TaperProfile,
+} from "@/lib/brush/backends/utils/stroke";
 
 type Ctx2D = CanvasUtil.Ctx2D;
 
@@ -113,67 +115,28 @@ function pressureToFlowScale(p01: number) {
 
 /* ============================== Sampling along path ============================ */
 
+// Stamp→sample adaptor used by the rest of this backend
 type SamplePoint = { x: number; y: number; t: number; p: number };
 
-function resamplePath(
-  points: ReadonlyArray<RenderPathPoint>,
-  stepPx: number
-): SamplePoint[] {
-  if (StrokeUtil?.resamplePath) {
-    return StrokeUtil.resamplePath(
-      points as RenderPathPoint[],
-      stepPx
-    ) as SamplePoint[];
-  }
+// Allow the engine to pass normalized input (added in engine.ts)
+type ExtRenderOptions = RenderOptions & { input?: BrushInputConfig };
 
-  const out: SamplePoint[] = [];
-  if (!points || points.length < 2) return out;
-
-  const N = points.length;
-  const segLen: number[] = new Array(N).fill(0);
-  let total = 0;
-  for (let i = 1; i < N; i++) {
-    const dx = points[i].x - points[i - 1].x;
-    const dy = points[i].y - points[i - 1].y;
-    const L = Math.hypot(dx, dy);
-    segLen[i] = L;
-    total += L;
-  }
-  if (total <= 0) return out;
-
-  const prefix: number[] = new Array(N).fill(0);
-  for (let i = 1; i < N; i++) prefix[i] = prefix[i - 1] + segLen[i];
-
-  function posAt(sArc: number) {
-    const s = Math.max(0, Math.min(total, sArc));
-    let idx = 1;
-    while (idx < N && prefix[idx] < s) idx++;
-    const i0 = Math.max(1, idx);
-    const prevS = prefix[i0 - 1];
-    const L = segLen[i0];
-    const u = L > 0 ? (s - prevS) / L : 0;
-
-    const a = points[i0 - 1];
-    const b = points[i0];
-    const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
-    const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
-    const p = lerp(ap, bp, u);
-
-    return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, p };
-  }
-
-  const first = posAt(0);
-  out.push({ x: first.x, y: first.y, t: 0, p: first.p });
-
-  const step = Math.max(0.3, Math.min(0.75, stepPx));
-  for (let s = step; s < total; s += step) {
-    const p = posAt(s);
-    out.push({ x: p.x, y: p.y, t: s / total, p: p.p });
-  }
-  const last = posAt(total);
-  out.push({ x: last.x, y: last.y, t: 1, p: last.p });
-
-  return out;
+// Build a light PressureMap from input curve/clamp (all optional)
+function toPressureMapFromInput(
+  input?: BrushInputConfig
+): PressureMapOpts | undefined {
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  // gain is optional; defaults to 1 inside mapPressure
+  if (gamma === undefined && deadZone === undefined) return undefined;
+  return { gamma, deadZone };
 }
 
 /* ============================== Render ======================================== */
@@ -202,24 +165,66 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   const seed = (options.seed ?? 42) >>> 0;
   const rng = Rand.mulberry32(seed);
 
-  // Spacing from UI/overrides (shared Stroke util if present)
-  const uiSpacing =
-    options.engine.strokePath?.spacing ?? options.engine.overrides?.spacing;
-  const spacingFrac = StrokeUtil?.resolveSpacingFraction
-    ? StrokeUtil.resolveSpacingFraction(uiSpacing, 3)
-    : (() => {
-        const raw = typeof uiSpacing === "number" ? uiSpacing : 3;
-        const frac = raw > 1 ? raw / 100 : raw;
-        return Math.max(0.02, Math.min(0.08, frac));
-      })();
-  const resampleStepPx = Math.max(
-    0.3,
-    Math.min(0.75, baseSizePx * spacingFrac)
-  );
-  const samples = resamplePath(pts, resampleStepPx);
+  // ---- NEW: sample with pathToStamps so input.quality & pressureMap take effect
+  const ext = options as ExtRenderOptions;
+  const pmap = toPressureMapFromInput(ext.input);
+  const iq = {
+    predictPx: ext.input?.quality?.predictPx,
+    speedToSpacing: ext.input?.quality?.speedToSpacing,
+    minStepPx: ext.input?.quality?.minStepPx,
+  };
+
+  // Spacing/jitter/scatter/count/streamline from engine (with sane fallbacks)
+  const spacingPercent =
+    options.engine.strokePath?.spacing ?? overrides.spacing ?? 4; // UI spacing is percent
+  const jitterPercent =
+    (options.engine.strokePath?.jitter ?? overrides.jitter ?? 0.5) * 100; // stroke.ts expects %
+  const scatterPx =
+    options.engine.strokePath?.scatter ?? overrides.scatter ?? 0;
+  const stampsPerStep =
+    options.engine.strokePath?.count ?? overrides.count ?? 1;
+  const streamline = options.engine.strokePath?.streamline ?? 0;
+
+  // Taper/body knobs (these are already in overrides)
+  const tipScaleStart = overrides.tipScaleStart ?? 0.85;
+  const tipScaleEnd = overrides.tipScaleEnd ?? 0.85;
+  const taperProfileStart = (overrides.taperProfileStart ??
+    "linear") as TaperProfile;
+  const taperProfileEnd = (overrides.taperProfileEnd ??
+    "linear") as TaperProfile;
+
+  const stamps = pathToStamps(pts as RenderPathPoint[], {
+    baseSizePx,
+    spacingPercent,
+    jitterPercent,
+    scatterPx,
+    stampsPerStep,
+    streamline,
+    angleFollowDirection: overrides.angleFollowDirection ?? 0,
+    angleJitterDeg: overrides.angleJitter ?? 0,
+    tipMinPx: overrides.tipMinPx ?? 0,
+    tipScaleStart,
+    tipScaleEnd,
+    taperProfileStart,
+    taperProfileEnd,
+    endBias: overrides.endBias ?? 0,
+    uniformity: overrides.uniformity ?? 0,
+    rng, // stable
+    pressureMap: pmap,
+    inputQuality: iq,
+  });
+
+  // Adapt to the structure this backend expects (x,y,t,p)
+  const samples: SamplePoint[] = stamps.map((s) => ({
+    x: s.x,
+    y: s.y,
+    t: s.t,
+    p: s.pressure,
+  }));
+
   if (samples.length < 2) return;
 
-  // Gates per segment
+  // Gates per segment (unchanged)
   type Gate = {
     tMid: number;
     bellyProgress: number;
@@ -247,8 +252,8 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     (grainKind === "noise" && shapeType !== "round");
 
   // v34 taper/body knobs (safe clamps)
-  const tipStart = clamp01(overrides.tipScaleStart ?? 0.85);
-  const tipEnd = clamp01(overrides.tipScaleEnd ?? 0.85);
+  const tipStart = clamp01(tipScaleStart);
+  const tipEnd = clamp01(tipScaleEnd);
   const tipMinPx = Math.max(0, overrides.tipMinPx ?? 0);
   const bellyGain = Math.max(0.5, overrides.bellyGain ?? 1.0);
   const endBias = Math.max(-1, Math.min(1, overrides.endBias ?? 0));

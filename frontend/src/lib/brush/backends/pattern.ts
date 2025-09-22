@@ -21,10 +21,34 @@ import {
   Texture as TexUtil,
 } from "@backends";
 
+import type { BrushInputConfig } from "@/data/brushPresets";
+import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
+
 type Ctx2D = CanvasUtil.Ctx2D;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/* ========================================================================== *
+ * Pressure map from input
+ * ========================================================================== */
+
+function toPressureMapFromInput(
+  input?: BrushInputConfig
+): PressureMapOpts | undefined {
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  return gamma === undefined && deadZone === undefined
+    ? undefined
+    : { gamma, deadZone };
+}
 
 /* ========================================================================== *
  * Path resampling (prefers shared StrokeUtil)
@@ -34,7 +58,8 @@ type SamplePoint = { x: number; y: number; t: number; p: number; ang: number };
 
 function resamplePathWithAngle(
   points: ReadonlyArray<RenderPathPoint>,
-  stepPx: number
+  stepPx: number,
+  pmap?: PressureMapOpts
 ): SamplePoint[] {
   if (StrokeUtil?.resamplePath) {
     const pts = StrokeUtil.resamplePath(
@@ -49,7 +74,8 @@ function resamplePathWithAngle(
         typeof pts[i].angle === "number"
           ? (pts[i].angle as number)
           : Math.atan2(b.y - a.y, b.x - a.x);
-      out.push({ x: pts[i].x, y: pts[i].y, t: pts[i].t, p: pts[i].p, ang });
+      const p = clamp01(mapPressure(clamp01(pts[i].p), pmap));
+      out.push({ x: pts[i].x, y: pts[i].y, t: pts[i].t, p, ang });
     }
     return out;
   }
@@ -93,7 +119,7 @@ function resamplePathWithAngle(
     const y = a.y + (b.y - a.y) * u;
     const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
     const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
-    const p = lerp(ap, bp, u);
+    const p = clamp01(mapPressure(lerp(ap, bp, u), pmap));
     const ang = Math.atan2(b.y - a.y, b.x - a.x);
     return { x, y, p, ang };
   }
@@ -234,7 +260,12 @@ export default function drawPattern(ctx: Ctx2D, opt: RenderOptions): void {
     Math.min(2.2, baseRadius * spacingFrac)
   );
 
-  const samples = resamplePathWithAngle(pts, resampleStepPx);
+  // Pressure shaping from engine-normalized input
+  const pmap = toPressureMapFromInput(
+    (opt as unknown as { input?: BrushInputConfig }).input
+  );
+
+  const samples = resamplePathWithAngle(pts, resampleStepPx, pmap);
   if (samples.length < 2) return;
 
   // Pressure -> width scaling
@@ -370,7 +401,7 @@ export default function drawPattern(ctx: Ctx2D, opt: RenderOptions): void {
 
   lx.restore();
 
-  // Composite to destination
+  // Composite to destination (engine will still apply global blend/opacity)
   Blend.withCompositeAndAlpha(ctx, composite, opacity01, () => {
     ctx.drawImage(layer, 0, 0);
   });

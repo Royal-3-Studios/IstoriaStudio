@@ -34,6 +34,10 @@ import drawSmudge, { drawSmudgeToCanvas } from "./backends/smudge";
 import drawParticle, { drawParticleToCanvas } from "./backends/particle";
 import drawPattern, { drawPatternToCanvas } from "./backends/pattern";
 
+// NEW: input config plumbed through engine (pressure curve, smoothing, etc.)
+import type { BrushInputConfig } from "@/data/brushPresets";
+import { DEFAULT_INPUT } from "@/lib/brush/input";
+
 /* ========================================================================== */
 /*                                    Types                                   */
 /* ========================================================================== */
@@ -97,8 +101,7 @@ export type EngineRendering = {
 };
 
 /**
- * Step-4: added predictive spacing + velocity-aware spacing knobs.
- * These are purely optional; backends consume them via stroke.ts helpers.
+ * RenderOverrides also carry input-quality knobs for backends (predictPx / speedToSpacing / minStepPx).
  */
 export type RenderOverrides = {
   /* Placement & distribution */
@@ -205,12 +208,12 @@ export type RenderOverrides = {
   innerGrainAlpha?: number; // 0..1
   edgeCarveAlpha?: number; // 0..1
 
-  /* ------- NEW (Step-4) input quality knobs ------- */
+  /* ------- Input quality knobs (consumed by stroke samplers) ------- */
   /** Predictive forward nudge in CSS px (0 disables). */
   predictPx?: number;
   /**
    * Velocity → spacing gain (−0.3..+0.5). Positive loosens spacing at speed,
-   * negative tightens. Backends pass to stroke.ts modulated stepping.
+   * negative tightens. Backends pass to stroke.ts stepping modulation.
    */
   speedToSpacing?: number;
   /** Minimum absolute step in px after modulation. */
@@ -254,6 +257,9 @@ export type RenderOptions = {
   colorJitter?: { h?: number; s?: number; l?: number; perStamp?: boolean };
   /** Per-stroke runtime overrides (merged over engine.overrides). */
   overrides?: Partial<RenderOverrides>;
+
+  /** NEW: optional per-preset input metadata (pressure curve, smoothing, sampling) */
+  input?: BrushInputConfig;
 };
 
 /* ========================================================================== */
@@ -461,7 +467,7 @@ function mergeOverrides(
     smudgeBlur: 0,
     smudgeSpacing: 6,
 
-    /* NEW input-quality defaults (safe no-ops) */
+    /* Input-quality */
     predictPx: 0,
     speedToSpacing: 0,
     minStepPx: 0.5,
@@ -577,7 +583,7 @@ function mergeOverrides(
     smudgeBlur: u.smudgeBlur ?? e.smudgeBlur ?? DEF.smudgeBlur,
     smudgeSpacing: u.smudgeSpacing ?? e.smudgeSpacing ?? DEF.smudgeSpacing,
 
-    /* NEW input-quality */
+    /* Input-quality */
     predictPx: u.predictPx ?? e.predictPx ?? DEF.predictPx,
     speedToSpacing: u.speedToSpacing ?? e.speedToSpacing ?? DEF.speedToSpacing,
     minStepPx: u.minStepPx ?? e.minStepPx ?? DEF.minStepPx,
@@ -600,6 +606,29 @@ function normalizeEngineConfig(
   };
 }
 
+function ensureInput(input?: BrushInputConfig): BrushInputConfig {
+  // Shallow, defensive merge against defaults
+  return {
+    pressure: {
+      clamp: {
+        min: input?.pressure?.clamp?.min ?? DEFAULT_INPUT.pressure.clamp.min,
+        max: input?.pressure?.clamp?.max ?? DEFAULT_INPUT.pressure.clamp.max,
+      },
+      curve: input?.pressure?.curve ?? DEFAULT_INPUT.pressure.curve,
+      smoothing: input?.pressure?.smoothing ?? DEFAULT_INPUT.pressure.smoothing,
+      velocityComp:
+        input?.pressure?.velocityComp ?? DEFAULT_INPUT.pressure.velocityComp,
+      synth: input?.pressure?.synth ?? DEFAULT_INPUT.pressure.synth,
+    },
+    quality: {
+      predictPx: input?.quality?.predictPx ?? DEFAULT_INPUT.quality.predictPx,
+      speedToSpacing:
+        input?.quality?.speedToSpacing ?? DEFAULT_INPUT.quality.speedToSpacing,
+      minStepPx: input?.quality?.minStepPx ?? DEFAULT_INPUT.quality.minStepPx,
+    },
+  };
+}
+
 function normalizeOptions(opt: RenderOptions): RenderOptions & {
   engine: Required<EngineConfig>;
   pixelRatio: number;
@@ -607,6 +636,7 @@ function normalizeOptions(opt: RenderOptions): RenderOptions & {
   height: number;
   baseSizePx: number;
   color: string;
+  input: BrushInputConfig;
 } {
   const engine = normalizeEngineConfig(opt.engine);
   const pixelRatio = resolveDevicePixelRatio(opt.pixelRatio);
@@ -617,6 +647,9 @@ function normalizeOptions(opt: RenderOptions): RenderOptions & {
 
   // Merge runtime overrides on top of normalized engine overrides
   const overrides = mergeOverrides(engine.overrides, opt.overrides);
+
+  // Resolve input config (pressure curve + quality)
+  const input = ensureInput(opt.input);
 
   return {
     ...opt,
@@ -629,6 +662,7 @@ function normalizeOptions(opt: RenderOptions): RenderOptions & {
       ...engine,
       overrides,
     },
+    input,
   };
 }
 
@@ -797,9 +831,14 @@ export async function drawStrokeToCanvas(
     rngFactory: (s) => mulberry32(s),
   });
 
-  // Extend the options object you pass to backends with BrushContext
-  const optWithCtx = { ...nopt, brushCtx } as typeof nopt & {
+  // Extend the options object you pass to backends with BrushContext + Input
+  const optWithCtx = {
+    ...nopt,
+    brushCtx,
+    input: nopt.input, // <-- backends can consume pressure curve / quality now
+  } as typeof nopt & {
     brushCtx: typeof brushCtx;
+    input: BrushInputConfig;
   };
 
   const backend = chooseBackend(nopt);
@@ -891,3 +930,4 @@ export async function drawStrokeToCanvas(
 /** Backward-compatible alias */
 export const renderBrushPreview = drawStrokeToCanvas;
 export default drawStrokeToCanvas;
+export type NormalizedRenderOptions = ReturnType<typeof normalizeOptions>;

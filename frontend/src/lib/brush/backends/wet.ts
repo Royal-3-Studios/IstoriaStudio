@@ -5,10 +5,11 @@
  *
  * - Reads: baseSizePx, overrides.flow/opacity, engine.rendering.wetEdges
  * - Input: opt.path (x,y,angle?,pressure?)
- * - Output: draws into given canvas (DPR-aware)
+ * - Output: draws into given canvas (DPR handled by engine; draw in CSS space)
  */
 
 import type { RenderOptions } from "../engine";
+import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
 /* ========================================================================== *
  * Small utilities (fully typed)
@@ -182,34 +183,39 @@ function paintDab(
 }
 
 /* ========================================================================== *
- * Main renderer (canvas-based; handles its own DPR)
+ * Input mapping helpers (pressure curve + predictive nudge)
+ * ========================================================================== */
+
+function toPressureMapFromInput(
+  opt: RenderOptions
+): PressureMapOpts | undefined {
+  const input = opt.input;
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  if (gamma === undefined && deadZone === undefined) return undefined;
+  return { gamma, deadZone };
+}
+
+/* ========================================================================== *
+ * Main renderer (draw in CSS space; DPR handled by engine)
  * ========================================================================== */
 
 export async function drawWetToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   opt: RenderOptions
 ): Promise<void> {
-  // DPR + sizing
-  const dpr: number =
-    typeof window !== "undefined"
-      ? Math.min(opt.pixelRatio ?? window.devicePixelRatio ?? 1, 2)
-      : Math.max(1, opt.pixelRatio ?? 1);
+  const ctx = getCtx2D(canvas);
 
+  // Engine has already set DPR transform on this context; draw in CSS space.
   const viewW: number = Math.max(1, Math.floor(opt.width));
   const viewH: number = Math.max(1, Math.floor(opt.height));
-
-  if (
-    typeof HTMLCanvasElement !== "undefined" &&
-    canvas instanceof HTMLCanvasElement
-  ) {
-    canvas.style.width = `${viewW}px`;
-    canvas.style.height = `${viewH}px`;
-  }
-  canvas.width = Math.max(1, Math.floor(viewW * dpr));
-  canvas.height = Math.max(1, Math.floor(viewH * dpr));
-
-  const ctx = getCtx2D(canvas);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
@@ -240,9 +246,42 @@ export async function drawWetToCanvas(
       ? (opt.path as InputPoint[])
       : createDefaultPreviewPath(viewW, viewH);
 
+  // Resample (uniform arc length)
   const arcStep: number = Math.max(0.42, baseRadius * 0.18);
-  const samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
+  let samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
   if (!samples.length) return;
+
+  // Predictive nudge (from input.quality.predictPx); fade toward tips.
+  const predictPx = Math.max(
+    0,
+    Math.min(24, opt.input?.quality?.predictPx ?? 0)
+  );
+  if (predictPx > 0 && samples.length >= 2) {
+    const totalLen = samples[samples.length - 1].arcLen || 1;
+    samples = samples.map((s, i) => {
+      const prev = i > 0 ? samples[i - 1] : s;
+      const next = i < samples.length - 1 ? samples[i + 1] : s;
+      const ang = Math.atan2(next.y - prev.y, next.x - prev.x);
+      const u = s.arcLen / totalLen;
+      const fade = 1 - 4 * Math.pow(u - 0.5, 2); // bell 0..1..0
+      const k = predictPx * Math.max(0, fade);
+      return {
+        x: s.x + Math.cos(ang) * k,
+        y: s.y + Math.sin(ang) * k,
+        angle: s.angle,
+        pressure: s.pressure,
+        arcLen: s.arcLen,
+      };
+    });
+  }
+
+  // Pressure mapping (gamma/deadZone) from input curve/clamp
+  const pmap = toPressureMapFromInput(opt);
+  if (pmap) {
+    for (let i = 0; i < samples.length; i++) {
+      samples[i].pressure = clamp01(mapPressure(samples[i].pressure, pmap));
+    }
+  }
 
   /* A) Accumulate mask (wet pigment deposit, grayscale) */
   const mask = createCanvas(viewW, viewH);

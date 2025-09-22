@@ -1,3 +1,4 @@
+// FILE: src/lib/painting/layers.ts
 // Minimal in-memory layer stack with composite, resize, and snapshot helpers.
 
 export type BlendMode = GlobalCompositeOperation;
@@ -23,9 +24,20 @@ export interface LayerStack {
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
+function isCtx2D(ctx: unknown): ctx is Ctx2D {
+  if (!ctx || typeof ctx !== "object") return false;
+  const c = ctx as Partial<CanvasRenderingContext2D>;
+  return (
+    typeof c.clearRect === "function" &&
+    typeof c.drawImage === "function" &&
+    typeof c.getImageData === "function" &&
+    typeof c.setTransform === "function"
+  );
+}
+
 function get2D(c: HTMLCanvasElement | OffscreenCanvas): Ctx2D {
-  const ctx = c.getContext("2d") as Ctx2D | null;
-  if (!ctx) throw new Error("2D context unavailable");
+  const ctx = c.getContext("2d", { alpha: true }) as Ctx2D | null;
+  if (!isCtx2D(ctx)) throw new Error("2D context unavailable");
   return ctx;
 }
 
@@ -71,8 +83,9 @@ export function addLayer(
   name: string,
   opts?: Partial<Pick<Layer, "opacity" | "blend" | "visible">>
 ): Layer {
-  const id = (globalThis.crypto?.randomUUID?.() ??
-    String(Date.now() + Math.random())) as string;
+  const id =
+    (globalThis as unknown as { crypto?: Crypto }).crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
 
   const { w, h } = pixelSize(stack.width, stack.height, stack.dpr);
   const canvas = createCanvas(w, h);
@@ -221,11 +234,12 @@ export type LayerSnapshot = ImageBitmap | ImageData;
 export async function snapshotLayer(layer: Layer): Promise<LayerSnapshot> {
   const c = layer.canvas;
   if (typeof createImageBitmap === "function") {
-    return await createImageBitmap(c);
+    // ImageBitmap preserves premultiplied alpha and is fast to copy/composite
+    return await createImageBitmap(c as unknown as CanvasImageSource);
   }
   const ctx = c.getContext("2d");
   if (!ctx) throw new Error("2D context unavailable for snapshot");
-  return ctx.getImageData(
+  return (ctx as CanvasRenderingContext2D).getImageData(
     0,
     0,
     (c as HTMLCanvasElement | OffscreenCanvas).width,
@@ -242,9 +256,9 @@ export function restoreLayer(layer: Layer, snap: LayerSnapshot): void {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  if (snap instanceof ImageData) {
+  if (typeof ImageData !== "undefined" && snap instanceof ImageData) {
     (ctx as CanvasRenderingContext2D).putImageData(snap, 0, 0);
   } else {
-    ctx.drawImage(snap, 0, 0);
+    ctx.drawImage(snap as unknown as CanvasImageSource, 0, 0);
   }
 }

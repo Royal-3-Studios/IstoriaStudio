@@ -9,10 +9,34 @@
 import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
 import { Rand, Stroke as StrokeUtil, CanvasUtil, Blend } from "@backends";
 
+import type { BrushInputConfig } from "@/data/brushPresets";
+import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
+
 type Ctx2D = CanvasUtil.Ctx2D;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/* ============================================================================
+ * Pressure mapping from normalized input
+ * ========================================================================== */
+
+function toPressureMapFromInput(
+  input?: BrushInputConfig
+): PressureMapOpts | undefined {
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  return gamma === undefined && deadZone === undefined
+    ? undefined
+    : { gamma, deadZone };
+}
 
 /* ============================================================================
  * Path resampling (arc-length)
@@ -22,7 +46,8 @@ type Sample = { x: number; y: number; t: number; p: number; ang: number };
 
 function resamplePath(
   pts: ReadonlyArray<RenderPathPoint>,
-  stepPx: number
+  stepPx: number,
+  pmap?: PressureMapOpts
 ): Sample[] {
   if (StrokeUtil?.resamplePath) {
     const base = StrokeUtil.resamplePath(
@@ -38,7 +63,8 @@ function resamplePath(
         typeof base[i].angle === "number"
           ? (base[i].angle as number)
           : Math.atan2(b.y - a.y, b.x - a.x);
-      out.push({ x: base[i].x, y: base[i].y, t: base[i].t, p: base[i].p, ang });
+      const p = clamp01(mapPressure(clamp01(base[i].p), pmap));
+      out.push({ x: base[i].x, y: base[i].y, t: base[i].t, p, ang });
     }
     return out;
   }
@@ -82,7 +108,7 @@ function resamplePath(
     const y = a.y + (b.y - a.y) * u;
     const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
     const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
-    const p = lerp(ap, bp, u);
+    const p = clamp01(mapPressure(lerp(ap, bp, u), pmap));
     const ang = Math.atan2(b.y - a.y, b.x - a.x);
     return { x, y, p, ang };
   }
@@ -229,8 +255,13 @@ export async function drawImpasto(
         return raw > 1 ? clamp01(raw / 100) : clamp01(raw);
       })();
 
+  // Pressure shaping from engine-normalized input
+  const pmap = toPressureMapFromInput(
+    (opt as unknown as { input?: BrushInputConfig }).input
+  );
+
   const stepPx = Math.max(0.5, Math.min(2.2, baseSizePx * spacingFrac));
-  const samples = resamplePath(path, stepPx);
+  const samples = resamplePath(path, stepPx, pmap);
   if (!samples.length) return;
 
   const seed = (opt.seed ?? 4242) >>> 0;
@@ -255,7 +286,6 @@ export async function drawImpasto(
     const alpha = pressureToAlpha(pMid) * (0.82 + 0.18 * rand());
 
     hx.globalAlpha = alpha;
-    // cast for `fillStyle`/`strokeStyle` when TS lib doesn't include on Offscreen 2D
     (hx as CanvasRenderingContext2D).strokeStyle = color;
     hx.lineWidth = Math.max(0.5, r * 2);
     hx.beginPath();

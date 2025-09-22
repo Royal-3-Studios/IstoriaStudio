@@ -13,32 +13,68 @@
  *   smudgeBlur     (px)    extra blur
  *   smudgeSpacing  (%)     overrides spacing
  *
- * NOTE: This backend expects the context to already contain the image you want
- * to smudge. In the main painting pipeline, call this on a layer with artwork;
- * in previews you’ll typically skip smudge.
+ * NOTE: The engine already sized the canvas layer and applied DPR. Draw in CSS space.
  */
 
 import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
 import { Stroke as StrokeUtil, CanvasUtil } from "@backends";
+
+import type { BrushInputConfig } from "@/data/brushPresets";
+import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
 type Ctx2D = CanvasUtil.Ctx2D;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+/* ========================================================================== *
+ * Pressure map from input
+ * ========================================================================== */
+
+function toPressureMapFromInput(
+  input?: BrushInputConfig
+): PressureMapOpts | undefined {
+  if (!input) return undefined;
+  const gamma =
+    input.pressure.curve?.type === "gamma"
+      ? input.pressure.curve.gamma
+      : undefined;
+  const deadZone =
+    typeof input.pressure.clamp?.min === "number"
+      ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
+      : undefined;
+  return gamma === undefined && deadZone === undefined
+    ? undefined
+    : { gamma, deadZone };
+}
+
+/* ========================================================================== *
+ * Path resampling (prefers shared StrokeUtil; shapes pressure with mapPressure)
+ * ========================================================================== */
+
 type SamplePoint = { x: number; y: number; t: number; p: number };
 
 function resamplePath(
   points: ReadonlyArray<RenderPathPoint>,
-  stepPx: number
+  stepPx: number,
+  pmap?: PressureMapOpts
 ): SamplePoint[] {
+  // Prefer shared util if present
   if (StrokeUtil?.resamplePath) {
-    return StrokeUtil.resamplePath(
+    const base = StrokeUtil.resamplePath(
       points as RenderPathPoint[],
       stepPx
-    ) as SamplePoint[];
+    ) as Array<{ x: number; y: number; t: number; p: number }>;
+    // Shape pressure through the shared map
+    return base.map((s) => ({
+      x: s.x,
+      y: s.y,
+      t: s.t,
+      p: clamp01(mapPressure(clamp01(s.p), pmap)),
+    }));
   }
 
+  // Local fallback
   const out: SamplePoint[] = [];
   if (!points || points.length < 2) return out;
 
@@ -68,9 +104,11 @@ function resamplePath(
 
     const a = points[i0 - 1];
     const b = points[i0];
+
     const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
     const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
-    const p = lerp(ap, bp, u);
+    const pRaw = lerp(ap, bp, u);
+    const p = clamp01(mapPressure(pRaw, pmap));
 
     return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, p };
   }
@@ -123,10 +161,15 @@ export default function drawSmudge(ctx: Ctx2D, opt: RenderOptions): void {
       })();
   const stepPx = Math.max(0.8, Math.min(3.0, baseRadius * spacingFrac));
 
-  const samples = resamplePath(pts, stepPx);
+  // Pressure shaping from engine-normalized input
+  const pmap = toPressureMapFromInput(
+    (opt as unknown as { input?: BrushInputConfig }).input
+  );
+
+  const samples = resamplePath(pts, stepPx, pmap);
   if (samples.length < 2) return;
 
-  // Snapshot the current canvas (pixel dimensions; engine already set DPR)
+  // Snapshot the current canvas (engine already set DPR/backing size)
   const srcW = (ctx.canvas as HTMLCanvasElement | OffscreenCanvas).width;
   const srcH = (ctx.canvas as HTMLCanvasElement | OffscreenCanvas).height;
   const src = CanvasUtil.createLayer(srcW, srcH);
@@ -139,7 +182,6 @@ export default function drawSmudge(ctx: Ctx2D, opt: RenderOptions): void {
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
 
-  // If the context supports CSS filter, set it when stamping
   const supportsFilter = "filter" in (ctx as CanvasRenderingContext2D);
 
   for (let i = 1; i < samples.length; i++) {
@@ -167,7 +209,7 @@ export default function drawSmudge(ctx: Ctx2D, opt: RenderOptions): void {
     ctx.arc(b.x, b.y, r, 0, Math.PI * 2, false);
     ctx.clip();
 
-    // draw source shifted by drag offset (current ctx already DPR-scaled)
+    // draw source shifted by drag offset (ctx is in CSS space already)
     ctx.drawImage(src, -ox, -oy);
 
     if (supportsFilter) {

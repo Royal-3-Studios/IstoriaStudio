@@ -400,15 +400,42 @@ export async function drawRibbonToCanvas(
     ? Math.max(0.5, inputRadius * TT.bodyWidthScale)
     : inputRadius;
 
+  // ---- Path (engine supplies path; use default preview if missing)
   const inputPath: InputPoint[] =
     opt?.path && opt.path.length > 1
       ? (opt.path as InputPoint[])
       : createDefaultPreviewPath(viewW, viewH);
 
+  // ---- Resampling (uniform arc length). Ribbon doesn't use spacing, but we
+  // can still respect "predictPx" to lightly nudge forward for smoother tips.
   const arcStep = Math.max(0.45, baseRadius * 0.15);
-  const samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
-  if (!samples.length) return;
+  let samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
 
+  // NEW: predictive nudge (Phase 1 input.quality) — clamp to a small, safe range.
+  const predictPx = Math.max(
+    0,
+    Math.min(24, opt.input?.quality?.predictPx ?? 0)
+  );
+  if (predictPx > 0 && samples.length >= 2) {
+    const totalLen = samples[samples.length - 1].arcLen || 1;
+    samples = samples.map((s, i) => {
+      const prev = i > 0 ? samples[i - 1] : s;
+      const next = i < samples.length - 1 ? samples[i + 1] : s;
+      const ang = Math.atan2(next.y - prev.y, next.x - prev.x);
+      // Fade near tips to avoid overshoot
+      const u = s.arcLen / totalLen;
+      const fade = 1 - 4 * Math.pow(u - 0.5, 2); // bell 0..1..0
+      const k = predictPx * Math.max(0, fade);
+      return {
+        x: s.x + Math.cos(ang) * k,
+        y: s.y + Math.sin(ang) * k,
+        angle: s.angle,
+        arcLen: s.arcLen,
+      };
+    });
+  }
+
+  if (!samples.length) return;
   const totalLen = samples[samples.length - 1].arcLen;
 
   /** blend factor that softly keeps tips thin via start/end tapers */
@@ -426,9 +453,9 @@ export async function drawRibbonToCanvas(
   /** radius profile along arc length */
   const radiusAt = (s: number): number => {
     const taperDen = clamp(
-      baseRadius * TT.taperRadiusFactor,
-      TT.taperMin,
-      TT.taperMax
+      baseRadius * TUNING_PENCIL.taperRadiusFactor,
+      TUNING_PENCIL.taperMin,
+      TUNING_PENCIL.taperMax
     );
 
     const tipTStart = clamp01(s / taperDen);
@@ -436,12 +463,15 @@ export async function drawRibbonToCanvas(
 
     // sharper tips
     const sharpen =
-      1 - TT.tipSharpenBoost * Math.pow(1 - Math.min(tipTStart, tipTEnd), 1.6);
+      1 -
+      TUNING_PENCIL.tipSharpenBoost *
+        Math.pow(1 - Math.min(tipTStart, tipTEnd), 1.6);
 
     // mid-body gentle boost (bell)
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
-    const midBoost = 1 + TT.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
+    const midBoost =
+      1 + TUNING_PENCIL.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
 
     // soft tip blending from overrides
     const blend = tipBlend(u, tipScaleStart, tipScaleEnd);
@@ -460,15 +490,25 @@ export async function drawRibbonToCanvas(
     angle: number
   ): { ox: number; oy: number } => {
     const tip = Math.min(
-      s / clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax),
+      s /
+        clamp(
+          baseRadius * TUNING_PENCIL.taperRadiusFactor,
+          TUNING_PENCIL.taperMin,
+          TUNING_PENCIL.taperMax
+        ),
       (totalLen - s) /
-        clamp(baseRadius * TT.taperRadiusFactor, TT.taperMin, TT.taperMax)
+        clamp(
+          baseRadius * TUNING_PENCIL.taperRadiusFactor,
+          TUNING_PENCIL.taperMin,
+          TUNING_PENCIL.taperMax
+        )
     );
     const fadeTowardTips = clamp01(1 - tip * 1.5);
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
-    const amplitude = TT.microJitterPx * fadeTowardTips * (0.7 + 0.3 * bell);
-    const j = amplitude * Math.sin(s * TT.microJitterFreq);
+    const amplitude =
+      TUNING_PENCIL.microJitterPx * fadeTowardTips * (0.7 + 0.3 * bell);
+    const j = amplitude * Math.sin(s * TUNING_PENCIL.microJitterFreq);
     return { ox: Math.cos(angle) * j, oy: Math.sin(angle) * j };
   };
 
@@ -490,10 +530,12 @@ export async function drawRibbonToCanvas(
     const meanR = baseRadius * 0.95;
     const blurPx = Math.max(
       0.6,
-      TUNING_PENCIL.glazeBlurPx * TT.opacitySpineBlurK
+      TUNING_PENCIL.glazeBlurPx * TUNING_PENCIL.opacitySpineBlurK
     );
     (ctx as CanvasRenderingContext2D).filter = `blur(${blurPx}px)`;
-    ctx.globalAlpha = clamp01(opacity01 * TT.opacitySpineAlpha * coreStrengthK);
+    ctx.globalAlpha = clamp01(
+      opacity01 * TUNING_PENCIL.opacitySpineAlpha * coreStrengthK
+    );
     (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
@@ -509,7 +551,7 @@ export async function drawRibbonToCanvas(
     }
     (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
       1,
-      meanR * TT.opacitySpineWidth
+      meanR * TUNING_PENCIL.opacitySpineWidth
     );
     ctx.stroke();
     (ctx as CanvasRenderingContext2D).filter = "none";
@@ -521,8 +563,10 @@ export async function drawRibbonToCanvas(
     const meanR = baseRadius * 0.95;
     const plateWidth = Math.max(1.0, meanR * (isInk ? 1.5 : 1.96));
     (ctx as CanvasRenderingContext2D).filter =
-      `blur(${Math.max(0.6, TT.glazeBlurPx * (isInk ? 0.9 : 1.15)).toFixed(3)}px)`;
-    ctx.globalAlpha = clamp01(opacity01 * TT.plateAlpha * coreStrengthK);
+      `blur(${Math.max(0.6, TUNING_PENCIL.glazeBlurPx * (isInk ? 0.9 : 1.15)).toFixed(3)}px)`;
+    ctx.globalAlpha = clamp01(
+      opacity01 * TUNING_PENCIL.plateAlpha * coreStrengthK
+    );
     (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
@@ -544,11 +588,13 @@ export async function drawRibbonToCanvas(
   /* 4) Two glazes (multiply) */
   ctx.globalCompositeOperation = "multiply";
   (ctx as CanvasRenderingContext2D).filter =
-    `blur(${Math.max(0.6, TT.glazeBlurPx).toFixed(3)}px)`;
+    `blur(${Math.max(0.6, TUNING_PENCIL.glazeBlurPx).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
 
-    ctx.globalAlpha = clamp01(opacity01 * TT.glaze1Alpha * coreStrengthK);
+    ctx.globalAlpha = clamp01(
+      opacity01 * TUNING_PENCIL.glaze1Alpha * coreStrengthK
+    );
     (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
@@ -566,7 +612,9 @@ export async function drawRibbonToCanvas(
     );
     ctx.stroke();
 
-    ctx.globalAlpha = clamp01(opacity01 * TT.glaze2Alpha * coreStrengthK);
+    ctx.globalAlpha = clamp01(
+      opacity01 * TUNING_PENCIL.glaze2Alpha * coreStrengthK
+    );
     (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
@@ -590,7 +638,9 @@ export async function drawRibbonToCanvas(
   ctx.globalCompositeOperation = "multiply";
   {
     const meanR = baseRadius * 0.95;
-    ctx.globalAlpha = clamp01(opacity01 * TT.spineAlpha * coreStrengthK);
+    ctx.globalAlpha = clamp01(
+      opacity01 * TUNING_PENCIL.spineAlpha * coreStrengthK
+    );
     (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
@@ -653,7 +703,6 @@ export async function drawRibbonToCanvas(
     const seed: number = (opt.seed ?? 7) % 997;
     const grainTile = createNoiseTile(64, 31 * seed + 7);
     const first = samples[0];
-    const last = samples[samples.length - 1];
 
     // 8a) Multiply grain
     ctx.save();
@@ -683,7 +732,7 @@ export async function drawRibbonToCanvas(
     (ctx as CanvasRenderingContext2D).lineJoin = "round";
     (ctx as CanvasRenderingContext2D).lineWidth = Math.max(0.8, meanR * 1.24);
     ctx.beginPath();
-    ctx.moveTo(first.x, first.y);
+    ctx.moveTo(samples[0].x, samples[0].y);
     for (let i = 1; i < samples.length; i++)
       ctx.lineTo(samples[i].x, samples[i].y);
     ctx.stroke();
@@ -713,9 +762,10 @@ export async function drawRibbonToCanvas(
 
     // 8d) Fade dust toward tips and keep it within the core band
     ctx.globalCompositeOperation = "destination-in";
+    const last = samples[samples.length - 1];
     const dustFade = (ctx as CanvasRenderingContext2D).createLinearGradient(
-      first.x,
-      first.y,
+      samples[0].x,
+      samples[0].y,
       last.x,
       last.y
     );
@@ -732,7 +782,7 @@ export async function drawRibbonToCanvas(
       baseRadius * 1.16
     );
     ctx.beginPath();
-    ctx.moveTo(first.x, first.y);
+    ctx.moveTo(samples[0].x, samples[0].y);
     for (let i = 1; i < samples.length; i++)
       ctx.lineTo(samples[i].x, samples[i].y);
     ctx.stroke();
