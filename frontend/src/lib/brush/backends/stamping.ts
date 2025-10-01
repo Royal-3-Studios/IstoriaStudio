@@ -1,11 +1,8 @@
 // FILE: src/lib/brush/backends/stamping.ts
 /**
- * Stamping Backend — Graphite/Charcoal & Inking (v35)
- * ---------------------------------------------------
- * - Multi-track “split nibs” (count/spacing/jitter/curvature/asymmetry/scatter/angle)
- * - Shared utils for RNG, spacing/resample, canvas layers, blending, textures
- * - Per-brush knobs (innerGrainAlpha, edgeCarveAlpha) threaded from engine overrides
- * - Short-circuits disabled stages for perf (when alpha ≈ 0, grain off, etc.)
+ * Stamping Backend — Graphite/Charcoal & Inking (v35.3)
+ * - Strict TS safe: exactOptionalPropertyTypes + noUncheckedIndexedAccess
+ * - No `any`, no `unknown as`
  */
 
 import type {
@@ -15,23 +12,21 @@ import type {
 } from "@/lib/brush/engine";
 import { Rand, Texture, CanvasUtil, Blend } from "@backends";
 
-// Input + stroke utilities
 import type { BrushInputConfig } from "@/data/brushPresets";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 import {
   pathToStamps,
   type TaperProfile,
+  type InputQualityOpts,
 } from "@/lib/brush/backends/utils/stroke";
 
 type Ctx2D = CanvasUtil.Ctx2D;
 
-/* ============================== Small math helpers ============================== */
+/* ------------------------------ Small helpers ------------------------------ */
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 const mix = lerp;
-
-/* ============================== Typed override getter =========================== */
 
 function ov<T>(
   overrides: Required<RenderOverrides>,
@@ -42,7 +37,7 @@ function ov<T>(
   return (raw as T) ?? fallback;
 }
 
-/* ============================== Geometry helpers =============================== */
+/* -------------------------------- Geometry -------------------------------- */
 
 function segmentNormal(ax: number, ay: number, bx: number, by: number) {
   const dx = bx - ax;
@@ -53,7 +48,7 @@ function segmentNormal(ax: number, ay: number, bx: number, by: number) {
   return { nx, ny };
 }
 
-/* ============================== Taper/body shaping ============================ */
+/* ---------------------------- Taper/body shaping ---------------------------- */
 
 const EDGE_WINDOW_FRACTION = 0.42;
 
@@ -83,15 +78,15 @@ function highPressureDamp(p01: number) {
 }
 
 function tipBlend(tNorm: number, startAmt: number, endAmt: number) {
-  const a = softTipMask01(tNorm); // 0→1
-  const towardStart = 1 - Math.min(1, tNorm * 2); // 1 at start → 0 mid
-  const towardEnd = 1 - Math.min(1, (1 - tNorm) * 2); // 1 at end → 0 mid
+  const a = softTipMask01(tNorm);
+  const towardStart = 1 - Math.min(1, tNorm * 2);
+  const towardEnd = 1 - Math.min(1, (1 - tNorm) * 2);
   const tipAmt = startAmt * towardStart + endAmt * towardEnd;
   return 1 - tipAmt + tipAmt * a;
 }
 
 function applyEndBias(width: number, tNorm: number, bias: number) {
-  const k = (tNorm - 0.5) * 2; // -1 at start, +1 at end
+  const k = (tNorm - 0.5) * 2; // -1 → +1
   return width * (1 + 0.28 * bias * k);
 }
 
@@ -102,7 +97,7 @@ function applyUniformity(width: number, belly01: number, u: number) {
   return width * factor;
 }
 
-/* ============================== Pressure maps ============================ */
+/* ------------------------------- Pressure maps ------------------------------- */
 
 function pressureToWidthScale(p01: number) {
   const q = Math.pow(clamp01(p01), 0.65);
@@ -113,33 +108,69 @@ function pressureToFlowScale(p01: number) {
   return 0.4 + q * 0.6;
 }
 
-/* ============================== Sampling along path ============================ */
+/* ---------------------------- Sampling / adapters ---------------------------- */
 
-// Stamp→sample adaptor used by the rest of this backend
 type SamplePoint = { x: number; y: number; t: number; p: number };
-
-// Allow the engine to pass normalized input (added in engine.ts)
 type ExtRenderOptions = RenderOptions & { input?: BrushInputConfig };
 
-// Build a light PressureMap from input curve/clamp (all optional)
-function toPressureMapFromInput(
-  input?: BrushInputConfig
-): PressureMapOpts | undefined {
-  if (!input) return undefined;
+const DEFAULT_PRESSURE_MAP: PressureMapOpts = {
+  gamma: 1,
+  deadZone: 0,
+  gain: 1,
+};
+const DEFAULT_INPUT_QUALITY: InputQualityOpts = {
+  predictPx: 0,
+  speedToSpacing: 0,
+  minStepPx: 0.1,
+};
+
+function toPressureMapFromInput(input?: BrushInputConfig): PressureMapOpts {
+  if (!input) return DEFAULT_PRESSURE_MAP;
+
   const gamma =
     input.pressure.curve?.type === "gamma"
       ? input.pressure.curve.gamma
       : undefined;
+
   const deadZone =
     typeof input.pressure.clamp?.min === "number"
       ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
       : undefined;
-  // gain is optional; defaults to 1 inside mapPressure
-  if (gamma === undefined && deadZone === undefined) return undefined;
-  return { gamma, deadZone };
+
+  // Gain without `any`: narrow with an inline structural type
+  type MaybeGain = { gain?: number };
+  const maybeGain: MaybeGain | undefined = (input as { pressure?: MaybeGain })
+    .pressure;
+  const gain = typeof maybeGain?.gain === "number" ? maybeGain.gain : undefined;
+
+  const out: Partial<PressureMapOpts> = {};
+  if (gamma !== undefined) out.gamma = gamma;
+  if (deadZone !== undefined) out.deadZone = deadZone;
+  if (gain !== undefined) out.gain = gain;
+
+  return (
+    Object.keys(out).length ? out : DEFAULT_PRESSURE_MAP
+  ) as PressureMapOpts;
 }
 
-/* ============================== Render ======================================== */
+function toInputQualityFromInput(input?: BrushInputConfig): InputQualityOpts {
+  if (!input) return DEFAULT_INPUT_QUALITY;
+
+  const predictPx = input.quality?.predictPx;
+  const speedToSpacing = input.quality?.speedToSpacing;
+  const minStepPx = input.quality?.minStepPx;
+
+  const out: Partial<InputQualityOpts> = {};
+  if (typeof predictPx === "number") out.predictPx = predictPx;
+  if (typeof speedToSpacing === "number") out.speedToSpacing = speedToSpacing;
+  if (typeof minStepPx === "number") out.minStepPx = minStepPx;
+
+  return (
+    Object.keys(out).length ? out : DEFAULT_INPUT_QUALITY
+  ) as InputQualityOpts;
+}
+
+/* ---------------------------------- Render ---------------------------------- */
 
 const TIP_CULL_RADIUS_PX = 0;
 
@@ -150,7 +181,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   const overrides = (options.engine.overrides ??
     {}) as Required<RenderOverrides>;
 
-  // Allow presets to disable certain stages and govern behavior
+  // Per-brush knobs
   const innerGrainAlpha = clamp01(ov(overrides, "innerGrainAlpha", 0.55));
   const edgeCarveAlpha = clamp01(ov(overrides, "edgeCarveAlpha", 0.26));
 
@@ -165,18 +196,25 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   const seed = (options.seed ?? 42) >>> 0;
   const rng = Rand.mulberry32(seed);
 
-  // ---- NEW: sample with pathToStamps so input.quality & pressureMap take effect
+  // Respect input pressure/quality and guarantee required fields
   const ext = options as ExtRenderOptions;
   const pmap = toPressureMapFromInput(ext.input);
-  const iq = {
-    predictPx: ext.input?.quality?.predictPx,
-    speedToSpacing: ext.input?.quality?.speedToSpacing,
-    minStepPx: ext.input?.quality?.minStepPx,
-  };
+  const iq = toInputQualityFromInput(ext.input);
 
-  // Spacing/jitter/scatter/count/streamline from engine (with sane fallbacks)
+  // Shape/grain quick lookup
+  const shapeType = options.engine.shape?.type;
+  const grainKind = options.engine.grain?.kind ?? "none";
+  const grainDepth = options.engine.grain?.depth ?? 0;
+  const isCharcoal =
+    shapeType === "charcoal" ||
+    (grainKind === "noise" && shapeType !== "round");
+
+  // Stroke placement defaults (tight spacing for pens by default)
   const spacingPercent =
-    options.engine.strokePath?.spacing ?? overrides.spacing ?? 4; // UI spacing is percent
+    options.engine.strokePath?.spacing ??
+    overrides.spacing ??
+    (shapeType === "round" ? 9 : 12); // % of diameter
+
   const jitterPercent =
     (options.engine.strokePath?.jitter ?? overrides.jitter ?? 0.5) * 100; // stroke.ts expects %
   const scatterPx =
@@ -185,7 +223,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     options.engine.strokePath?.count ?? overrides.count ?? 1;
   const streamline = options.engine.strokePath?.streamline ?? 0;
 
-  // Taper/body knobs (these are already in overrides)
+  // Taper/body knobs
   const tipScaleStart = overrides.tipScaleStart ?? 0.85;
   const tipScaleEnd = overrides.tipScaleEnd ?? 0.85;
   const taperProfileStart = (overrides.taperProfileStart ??
@@ -200,7 +238,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     scatterPx,
     stampsPerStep,
     streamline,
-    angleFollowDirection: overrides.angleFollowDirection ?? 0,
+    angleFollowDirection: overrides.angleFollowDirection ?? 1,
     angleJitterDeg: overrides.angleJitter ?? 0,
     tipMinPx: overrides.tipMinPx ?? 0,
     tipScaleStart,
@@ -209,22 +247,19 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     taperProfileEnd,
     endBias: overrides.endBias ?? 0,
     uniformity: overrides.uniformity ?? 0,
-    rng, // stable
-    pressureMap: pmap,
-    inputQuality: iq,
+    rng,
+    pressureMap: pmap, // never undefined
+    inputQuality: iq, // never undefined
   });
 
-  // Adapt to the structure this backend expects (x,y,t,p)
   const samples: SamplePoint[] = stamps.map((s) => ({
     x: s.x,
     y: s.y,
     t: s.t,
     p: s.pressure,
   }));
-
   if (samples.length < 2) return;
 
-  // Gates per segment (unchanged)
   type Gate = {
     tMid: number;
     bellyProgress: number;
@@ -235,6 +270,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
+    if (!a || !b) continue; // guard
     const tMid = (a.t + b.t) * 0.5;
     gates.push({
       tMid,
@@ -243,13 +279,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
       midPressure: (a.p + b.p) * 0.5,
     });
   }
-
-  const shapeType = options.engine.shape?.type;
-  const grainKind = options.engine.grain?.kind ?? "none";
-  const grainDepth = options.engine.grain?.depth ?? 0;
-  const isCharcoal =
-    shapeType === "charcoal" ||
-    (grainKind === "noise" && shapeType !== "round");
+  if (gates.length === 0) return;
 
   // v34 taper/body knobs (safe clamps)
   const tipStart = clamp01(tipScaleStart);
@@ -277,9 +307,9 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   const splitScatter = Math.max(0, overrides.splitScatter ?? 0);
   const splitAngle = (overrides.splitAngle ?? 0) * (Math.PI / 180);
   const pressureToSplitSpacing = clamp01(overrides.pressureToSplitSpacing ?? 0);
-  const tiltToSplitFan = (overrides.tiltToSplitFan ?? 0) * (Math.PI / 180); // currently unused (no tilt in path)
+  const tiltToSplitFan = (overrides.tiltToSplitFan ?? 0) * (Math.PI / 180); // no tilt yet
 
-  // Convenience reads for tooth & rim
+  // Tooth & rim (declare ONCE here; used later)
   const toothBody = clamp01(
     ov(overrides, "toothBody", isCharcoal ? 0.75 : 0.55)
   );
@@ -315,7 +345,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   ) {
     const { nx, ny } = segmentNormal(ax, ay, bx, by);
 
-    // Fan angle from overrides (tiltToSplitFan ignored until tilt is threaded through path points)
+    // Fan angle from overrides (tiltToSplitFan ignored until tilt is threaded)
     const fanAngle = splitAngle + tiltToSplitFan * 0;
 
     // Rotate normal by fan angle
@@ -350,7 +380,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
-    const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1];
+    const gate = gates[i - 1];
+    if (!a || !b || !gate) continue;
+
+    const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
     if (alphaProgress <= 0.001) continue;
 
     let widthPx =
@@ -389,7 +422,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1];
     const b = samples[i];
-    const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1];
+    const gate = gates[i - 1];
+    if (!a || !b || !gate) continue;
+
+    const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
     if (alphaProgress <= 0.001) continue;
 
     let widthPx =
@@ -454,7 +490,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
       1
     );
 
-    // Build gates (body)
+    // Body gate
     if (toothBody > 0.001) {
       const bodyGate = CanvasUtil.createLayer(options.width, options.height);
       const bg = bodyGate.getContext("2d", { alpha: true }) as Ctx2D;
@@ -465,8 +501,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
       for (let i = 1; i < samples.length; i++) {
         const a = samples[i - 1];
         const b = samples[i];
-        const { bellyProgress, alphaProgress, midPressure, tMid } =
-          gates[i - 1];
+        const gate = gates[i - 1];
+        if (!a || !b || !gate) continue;
+
+        const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
         if (alphaProgress <= 0.001) continue;
 
         const wScale = pressureToWidthScale(midPressure);
@@ -496,7 +534,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
         );
       }
 
-      // Body holes (two combined tiles)
+      // Body holes (two tiles)
       const bodyHoles = CanvasUtil.createLayer(options.width, options.height);
       const bhx = bodyHoles.getContext("2d", { alpha: true }) as Ctx2D;
 
@@ -539,7 +577,7 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
       });
     }
 
-    // Build gates (flank)
+    // Flank gate
     if (toothFlank > 0.001) {
       const flankGate = CanvasUtil.createLayer(options.width, options.height);
       const fg = flankGate.getContext("2d", { alpha: true }) as Ctx2D;
@@ -550,8 +588,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
       for (let i = 1; i < samples.length; i++) {
         const a = samples[i - 1];
         const b = samples[i];
-        const { bellyProgress, alphaProgress, midPressure, tMid } =
-          gates[i - 1];
+        const gate = gates[i - 1];
+        if (!a || !b || !gate) continue;
+
+        const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
         if (alphaProgress <= 0.001) continue;
 
         const wScale = pressureToWidthScale(midPressure);
@@ -580,7 +620,6 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
         );
       }
 
-      // Flank holes
       const flankHoles = CanvasUtil.createLayer(options.width, options.height);
       const fhx = flankHoles.getContext("2d", { alpha: true }) as Ctx2D;
 
@@ -616,26 +655,31 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
         fhx.drawImage(flankGate, 0, 0);
       });
 
-      Blend.withCompositeAndAlpha(mx, "destination-out", toothFlank, () => {
-        mx.drawImage(fhx.canvas as unknown as CanvasImageSource, 0, 0);
-      });
+      // drawImage accepts CanvasImageSource; the canvas union satisfies it
+      mx.globalCompositeOperation = "destination-out";
+      mx.globalAlpha = toothFlank;
+      mx.drawImage(fhx.canvas as CanvasImageSource, 0, 0);
+      mx.globalAlpha = 1;
+      mx.globalCompositeOperation = "source-over";
     }
   }
 
-  /* -------------------- B) Colorize mask into a paint layer ---------------- */
+  /* -------------------- B) Colorize mask into paint layer -------------------- */
+
   const paint = CanvasUtil.createLayer(options.width, options.height);
   const px = paint.getContext("2d", { alpha: true }) as Ctx2D;
 
-  // 1) Fill with the brush color
+  // 1) Fill with brush color
   px.fillStyle = options.color ?? "#000000";
   px.fillRect(0, 0, options.width, options.height);
 
-  // 2) Clip by the mask we just built
+  // 2) Clip by mask
   Blend.withComposite(px, "destination-in", () => {
     px.drawImage(mask, 0, 0);
   });
 
-  /* -------------------- C) Inner-belly grain (respects holes) ------------- */
+  /* -------------------- C) Inner-belly grain (respects holes) -------------------- */
+
   const wantInteriorGrain =
     grainKind !== "none" && grainDepth > 0 && innerGrainAlpha > 0.001;
 
@@ -649,7 +693,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     for (let i = 1; i < samples.length; i++) {
       const a = samples[i - 1];
       const b = samples[i];
-      const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1];
+      const gate = gates[i - 1];
+      if (!a || !b || !gate) continue;
+
+      const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
       if (alphaProgress <= 0.001) continue;
 
       const innerW =
@@ -683,16 +730,17 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     // constrain grain to inner gate & mask
     Blend.withComposite(gx, "destination-in", () => {
       gx.drawImage(inner, 0, 0);
-      gx.drawImage(mask, 0, 0); // respects perforations
+      gx.drawImage(mask, 0, 0);
     });
 
-    // multiply grain onto the PAINT layer (not the offscreen ctx)
+    // multiply grain onto the PAINT layer
     Blend.withCompositeAndAlpha(px, "multiply", innerGrainAlpha, () => {
       px.drawImage(grain, 0, 0);
     });
   }
 
-  /* -------------------- D) Tip rim (screen, pencils only) ----------------- */
+  /* -------------------- D) Tip rim (screen, pencils only) -------------------- */
+
   const useRim = rimMode === "on" || (rimMode === "auto" && !isCharcoal);
   if (useRim) {
     const rim = CanvasUtil.createLayer(options.width, options.height);
@@ -704,7 +752,10 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     for (let i = 1; i < samples.length; i++) {
       const a = samples[i - 1];
       const b = samples[i];
-      const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1];
+      const gate = gates[i - 1];
+      if (!a || !b || !gate) continue;
+
+      const { bellyProgress, alphaProgress, midPressure, tMid } = gate;
       if (alphaProgress <= 0.001) continue;
 
       rx.lineWidth = Math.max(
@@ -729,7 +780,8 @@ export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
     });
   }
 
-  /* -------------------- E) Draw paint to the offscreen ctx ---------------- */
+  /* -------------------- E) Draw paint to the offscreen ctx -------------------- */
+
   Blend.withComposite(ctx, "source-over", () => {
     ctx.drawImage(paint, 0, 0);
   });
@@ -747,6 +799,5 @@ export async function drawStampingToCanvas(
       | OffscreenCanvasRenderingContext2D
       | null) ?? null;
   if (!ctx) return;
-  // DPR is handled by the engine layer; draw in CSS space.
   drawStamping(ctx as Ctx2D, opt);
 }

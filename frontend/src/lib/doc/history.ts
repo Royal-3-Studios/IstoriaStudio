@@ -1,10 +1,11 @@
-// FILE: src/lib/painting/history.ts
+// FILE: src/lib/doc/history.ts
 // Command log for instant undo/redo using full-layer snapshots.
-// Tiny, deterministic, and backend-agnostic. Draws & hashes in CSS space
-// (engine handles DPR on the painting layers).
+// Tiny, deterministic, and backend-agnostic. Draws & hashes in CSS space.
 
 import type { LayerStack, Layer, LayerSnapshot } from "./layers";
 import { snapshotLayer, restoreLayer, findLayer } from "./layers";
+
+import { createLayer, get2D, type Ctx2D } from "@backends";
 
 export type HistoryKind = "stroke" | "erase" | "layerOp" | "other";
 
@@ -35,46 +36,13 @@ export function createHistory(stack: LayerStack, limit = 100): History {
 }
 
 function uuid(): string {
-  const c = (globalThis as unknown as { crypto?: Crypto }).crypto;
+  const c = (globalThis as { crypto?: Crypto }).crypto;
   if (c && typeof c.randomUUID === "function") {
     return c.randomUUID();
   }
   return `h_${(++_uidCounter).toString(36)}`;
 }
 let _uidCounter = 0;
-
-/* ----------------------------------------------------------------------------
- * Canvas helpers (guards keep TS happy across DOM/Offscreen)
- * -------------------------------------------------------------------------- */
-
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
-function createCanvas(
-  w: number,
-  h: number
-): HTMLCanvasElement | OffscreenCanvas {
-  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  return c;
-}
-
-function isCtx2D(ctx: unknown): ctx is Ctx2D {
-  if (!ctx || typeof ctx !== "object") return false;
-  const c = ctx as Partial<CanvasRenderingContext2D>;
-  return (
-    typeof c.clearRect === "function" &&
-    typeof c.drawImage === "function" &&
-    typeof c.getImageData === "function"
-  );
-}
-
-function get2D(c: HTMLCanvasElement | OffscreenCanvas): Ctx2D {
-  const ctx = c.getContext("2d", { alpha: true });
-  if (!isCtx2D(ctx)) throw new Error("2D context unavailable");
-  return ctx;
-}
 
 /* ----------------------------------------------------------------------------
  * Snapshot hashing / equality (cheap, downscaled)
@@ -98,7 +66,7 @@ async function hashSnapshot(
   if (typeof ImageBitmap !== "undefined" && snap instanceof ImageBitmap) {
     srcW = snap.width;
     srcH = snap.height;
-    srcCanvas = createCanvas(srcW, srcH);
+    srcCanvas = createLayer(srcW, srcH);
     const x = get2D(srcCanvas);
     x.drawImage(snap, 0, 0);
   } else {
@@ -106,23 +74,18 @@ async function hashSnapshot(
     const s = snap as ImageData;
     srcW = s.width;
     srcH = s.height;
-    srcCanvas = createCanvas(srcW, srcH);
-    const x = get2D(srcCanvas) as CanvasRenderingContext2D;
+    srcCanvas = createLayer(srcW, srcH);
+    const x = get2D(srcCanvas);
     x.putImageData(s, 0, 0);
   }
 
   // Stage 2: draw to tiny thumbnail
-  const thumb = createCanvas(thumbW, thumbH);
-  const tx = get2D(thumb);
+  const thumb = createLayer(thumbW, thumbH);
+  const tx: Ctx2D = get2D(thumb);
   tx.drawImage(srcCanvas as unknown as CanvasImageSource, 0, 0, thumbW, thumbH);
 
   // Stage 3: hash the pixels (xor/imul rolling hash over bytes)
-  const id = (tx as CanvasRenderingContext2D).getImageData(
-    0,
-    0,
-    thumbW,
-    thumbH
-  );
+  const id = tx.getImageData(0, 0, thumbW, thumbH);
   const d = id.data;
   let h = 2166136261 >>> 0; // FNV-ish start
   for (let i = 0; i < d.length; i++) {
@@ -147,7 +110,7 @@ async function snapshotsEqual(
 ): Promise<boolean> {
   if (a === b) return true; // same object or both null
   if (!a || !b) return false;
-  // Quick dimension check when both ImageData
+  // Quick dimension check when both are ImageData
   if (
     !(typeof ImageBitmap !== "undefined" && a instanceof ImageBitmap) &&
     !(typeof ImageBitmap !== "undefined" && b instanceof ImageBitmap)

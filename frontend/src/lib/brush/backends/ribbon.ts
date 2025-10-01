@@ -1,16 +1,11 @@
 // FILE: src/lib/brush/backends/ribbon.ts
 /**
  * Ribbon backend — continuous polygon silhouette with layered glazes & grain.
- * Profiles:
- *  - PENCIL (default): long tapers, mild rim polish, optional grain/dust.
- *  - INK/MARKER (rendering.mode === "marker"): crisper, darker, minimal blur,
- *    no tip fade/erode, grain off by default.
- *
- * IMPORTANT: The engine sizes the canvas layer and applies DPR transforms.
- *            Draw only in CSS space here; don't resize the canvas or setTransform.
+ * Draw only in CSS space; engine handles sizing and DPR.
  */
 
 import type { RenderOptions } from "../engine";
+import type { CanvasLike, Ctx2D } from "./utils/canvas";
 
 /* ========================================================================== *
  * Tunables
@@ -123,16 +118,19 @@ const TUNING_INK: PencilTuning = {
 const PREVIEW_MIN_SIZE = { width: 352, height: 128 };
 
 /* ========================================================================== *
- * Small utilities
+ * Small utilities (strict-safe)
  * ========================================================================== */
 
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
-const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp = (v: number, lo: number, hi: number): number =>
-  Math.max(lo, Math.min(hi, v));
+  v < lo ? lo : v > hi ? hi : v;
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 const easePowOut = (t: number): number => 1 - Math.pow(1 - clamp01(t), 2.3);
+
+// strict-safe array helpers
+const get = <T>(arr: readonly T[], i: number): T => arr[i]!;
+const last = <T>(arr: readonly T[]): T => arr[arr.length - 1]!;
+const getNum = (arr: readonly number[], i: number): number => arr[i]!;
 
 function isCanvas2DContext(ctx: unknown): ctx is Ctx2D {
   if (typeof ctx !== "object" || ctx === null) return false;
@@ -151,16 +149,17 @@ function hexToRGBA(hex: string | undefined, alpha: number): string {
   const a = clamp01(alpha);
   if (!hex || typeof hex !== "string") return `rgba(0,0,0,${a})`;
   const m = hex.replace("#", "");
-  const parse = (s: string) => Math.max(0, Math.min(255, parseInt(s, 16) || 0));
+  const parseHex = (s: string) =>
+    Math.max(0, Math.min(255, Number.parseInt(s, 16) || 0));
   if (m.length === 3) {
-    const r = parse(m[0] + m[0]),
-      g = parse(m[1] + m[1]),
-      b = parse(m[2] + m[2]);
+    const r = parseHex(m.charAt(0) + m.charAt(0));
+    const g = parseHex(m.charAt(1) + m.charAt(1));
+    const b = parseHex(m.charAt(2) + m.charAt(2));
     return `rgba(${r},${g},${b},${a})`;
   }
-  const r = parse(m.slice(0, 2)),
-    g = parse(m.slice(2, 4)),
-    b = parse(m.slice(4, 6));
+  const r = parseHex(m.slice(0, 2));
+  const g = parseHex(m.slice(2, 4));
+  const b = parseHex(m.slice(4, 6));
   return `rgba(${r},${g},${b},${a})`;
 }
 
@@ -175,30 +174,22 @@ function makeSeededRng(seed: number): () => number {
   };
 }
 
-function createCanvas(
-  w: number,
-  h: number
-): OffscreenCanvas | HTMLCanvasElement {
-  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  return c;
-}
-
-function getCanvas2DContext(c: OffscreenCanvas | HTMLCanvasElement): Ctx2D {
-  const ctx = c.getContext("2d");
-  if (!isCanvas2DContext(ctx)) throw new Error("2D context not available.");
-  return ctx;
-}
-
 /** Make a grayscale noise tile (used for grain/dust). */
 function createNoiseTile(
   size = 64,
   seed = 1
 ): OffscreenCanvas | HTMLCanvasElement {
-  const c = createCanvas(size, size);
-  const ctx = getCanvas2DContext(c);
+  const useOffscreen = typeof OffscreenCanvas !== "undefined";
+  const c = useOffscreen
+    ? new OffscreenCanvas(size, size)
+    : document.createElement("canvas");
+  if (!useOffscreen) {
+    (c as HTMLCanvasElement).width = size;
+    (c as HTMLCanvasElement).height = size;
+  }
+  const ctx = c.getContext("2d");
+  if (!isCanvas2DContext(ctx))
+    throw new Error("2D context not available for noise tile.");
   const img = ctx.createImageData(size, size);
   const rnd = makeSeededRng(seed);
   for (let i = 0; i < img.data.length; i += 4) {
@@ -240,26 +231,27 @@ function createDefaultPreviewPath(width: number, height: number): InputPoint[] {
 
 /** Resample path by arc-length step; guarantees monotonically increasing arcLen. */
 function resamplePathUniform(path: InputPoint[], step: number): SamplePoint[] {
-  if (!path.length) return [];
+  const n = path.length;
+  if (n === 0) return [];
 
   const prefix: number[] = [0];
-  for (let i = 1; i < path.length; i++) {
-    const dx = path[i].x - path[i - 1].x;
-    const dy = path[i].y - path[i - 1].y;
-    prefix[i] = prefix[i - 1] + Math.hypot(dx, dy);
+  for (let i = 1; i < n; i++) {
+    const dx = get(path, i).x - get(path, i - 1).x;
+    const dy = get(path, i).y - get(path, i - 1).y;
+    prefix.push(getNum(prefix, i - 1) + Math.hypot(dx, dy));
   }
-  const totalLen = prefix[prefix.length - 1];
+  const totalLen = last(prefix);
   if (totalLen <= 0) return [];
 
   const arcAt = (s: number): { x: number; y: number; angle: number } => {
     let i = 1;
-    while (i < prefix.length && prefix[i] < s) i++;
+    while (i < prefix.length && getNum(prefix, i) < s) i++;
     const i1 = Math.min(prefix.length - 1, Math.max(1, i));
-    const s0 = prefix[i1 - 1];
-    const s1 = prefix[i1];
+    const s0 = getNum(prefix, i1 - 1);
+    const s1 = getNum(prefix, i1);
     const t = Math.min(1, Math.max(0, (s - s0) / Math.max(1e-6, s1 - s0)));
-    const a = path[i1 - 1];
-    const b = path[i1];
+    const a = get(path, i1 - 1);
+    const b = get(path, i1);
     const x = lerp(a.x, b.x, t);
     const y = lerp(a.y, b.y, t);
     const angle =
@@ -274,7 +266,7 @@ function resamplePathUniform(path: InputPoint[], step: number): SamplePoint[] {
     const p = arcAt(s);
     out.push({ x: p.x, y: p.y, angle: p.angle, arcLen: s });
   }
-  if (out[out.length - 1]?.arcLen < totalLen) {
+  if (last(out).arcLen < totalLen) {
     const p = arcAt(totalLen);
     out.push({ x: p.x, y: p.y, angle: p.angle, arcLen: totalLen });
   }
@@ -286,25 +278,30 @@ function buildRibbonOutlinePath(
   samples: SamplePoint[],
   radiusAt: (s: number) => number
 ): Path2D {
+  const n = samples.length;
   const left: Array<{ x: number; y: number }> = [];
   const right: Array<{ x: number; y: number }> = [];
-  const n = samples.length;
+
   for (let i = 0; i < n; i++) {
-    const aPrev = i > 0 ? samples[i - 1].angle : samples[i].angle;
-    const aNext = i < n - 1 ? samples[i + 1].angle : samples[i].angle;
-    const ang = (aPrev + aNext) * 0.5;
+    const cur = get(samples, i);
+    const prev = i > 0 ? get(samples, i - 1) : cur;
+    const next = i < n - 1 ? get(samples, i + 1) : cur;
+
+    const ang = (prev.angle + next.angle) * 0.5;
     const nx = -Math.sin(ang);
     const ny = Math.cos(ang);
-    const r = Math.max(0, radiusAt(samples[i].arcLen));
-    left.push({ x: samples[i].x - nx * r, y: samples[i].y - ny * r });
-    right.push({ x: samples[i].x + nx * r, y: samples[i].y + ny * r });
+    const r = Math.max(0, radiusAt(cur.arcLen));
+
+    left.push({ x: cur.x - nx * r, y: cur.y - ny * r });
+    right.push({ x: cur.x + nx * r, y: cur.y + ny * r });
   }
-  const path = new Path2D();
-  path.moveTo(left[0].x, left[0].y);
-  for (let i = 1; i < n; i++) path.lineTo(left[i].x, left[i].y);
-  for (let i = n - 1; i >= 0; i--) path.lineTo(right[i].x, right[i].y);
-  path.closePath();
-  return path;
+
+  const p = new Path2D();
+  p.moveTo(get(left, 0).x, get(left, 0).y);
+  for (let i = 1; i < n; i++) p.lineTo(get(left, i).x, get(left, i).y);
+  for (let i = n - 1; i >= 0; i--) p.lineTo(get(right, i).x, get(right, i).y);
+  p.closePath();
+  return p;
 }
 
 /* ========================================================================== *
@@ -312,119 +309,119 @@ function buildRibbonOutlinePath(
  * ========================================================================== */
 
 export async function drawRibbonToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
+  canvas: CanvasLike,
   opt: RenderOptions
 ): Promise<void> {
-  const ctx = canvas.getContext("2d");
-  if (!isCanvas2DContext(ctx)) throw new Error("2D context not available.");
+  const ctx = canvas.getContext("2d", { alpha: true }) as Ctx2D | null;
+  if (!ctx || !isCanvas2DContext(ctx))
+    throw new Error("2D context not available.");
 
-  // Engine already normalized dimensions to integers.
+  const preview = Boolean(
+    (opt as unknown as { overrides?: { centerlinePencil?: boolean } }).overrides
+      ?.centerlinePencil
+  );
   const viewW = Math.max(
-    opt?.overrides?.centerlinePencil ? PREVIEW_MIN_SIZE.width : 1,
+    preview ? PREVIEW_MIN_SIZE.width : 1,
     Math.floor(opt.width)
   );
   const viewH = Math.max(
-    opt?.overrides?.centerlinePencil ? PREVIEW_MIN_SIZE.height : 1,
+    preview ? PREVIEW_MIN_SIZE.height : 1,
     Math.floor(opt.height)
   );
 
-  // DO NOT: resize canvas or set transform here; engine did that.
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
+  (
+    ctx as unknown as { imageSmoothingQuality?: ImageSmoothingQuality }
+  ).imageSmoothingQuality = "high";
 
-  const isInk = opt?.engine?.rendering?.mode === "marker";
+  const isInk =
+    (opt.engine?.rendering?.mode as string | undefined) === "marker";
   const TT: PencilTuning = isInk ? TUNING_INK : TUNING_PENCIL;
 
+  const num = (v: unknown, def: number): number =>
+    typeof v === "number" ? v : def;
+
   const flow01 = clamp01(
-    ((opt?.overrides?.flow ?? opt?.engine?.overrides?.flow ?? 100) as number) /
-      100
+    num(opt.overrides?.flow ?? opt.engine?.overrides?.flow, 100) / 100
   );
   const opacity01 = clamp01(
-    ((opt?.overrides?.opacity ??
-      opt?.engine?.overrides?.opacity ??
-      100) as number) / 100
+    num(opt.overrides?.opacity ?? opt.engine?.overrides?.opacity, 100) / 100
   );
   const coreStrengthK = clamp(
-    ((opt?.overrides?.coreStrength ??
-      opt?.engine?.overrides?.coreStrength ??
-      300) as number) / 100,
+    num(
+      opt.overrides?.coreStrength ?? opt.engine?.overrides?.coreStrength,
+      300
+    ) / 100,
     0.6,
     3.0
   );
 
   const tipScaleStart = clamp01(
-    (opt?.engine?.overrides?.tipScaleStart ??
-      opt?.overrides?.tipScaleStart ??
-      0.85) as number
+    num(
+      opt.engine?.overrides?.tipScaleStart ?? opt.overrides?.tipScaleStart,
+      0.85
+    )
   );
   const tipScaleEnd = clamp01(
-    (opt?.engine?.overrides?.tipScaleEnd ??
-      opt?.overrides?.tipScaleEnd ??
-      0.85) as number
+    num(opt.engine?.overrides?.tipScaleEnd ?? opt.overrides?.tipScaleEnd, 0.85)
   );
   const tipMinR = Math.max(
     0,
-    ((opt?.engine?.overrides?.tipMinPx ??
-      opt?.overrides?.tipMinPx ??
-      0) as number) * 0.5
+    num(opt.engine?.overrides?.tipMinPx ?? opt.overrides?.tipMinPx, 0) * 0.5
   );
 
   const grainKind: string =
-    (opt?.overrides?.grainKind as string | undefined) ??
-    (opt?.engine?.grain?.kind as string | undefined) ??
+    (opt.overrides?.grainKind as string | undefined) ??
+    (opt.engine?.grain?.kind as string | undefined) ??
     "paper";
-  const grainDepth: number = isInk
-    ? 0
-    : grainKind === "none"
+  const grainDepth: number =
+    isInk || grainKind === "none"
       ? 0
       : clamp01(
-          ((opt?.overrides?.grainDepth ??
-            opt?.engine?.grain?.depth ??
-            TT.grainDepthDefault * 100) as number) / 100
+          num(
+            opt.overrides?.grainDepth ?? opt.engine?.grain?.depth,
+            TT.grainDepthDefault * 100
+          ) / 100
         );
-  const grainScale: number =
-    (opt?.overrides?.grainScale as number | undefined) ??
-    (opt?.engine?.grain?.scale as number | undefined) ??
-    TT.grainScaleDefault;
-  const grainRotateDeg: number =
-    (opt?.overrides?.grainRotate as number | undefined) ??
-    (opt?.engine?.grain?.rotate as number | undefined) ??
-    8;
+  const grainScale: number = num(
+    opt.overrides?.grainScale ?? opt.engine?.grain?.scale,
+    TT.grainScaleDefault
+  );
+  const grainRotateDeg: number = num(
+    opt.overrides?.grainRotate ?? opt.engine?.grain?.rotate,
+    8
+  );
   const grainRotateRad: number = (grainRotateDeg * Math.PI) / 180;
 
   const color = opt.color ?? "#000000";
 
-  const inputRadius = Math.max(0.5, (opt.baseSizePx || 8) * 0.5);
-  const baseRadius = opt?.overrides?.centerlinePencil
+  const inputRadius = Math.max(0.5, (opt.baseSizePx ?? 8) * 0.5);
+  const baseRadius = preview
     ? Math.max(0.5, inputRadius * TT.bodyWidthScale)
     : inputRadius;
 
   // ---- Path (engine supplies path; use default preview if missing)
   const inputPath: InputPoint[] =
-    opt?.path && opt.path.length > 1
+    opt.path && opt.path.length > 1
       ? (opt.path as InputPoint[])
       : createDefaultPreviewPath(viewW, viewH);
 
-  // ---- Resampling (uniform arc length). Ribbon doesn't use spacing, but we
-  // can still respect "predictPx" to lightly nudge forward for smoother tips.
+  // ---- Resampling
   const arcStep = Math.max(0.45, baseRadius * 0.15);
   let samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
+  if (samples.length === 0) return;
 
-  // NEW: predictive nudge (Phase 1 input.quality) — clamp to a small, safe range.
-  const predictPx = Math.max(
-    0,
-    Math.min(24, opt.input?.quality?.predictPx ?? 0)
-  );
+  // Predictive nudge (safe under strict array indexing)
+  const predictPx = clamp(num(opt.input?.quality?.predictPx, 0), 0, 24);
   if (predictPx > 0 && samples.length >= 2) {
-    const totalLen = samples[samples.length - 1].arcLen || 1;
+    const totalLen = last(samples).arcLen || 1;
     samples = samples.map((s, i) => {
-      const prev = i > 0 ? samples[i - 1] : s;
-      const next = i < samples.length - 1 ? samples[i + 1] : s;
+      const prev = i > 0 ? get(samples, i - 1) : s;
+      const next = i < samples.length - 1 ? get(samples, i + 1) : s;
       const ang = Math.atan2(next.y - prev.y, next.x - prev.x);
-      // Fade near tips to avoid overshoot
       const u = s.arcLen / totalLen;
-      const fade = 1 - 4 * Math.pow(u - 0.5, 2); // bell 0..1..0
+      const fade = 1 - 4 * Math.pow(u - 0.5, 2);
       const k = predictPx * Math.max(0, fade);
       return {
         x: s.x + Math.cos(ang) * k,
@@ -435,10 +432,9 @@ export async function drawRibbonToCanvas(
     });
   }
 
-  if (!samples.length) return;
-  const totalLen = samples[samples.length - 1].arcLen;
+  const totalLen = last(samples).arcLen;
 
-  /** blend factor that softly keeps tips thin via start/end tapers */
+  /** tip blending */
   function tipBlend(tNorm: number, startAmt: number, endAmt: number): number {
     const edgeFrac = 0.42;
     const d = Math.min(tNorm, 1 - tNorm);
@@ -457,23 +453,19 @@ export async function drawRibbonToCanvas(
       TUNING_PENCIL.taperMin,
       TUNING_PENCIL.taperMax
     );
-
     const tipTStart = clamp01(s / taperDen);
     const tipTEnd = clamp01((totalLen - s) / taperDen);
 
-    // sharper tips
     const sharpen =
       1 -
       TUNING_PENCIL.tipSharpenBoost *
         Math.pow(1 - Math.min(tipTStart, tipTEnd), 1.6);
 
-    // mid-body gentle boost (bell)
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
     const midBoost =
       1 + TUNING_PENCIL.midBoostAmt * Math.pow(Math.max(0, bell), 1.2);
 
-    // soft tip blending from overrides
     const blend = tipBlend(u, tipScaleStart, tipScaleEnd);
 
     const r =
@@ -489,20 +481,12 @@ export async function drawRibbonToCanvas(
     s: number,
     angle: number
   ): { ox: number; oy: number } => {
-    const tip = Math.min(
-      s /
-        clamp(
-          baseRadius * TUNING_PENCIL.taperRadiusFactor,
-          TUNING_PENCIL.taperMin,
-          TUNING_PENCIL.taperMax
-        ),
-      (totalLen - s) /
-        clamp(
-          baseRadius * TUNING_PENCIL.taperRadiusFactor,
-          TUNING_PENCIL.taperMin,
-          TUNING_PENCIL.taperMax
-        )
+    const taperDen = clamp(
+      baseRadius * TUNING_PENCIL.taperRadiusFactor,
+      TUNING_PENCIL.taperMin,
+      TUNING_PENCIL.taperMax
     );
+    const tip = Math.min(s / taperDen, (totalLen - s) / taperDen);
     const fadeTowardTips = clamp01(1 - tip * 1.5);
     const u = clamp01(s / Math.max(1e-6, totalLen));
     const bell = 1 - 4 * Math.pow(u - 0.5, 2);
@@ -513,13 +497,14 @@ export async function drawRibbonToCanvas(
   };
 
   const ribbonPath: Path2D = buildRibbonOutlinePath(samples, radiusAt);
+
   ctx.save();
   ctx.clip(ribbonPath);
 
   /* 1) Base fill */
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = opacity01 * (isInk ? 0.86 : 0.62) * flow01;
-  (ctx as CanvasRenderingContext2D).fillStyle = hexToRGBA(
+  (ctx as unknown as { fillStyle: string }).fillStyle = hexToRGBA(
     color,
     ctx.globalAlpha
   );
@@ -532,29 +517,29 @@ export async function drawRibbonToCanvas(
       0.6,
       TUNING_PENCIL.glazeBlurPx * TUNING_PENCIL.opacitySpineBlurK
     );
-    (ctx as CanvasRenderingContext2D).filter = `blur(${blurPx}px)`;
+    (ctx as unknown as { filter?: string }).filter = `blur(${blurPx}px)`;
     ctx.globalAlpha = clamp01(
       opacity01 * TUNING_PENCIL.opacitySpineAlpha * coreStrengthK
     );
-    (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
     );
-    (ctx as CanvasRenderingContext2D).lineCap = "round";
-    (ctx as CanvasRenderingContext2D).lineJoin = "round";
+    (ctx as unknown as { lineCap: CanvasLineCap }).lineCap = "round";
+    (ctx as unknown as { lineJoin: CanvasLineJoin }).lineJoin = "round";
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
+      const s = get(samples, i);
       const j = computeMicroJitter(s.arcLen, s.angle);
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
       1,
       meanR * TUNING_PENCIL.opacitySpineWidth
     );
     ctx.stroke();
-    (ctx as CanvasRenderingContext2D).filter = "none";
+    (ctx as unknown as { filter?: string }).filter = "none";
   }
 
   /* 3) Plate (multiply) */
@@ -562,32 +547,35 @@ export async function drawRibbonToCanvas(
   {
     const meanR = baseRadius * 0.95;
     const plateWidth = Math.max(1.0, meanR * (isInk ? 1.5 : 1.96));
-    (ctx as CanvasRenderingContext2D).filter =
+    (ctx as unknown as { filter?: string }).filter =
       `blur(${Math.max(0.6, TUNING_PENCIL.glazeBlurPx * (isInk ? 0.9 : 1.15)).toFixed(3)}px)`;
     ctx.globalAlpha = clamp01(
       opacity01 * TUNING_PENCIL.plateAlpha * coreStrengthK
     );
-    (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
     );
-    (ctx as CanvasRenderingContext2D).lineCap = "round";
-    (ctx as CanvasRenderingContext2D).lineJoin = "round";
+    (ctx as unknown as { lineCap: CanvasLineCap }).lineCap = "round";
+    (ctx as unknown as { lineJoin: CanvasLineJoin }).lineJoin = "round";
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
+      const s = get(samples, i);
       const j = computeMicroJitter(s.arcLen, s.angle);
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(1, plateWidth);
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
+      1,
+      plateWidth
+    );
     ctx.stroke();
-    (ctx as CanvasRenderingContext2D).filter = "none";
+    (ctx as unknown as { filter?: string }).filter = "none";
   }
 
   /* 4) Two glazes (multiply) */
   ctx.globalCompositeOperation = "multiply";
-  (ctx as CanvasRenderingContext2D).filter =
+  (ctx as unknown as { filter?: string }).filter =
     `blur(${Math.max(0.6, TUNING_PENCIL.glazeBlurPx).toFixed(3)}px)`;
   {
     const meanR = baseRadius * 0.95;
@@ -595,18 +583,18 @@ export async function drawRibbonToCanvas(
     ctx.globalAlpha = clamp01(
       opacity01 * TUNING_PENCIL.glaze1Alpha * coreStrengthK
     );
-    (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
     );
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
+      const s = get(samples, i);
       const j = computeMicroJitter(s.arcLen, s.angle);
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
       1,
       meanR * (isInk ? 1.1 : 1.34)
     );
@@ -615,24 +603,24 @@ export async function drawRibbonToCanvas(
     ctx.globalAlpha = clamp01(
       opacity01 * TUNING_PENCIL.glaze2Alpha * coreStrengthK
     );
-    (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
     );
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
+      const s = get(samples, i);
       const j = computeMicroJitter(s.arcLen, s.angle);
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
       1,
       meanR * (isInk ? 1.25 : 1.58)
     );
     ctx.stroke();
   }
-  (ctx as CanvasRenderingContext2D).filter = "none";
+  (ctx as unknown as { filter?: string }).filter = "none";
 
   /* 5) Spine glaze */
   ctx.globalCompositeOperation = "multiply";
@@ -641,18 +629,18 @@ export async function drawRibbonToCanvas(
     ctx.globalAlpha = clamp01(
       opacity01 * TUNING_PENCIL.spineAlpha * coreStrengthK
     );
-    (ctx as CanvasRenderingContext2D).strokeStyle = hexToRGBA(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = hexToRGBA(
       color,
       ctx.globalAlpha
     );
     ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
+      const s = get(samples, i);
       const j = computeMicroJitter(s.arcLen, s.angle);
       if (i === 0) ctx.moveTo(s.x + j.ox, s.y + j.oy);
       else ctx.lineTo(s.x + j.ox, s.y + j.oy);
     }
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
       1,
       meanR * (isInk ? 0.9 : 0.96)
     );
@@ -661,26 +649,30 @@ export async function drawRibbonToCanvas(
 
   /* 6) Light tip fade — pencils only */
   if (!isInk) {
-    const first = samples[0];
-    const last = samples[samples.length - 1];
+    const firstS = get(samples, 0);
+    const lastS = last(samples);
     ctx.globalCompositeOperation = "destination-in";
-    const tipFade = (ctx as CanvasRenderingContext2D).createLinearGradient(
-      first.x,
-      first.y,
-      last.x,
-      last.y
-    );
-    tipFade.addColorStop(
+    const grad = (
+      ctx as unknown as {
+        createLinearGradient: (
+          x0: number,
+          y0: number,
+          x1: number,
+          y1: number
+        ) => CanvasGradient;
+      }
+    ).createLinearGradient(firstS.x, firstS.y, lastS.x, lastS.y);
+    grad.addColorStop(
       0.0,
       `rgba(0,0,0,${TUNING_PENCIL.tipMinAlpha.toFixed(2)})`
     );
-    tipFade.addColorStop(0.08, "rgba(0,0,0,1.0)");
-    tipFade.addColorStop(0.92, "rgba(0,0,0,1.0)");
-    tipFade.addColorStop(
+    grad.addColorStop(0.08, "rgba(0,0,0,1.0)");
+    grad.addColorStop(0.92, "rgba(0,0,0,1.0)");
+    grad.addColorStop(
       1.0,
       `rgba(0,0,0,${TUNING_PENCIL.tipMinAlpha.toFixed(2)})`
     );
-    (ctx as CanvasRenderingContext2D).fillStyle = tipFade;
+    (ctx as unknown as { fillStyle: CanvasGradient }).fillStyle = grad;
     ctx.fillRect(0, 0, viewW, viewH);
     ctx.globalCompositeOperation = "source-over";
   }
@@ -688,13 +680,14 @@ export async function drawRibbonToCanvas(
   /* 7) Inner rim polish — pencils only */
   if (!isInk && TUNING_PENCIL.rimAlpha > 0.01) {
     ctx.globalCompositeOperation = "destination-out";
-    (ctx as CanvasRenderingContext2D).filter = "blur(0.35px)";
-    (ctx as CanvasRenderingContext2D).strokeStyle = "rgba(0,0,0,0.18)";
-    (ctx as CanvasRenderingContext2D).lineCap = "round";
-    (ctx as CanvasRenderingContext2D).lineJoin = "round";
-    (ctx as CanvasRenderingContext2D).lineWidth = 0.7;
+    (ctx as unknown as { filter?: string }).filter = "blur(0.35px)";
+    (ctx as unknown as { strokeStyle: string }).strokeStyle =
+      "rgba(0,0,0,0.18)";
+    (ctx as unknown as { lineCap: CanvasLineCap }).lineCap = "round";
+    (ctx as unknown as { lineJoin: CanvasLineJoin }).lineJoin = "round";
+    (ctx as unknown as { lineWidth: number }).lineWidth = 0.7;
     ctx.stroke(ribbonPath);
-    (ctx as CanvasRenderingContext2D).filter = "none";
+    (ctx as unknown as { filter?: string }).filter = "none";
     ctx.globalCompositeOperation = "source-over";
   }
 
@@ -702,12 +695,12 @@ export async function drawRibbonToCanvas(
   if (!isInk && grainDepth > 0.001) {
     const seed: number = (opt.seed ?? 7) % 997;
     const grainTile = createNoiseTile(64, 31 * seed + 7);
-    const first = samples[0];
+    const firstS = get(samples, 0);
 
     // 8a) Multiply grain
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
-    ctx.translate(first.x, first.y);
+    ctx.translate(firstS.x, firstS.y);
     ctx.rotate(grainRotateRad);
     ctx.scale(TUNING_PENCIL.grainAnisoX, TUNING_PENCIL.grainAnisoY);
     const grainExtent = Math.max(
@@ -727,14 +720,17 @@ export async function drawRibbonToCanvas(
     // 8b) Restrict grain to a slightly narrower core band.
     ctx.globalCompositeOperation = "destination-in";
     const meanR = baseRadius * 0.95;
-    (ctx as CanvasRenderingContext2D).strokeStyle = "rgba(0,0,0,1)";
-    (ctx as CanvasRenderingContext2D).lineCap = "round";
-    (ctx as CanvasRenderingContext2D).lineJoin = "round";
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(0.8, meanR * 1.24);
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = "rgba(0,0,0,1)";
+    (ctx as unknown as { lineCap: CanvasLineCap }).lineCap = "round";
+    (ctx as unknown as { lineJoin: CanvasLineJoin }).lineJoin = "round";
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
+      0.8,
+      meanR * 1.24
+    );
     ctx.beginPath();
-    ctx.moveTo(samples[0].x, samples[0].y);
+    ctx.moveTo(get(samples, 0).x, get(samples, 0).y);
     for (let i = 1; i < samples.length; i++)
-      ctx.lineTo(samples[i].x, samples[i].y);
+      ctx.lineTo(get(samples, i).x, get(samples, i).y);
     ctx.stroke();
 
     ctx.globalCompositeOperation = "source-over";
@@ -743,7 +739,7 @@ export async function drawRibbonToCanvas(
     const dustTile = createNoiseTile(32, 101 * seed + 13);
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
-    ctx.translate(first.x, first.y);
+    ctx.translate(firstS.x, firstS.y);
     ctx.rotate(grainRotateRad * TUNING_PENCIL.fineDustRotateK);
     ctx.scale(1.08, 1.08);
     const dustExtent = Math.max(
@@ -762,29 +758,38 @@ export async function drawRibbonToCanvas(
 
     // 8d) Fade dust toward tips and keep it within the core band
     ctx.globalCompositeOperation = "destination-in";
-    const last = samples[samples.length - 1];
-    const dustFade = (ctx as CanvasRenderingContext2D).createLinearGradient(
-      samples[0].x,
-      samples[0].y,
-      last.x,
-      last.y
+    const lastS = last(samples);
+    const dustFade = (
+      ctx as unknown as {
+        createLinearGradient: (
+          x0: number,
+          y0: number,
+          x1: number,
+          y1: number
+        ) => CanvasGradient;
+      }
+    ).createLinearGradient(
+      get(samples, 0).x,
+      get(samples, 0).y,
+      lastS.x,
+      lastS.y
     );
     dustFade.addColorStop(0.0, "rgba(0,0,0,0.50)");
     dustFade.addColorStop(0.5, "rgba(0,0,0,1.00)");
     dustFade.addColorStop(1.0, "rgba(0,0,0,0.50)");
-    (ctx as CanvasRenderingContext2D).fillStyle = dustFade;
+    (ctx as unknown as { fillStyle: CanvasGradient }).fillStyle = dustFade;
     ctx.fillRect(0, 0, viewW, viewH);
 
     ctx.globalCompositeOperation = "destination-in";
-    (ctx as CanvasRenderingContext2D).strokeStyle = "rgba(0,0,0,1)";
-    (ctx as CanvasRenderingContext2D).lineWidth = Math.max(
+    (ctx as unknown as { strokeStyle: string }).strokeStyle = "rgba(0,0,0,1)";
+    (ctx as unknown as { lineWidth: number }).lineWidth = Math.max(
       0.7,
       baseRadius * 1.16
     );
     ctx.beginPath();
-    ctx.moveTo(samples[0].x, samples[0].y);
+    ctx.moveTo(get(samples, 0).x, get(samples, 0).y);
     for (let i = 1; i < samples.length; i++)
-      ctx.lineTo(samples[i].x, samples[i].y);
+      ctx.lineTo(get(samples, i).x, get(samples, i).y);
     ctx.stroke();
 
     ctx.globalCompositeOperation = "source-over";

@@ -1,5 +1,9 @@
 // FILE: src/lib/debug/hud.ts
+"use client";
 
+import { create } from "zustand";
+
+/* ----------------------------- your original types ----------------------------- */
 export type HudMetrics = {
   fps?: number; // frames per second
   frameMs?: number; // last frame time
@@ -22,7 +26,6 @@ function safeNumber(v: unknown, digits = 1): string {
 }
 
 function createNoopHud(): Hud {
-  // Minimal stub element so callers can still append/read if they really want to.
   const el = (
     typeof document !== "undefined"
       ? document.createElement("div")
@@ -50,7 +53,7 @@ export function createHud(
   const el = document.createElement("div");
   el.setAttribute("role", "status");
   el.setAttribute("aria-live", "polite");
-  el.setAttribute("data-debug-hud", ""); // handy for e2e tests
+  el.setAttribute("data-debug-hud", "");
   el.style.position = "fixed";
   el.style.right = "8px";
   el.style.top = "8px";
@@ -73,6 +76,7 @@ export function createHud(
     worker: document.createElement("div"),
     queue: document.createElement("div"),
     stamps: document.createElement("div"),
+    hint: document.createElement("div"),
   };
 
   el.appendChild(lines.fps);
@@ -81,6 +85,10 @@ export function createHud(
   el.appendChild(lines.worker);
   el.appendChild(lines.queue);
   el.appendChild(lines.stamps);
+  el.appendChild(lines.hint);
+  lines.hint.style.opacity = "0.6";
+  lines.hint.style.marginTop = "4px";
+  lines.hint.textContent = "Toggle: Ctrl/Cmd+Shift+H";
 
   parent.appendChild(el);
 
@@ -139,4 +147,48 @@ export function createFpsTracker() {
   }
 
   return { tick };
+}
+
+/* ------------------------ NEW: global store + bridge ------------------------ */
+
+type PerfHudState = {
+  visible: boolean;
+  metrics: HudMetrics;
+  toggleVisible: () => void;
+  setMetrics: (m: HudMetrics) => void;
+};
+
+export const perfHudStore = create<PerfHudState>((set) => ({
+  visible: false,
+  metrics: {},
+  toggleVisible: () => set((s) => ({ visible: !s.visible })),
+  setMetrics: (m) => set(() => ({ metrics: m })),
+}));
+
+/** Public helper to push metrics from anywhere (workers, paint loop, etc.). */
+export function setPerfMetrics(m: HudMetrics): void {
+  perfHudStore.getState().setMetrics(m);
+}
+
+/** Attach a singleton DOM HUD and keep it synced with the store. Call once. */
+let __hudSingleton: Hud | null = null;
+let __unsub: (() => void) | null = null;
+
+export function ensureHudAttached(parent?: HTMLElement | null): void {
+  if (typeof document === "undefined") return;
+
+  if (!__hudSingleton) {
+    __hudSingleton = createHud(parent ?? document.body);
+  }
+  if (!__unsub) {
+    __unsub = perfHudStore.subscribe((s) => {
+      // visibility
+      if (__hudSingleton) {
+        if (s.visible) __hudSingleton.show();
+        else __hudSingleton.hide();
+        // metrics
+        __hudSingleton.update(s.metrics);
+      }
+    });
+  }
 }

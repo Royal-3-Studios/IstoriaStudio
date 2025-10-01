@@ -1,7 +1,6 @@
-// src/lib/brush/backends/utils/canvas.ts
+// FILE: src/lib/brush/backends/utils/canvas.ts
 
-import type { BlendMode } from "@/lib/brush/core/types";
-import type { PixelBuf } from "@/lib/brush/core/types";
+import type { BlendMode, PixelBuf } from "@/lib/brush/core/types";
 import {
   toCompositeOp,
   isCompositeSupported,
@@ -18,15 +17,32 @@ import {
 export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
 export type Ctx2D = BlendCtx2D;
 
-function isOffscreenCanvas(x: unknown): x is OffscreenCanvas {
-  return typeof OffscreenCanvas !== "undefined" && x instanceof OffscreenCanvas;
+function getOffscreenCtor(): typeof OffscreenCanvas | undefined {
+  return (globalThis as { OffscreenCanvas?: typeof OffscreenCanvas })
+    .OffscreenCanvas;
+}
+
+function getHtmlCanvasCtor(): typeof HTMLCanvasElement | undefined {
+  return (globalThis as { HTMLCanvasElement?: typeof HTMLCanvasElement })
+    .HTMLCanvasElement;
+}
+
+export function isOffscreenCanvas(x: unknown): x is OffscreenCanvas {
+  const C = getOffscreenCtor();
+  return typeof C !== "undefined" && x instanceof C;
+}
+
+export function isHtmlCanvas(x: unknown): x is HTMLCanvasElement {
+  const H = getHtmlCanvasCtor();
+  return typeof H !== "undefined" && x instanceof H;
 }
 
 function isCanvas2DContext(ctx: RenderingContext | Ctx2D | null): ctx is Ctx2D {
   return (
     !!ctx &&
-    typeof (ctx as CanvasRenderingContext2D).getImageData === "function" &&
-    typeof (ctx as CanvasRenderingContext2D).drawImage === "function"
+    typeof (ctx as CanvasRenderingContext2D).drawImage === "function" &&
+    typeof (ctx as CanvasRenderingContext2D).clearRect === "function" &&
+    typeof (ctx as CanvasRenderingContext2D).setTransform === "function"
   );
 }
 
@@ -200,8 +216,9 @@ export {
 
 /** Create an offscreen layer (prefers OffscreenCanvas). */
 export function createLayer(width: number, height: number): CanvasLike {
-  if (typeof OffscreenCanvas !== "undefined") {
-    return new OffscreenCanvas(
+  const C = getOffscreenCtor();
+  if (typeof C !== "undefined") {
+    return new C(
       Math.max(1, Math.floor(width)),
       Math.max(1, Math.floor(height))
     );
@@ -227,7 +244,6 @@ export function withLayer<T>(
 
 /* ============================== Premultiply helpers ======================= */
 
-/** Premultiply a PixelBuf in-place (RGBA sRGB bytes). */
 export function premultiply(buf: PixelBuf): void {
   const d = buf.data;
   for (let i = 0; i < d.length; i += 4) {
@@ -238,7 +254,6 @@ export function premultiply(buf: PixelBuf): void {
   }
 }
 
-/** Un-premultiply a PixelBuf in-place (RGBA sRGB bytes). */
 export function unpremultiply(buf: PixelBuf): void {
   const d = buf.data;
   for (let i = 0; i < d.length; i += 4) {

@@ -4,7 +4,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type Konva from "konva";
-import Transformer from "@/components/konva/TransformerClient";
+import Transformer from "@/features/editor/canvas/konva//TransformerClient";
+import type {
+  TextLayer,
+  BoxLayer,
+  CanvasBg,
+} from "@/features/editor/types/layers";
+
 import {
   Sheet,
   SheetContent,
@@ -27,41 +33,37 @@ import EditBar from "@/components/editor/EditBar";
 import LeftPanel from "@/components/editor/LeftPanel";
 import RightPanel from "@/components/editor/RightPanel";
 import RightSidebar from "@/components/editor/RightSidebar";
-import { useCanvasSizing } from "@/app/projects/[projectId]/editor/hooks/useCanvasSizing";
-import { useFullscreen } from "@/app/projects/[projectId]/editor/hooks/useFullscreen";
+import { useCanvasSizing } from "@/features/editor/hooks/useCanvasSizing";
+import { useFullscreen } from "@/features/editor/hooks/useFullscreen";
 import LeftSidebar from "./LeftSidebar";
 import { EditorToolsProvider } from "./context/EditorToolsProvider";
 
 // Konva (client-only)
 const Stage = dynamic(
-  () => import("@/components/konva/StageClient").then((m) => m.default),
+  () =>
+    import("@/features/editor/canvas/konva/StageClient").then((m) => m.default),
   { ssr: false }
 );
 const Layer = dynamic(
-  () => import("@/components/konva/LayerClient").then((m) => m.default),
+  () =>
+    import("@/features/editor/canvas/konva/LayerClient").then((m) => m.default),
   { ssr: false }
 );
 const KonvaImage = dynamic(
-  () => import("@/components/konva/ImageClient").then((m) => m.default),
+  () =>
+    import("@/features/editor/canvas/konva/ImageClient").then((m) => m.default),
   { ssr: false }
 );
 const KonvaText = dynamic(
-  () => import("@/components/konva/TextClient").then((m) => m.default),
+  () =>
+    import("@/features/editor/canvas/konva/TextClient").then((m) => m.default),
   { ssr: false }
 );
 const Rect = dynamic(
-  () => import("@/components/konva/RectClient").then((m) => m.default),
+  () =>
+    import("@/features/editor/canvas/konva/RectClient").then((m) => m.default),
   { ssr: false }
 );
-
-type TextLayer = {
-  id: string;
-  text: string;
-  x: number;
-  y: number;
-  size: number;
-};
-type BoxLayer = { id: string; x: number; y: number; w: number; h: number };
 
 export type FullEditorOverlayProps = {
   open: boolean;
@@ -469,13 +471,17 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                       width={stageWidth}
                       height={stageHeight}
                       ref={stageRef}
-                      onMouseDown={(e) => {
-                        if (e.target === e.target.getStage())
+                      onMouseDown={(
+                        e: Konva.KonvaEventObject<MouseEvent>
+                      ): void => {
+                        if (e.target === e.target.getStage()) {
                           setSelectedId(null);
+                        }
                       }}
-                      onTap={(e) => {
-                        if (e.target === e.target.getStage())
+                      onTap={(e: Konva.KonvaEventObject<TouchEvent>): void => {
+                        if (e.target === e.target.getStage()) {
                           setSelectedId(null);
+                        }
                       }}
                     >
                       <Layer scaleX={totalScale} scaleY={totalScale}>

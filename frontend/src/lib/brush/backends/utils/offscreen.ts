@@ -1,6 +1,10 @@
 // FILE: src/lib/brush/backends/utils/offscreen.ts
+/**
+ * Offscreen/DOM canvas helpers — DPR sizing, clearing, and CSS-space drawing.
+ * Works with both HTMLCanvasElement and OffscreenCanvas.
+ */
 
-import { type Ctx2D, isHtmlCanvas } from "./ctx2d";
+import { type Ctx2D, isHtmlCanvas } from "./canvas";
 
 /* ----------------------------- Small type bridge ----------------------------- */
 
@@ -66,11 +70,19 @@ export function ensureCanvasDprSize(
   return { pixelW: w, pixelH: h };
 }
 
+/** Read current pixel (backing-store) size from a canvas. */
+export function getCanvasPixelSize(
+  canvas: HTMLCanvasElement | OffscreenCanvas
+) {
+  return getCanvasWH(canvas);
+}
+
 /** Reset transform to identity and clear the full pixel buffer. */
 export function clear2D(ctx: Ctx2D, pixelW?: number, pixelH?: number) {
-  const { width, height } = getCanvasPixelSize(
-    (ctx as unknown as { canvas: HTMLCanvasElement | OffscreenCanvas }).canvas
-  );
+  const canvas = (
+    ctx as unknown as { canvas: HTMLCanvasElement | OffscreenCanvas }
+  ).canvas;
+  const { width, height } = getCanvasPixelSize(canvas);
   const w = pixelW ?? width ?? 0;
   const h = pixelH ?? height ?? 0;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -101,11 +113,4 @@ export function drawSourceCss(
   cssH: number
 ) {
   ctx.drawImage(src, cssX, cssY, cssW, cssH);
-}
-
-/** Read current pixel (backing-store) size from a canvas. */
-export function getCanvasPixelSize(
-  canvas: HTMLCanvasElement | OffscreenCanvas
-) {
-  return getCanvasWH(canvas);
 }

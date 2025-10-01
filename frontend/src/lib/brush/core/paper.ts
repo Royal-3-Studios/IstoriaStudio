@@ -2,22 +2,17 @@
 /**
  * Paper / Material Model
  * ------------------------------------------------------------
- * A light-weight substrate model you can query from any backend.
- * Goals:
- *  - Deterministic look per document (seeded).
- *  - Cheap evaluations (cached grain tiles + lazy maps).
- *  - A tooth model with "body" (pepper) and "flank" (torn edge bias).
- *  - Utility to obtain a repeated grain pattern at arbitrary rotation.
- *  - Simple ink shading curve for absorb/reflect feel.
- *
- * Does NOT mutate engine or backends by itself; backends can opt into it.
+ * Lightweight substrate model for backends.
+ * - Deterministic per document (seeded RNG)
+ * - Cheap evals (cached tiles, lazy maps)
+ * - Tooth model with "body" (pepper) and "flank" (edge bias)
+ * - Grain pattern with rotation + anchor stability
+ * - Simple ink shading curve
  */
 
-import { createLayer } from "@/lib/brush/backends/utils/canvas";
+import { createLayer, get2DOrNull, type Ctx2D } from "@backends";
 import { generateFbmNoiseTexture } from "@/lib/brush/backends/utils/texture";
 import { mulberry32 } from "@/lib/brush/backends/utils/random";
-
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 /* ========================================================================== *
  * Small helpers
@@ -25,17 +20,25 @@ type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-function isCtx2D(ctx: unknown): ctx is Ctx2D {
-  return (
-    !!ctx && typeof (ctx as CanvasRenderingContext2D).drawImage === "function"
-  );
-}
-
 function createLayerPx(
   w: number,
   h: number
 ): HTMLCanvasElement | OffscreenCanvas {
   return createLayer(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
+}
+
+function require2D(
+  c: HTMLCanvasElement | OffscreenCanvas,
+  attrs: CanvasRenderingContext2DSettings = { alpha: true }
+): Ctx2D {
+  const ctx = get2DOrNull(c, attrs);
+  if (!ctx) throw new Error("2D context unavailable");
+  return ctx;
+}
+
+function supportsFilter(ctx: Ctx2D): ctx is CanvasRenderingContext2D {
+  // OffscreenCanvasRenderingContext2D may not expose 'filter'
+  return "filter" in (ctx as CanvasRenderingContext2D);
 }
 
 /* ========================================================================== *
@@ -151,16 +154,12 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     grainTiles: new Map(),
   };
 
-  // --- Make small procedural tiles ------------------------------------------------
+  // --- Procedural tiles -----------------------------------------------------
 
-  function makeDotsTile(
-    sizePx: number,
-    density = 1.0
-  ): HTMLCanvasElement | OffscreenCanvas {
+  function makeDotsTile(sizePx: number, density = 1.0) {
     const s = Math.max(8, Math.floor(sizePx));
     const c = createLayerPx(s, s);
-    const cx = c.getContext("2d", { alpha: true });
-    if (!isCtx2D(cx)) throw new Error("2D context unavailable");
+    const cx = require2D(c, { alpha: true });
     cx.clearRect(0, 0, s, s);
     cx.fillStyle = "rgba(0,0,0,0.55)";
     const count = Math.max(1, Math.floor((s * s * density) / 160));
@@ -175,14 +174,10 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     return c;
   }
 
-  function makeHatchTile(
-    sizePx: number,
-    thickness = 1
-  ): HTMLCanvasElement | OffscreenCanvas {
+  function makeHatchTile(sizePx: number, thickness = 1) {
     const s = Math.max(8, Math.floor(sizePx));
     const c = createLayerPx(s, s);
-    const cx = c.getContext("2d", { alpha: true });
-    if (!isCtx2D(cx)) throw new Error("2D context unavailable");
+    const cx = require2D(c, { alpha: true });
     cx.clearRect(0, 0, s, s);
     cx.strokeStyle = "rgba(0,0,0,0.6)";
     cx.lineWidth = Math.max(0.5, thickness);
@@ -195,21 +190,17 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     return c;
   }
 
-  function makeNoiseTile(sizePx: number): HTMLCanvasElement | OffscreenCanvas {
+  function makeNoiseTile(sizePx: number) {
     const s = Math.max(24, Math.min(256, Math.floor(sizePx)));
     const tex = generateFbmNoiseTexture(s, 4, 0.5, 2.0);
     const tile = createLayerPx(tex.width, tex.height);
-    const tx = tile.getContext("2d", { alpha: true });
-    if (!isCtx2D(tx)) throw new Error("2D context unavailable");
+    const tx = require2D(tile, { alpha: true });
     const id = new ImageData(tex.pixels.data, tex.width, tex.height);
     tx.putImageData(id, 0, 0);
     return tile;
   }
 
-  function getOrBuildGrainTile(
-    kind: GrainKind,
-    tilePx: number
-  ): HTMLCanvasElement | OffscreenCanvas {
+  function getOrBuildGrainTile(kind: GrainKind, tilePx: number) {
     const key = `${kind}:${Math.round(tilePx)}`;
     const hit = cache.grainTiles.get(key);
     if (hit) return hit;
@@ -225,8 +216,7 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
                 // fallback checker
                 const s = Math.max(8, Math.floor(tilePx));
                 const cc = createLayerPx(s, s);
-                const cx = cc.getContext("2d", { alpha: true });
-                if (!isCtx2D(cx)) throw new Error("2D context unavailable");
+                const cx = require2D(cc, { alpha: true });
                 cx.clearRect(0, 0, s, s);
                 const h = Math.floor(s / 2);
                 cx.fillStyle = "rgba(0,0,0,0.75)";
@@ -259,10 +249,8 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     const base = generateFbmNoiseTexture(tile, 4, 0.5, 2.0);
     const body = createLayerPx(tile, tile);
     const flank = createLayerPx(tile, tile);
-    const bctx = body.getContext("2d", { alpha: true });
-    const fctx = flank.getContext("2d", { alpha: true });
-    if (!isCtx2D(bctx) || !isCtx2D(fctx))
-      throw new Error("2D context unavailable");
+    const bctx = require2D(body, { alpha: true });
+    const fctx = require2D(flank, { alpha: true });
 
     // write body: medium contrast pepper
     {
@@ -274,7 +262,7 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
       bctx.globalAlpha = 1;
       bctx.globalCompositeOperation = "source-over";
     }
-    // write flank: higher contrast, then blur a touch
+    // write flank: higher contrast, then blur a touch (guard filter)
     {
       const id = new ImageData(base.pixels.data, base.width, base.height);
       fctx.putImageData(id, 0, 0);
@@ -282,10 +270,11 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
       fctx.globalAlpha = 0.65;
       fctx.drawImage(flank as CanvasImageSource, 0, 0);
       fctx.globalCompositeOperation = "source-over";
-      // tiny soften
-      (fctx as CanvasRenderingContext2D).filter = "blur(0.3px)";
-      fctx.drawImage(flank as CanvasImageSource, 0, 0);
-      (fctx as CanvasRenderingContext2D).filter = "none";
+      if (supportsFilter(fctx)) {
+        fctx.filter = "blur(0.3px)";
+        fctx.drawImage(flank as CanvasImageSource, 0, 0);
+        fctx.filter = "none";
+      }
     }
 
     cache.toothTiles = { body, flank };
@@ -298,11 +287,9 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     const W = Math.max(1, Math.floor(width * dpr));
     const H = Math.max(1, Math.floor(height * dpr));
     const nm = createLayerPx(W, H);
-    const nx = nm.getContext("2d", { alpha: true });
-    if (!isCtx2D(nx)) throw new Error("2D context unavailable");
+    const nx = require2D(nm, { alpha: true });
 
     const tile = getOrBuildGrainTile("noise", 96);
-    // cheap tiling fill
     const pat = nx.createPattern(tile as CanvasImageSource, "repeat");
     if (pat) {
       nx.fillStyle = pat;
@@ -314,7 +301,6 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     const d = img.data;
     for (let i = 0; i < d.length; i += 4) {
       const l = d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722; // 0..255
-      // center around 128, pack strength lightly
       const nxC = 128 + (l - 128) * 0.6;
       const nyC = 128 + (128 - l) * 0.6;
       d[i] = nxC;
@@ -337,15 +323,14 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
 
     sampleTooth(x: number, y: number) {
       const { body, flank } = getOrBuildToothTiles();
-      const bx = body.getContext("2d");
-      const fx = flank.getContext("2d");
-      if (!isCtx2D(bx) || !isCtx2D(fx)) return { body: 0, flank: 0 };
-      // map CSS -> device
+      const bx = require2D(body);
+      const fx = require2D(flank);
+      // map CSS -> device, wrap to tile
       const px = Math.floor((x * dpr) % (body.width as number));
       const py = Math.floor((y * dpr) % (body.height as number));
       const bd = bx.getImageData(px, py, 1, 1).data;
       const fd = fx.getImageData(px, py, 1, 1).data;
-      const b = clamp01(bd[0] / 255); // treat red as scalar
+      const b = clamp01(bd[0] / 255); // treat red channel as scalar
       const f = clamp01(fd[0] / 255);
       return { body: b, flank: f };
     },
@@ -365,22 +350,20 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
       );
       const tile = getOrBuildGrainTile(useKind, tilePx);
 
-      // bake a rotated version anchored at 'anchor' for stability along a stroke
       const rot = ((rotateDeg ?? profile.grainRotate) * Math.PI) / 180;
+      // fast path: no rotation → pattern directly from tile
       if (Math.abs(rot) < 1e-3) {
-        // no rotation needed – return pattern directly off tile
         const tmp = createLayerPx(tile.width as number, tile.height as number);
-        const tx = tmp.getContext("2d", { alpha: true });
-        if (!isCtx2D(tx)) return null;
+        const tx = require2D(tmp, { alpha: true });
         tx.drawImage(tile as CanvasImageSource, 0, 0);
         return tx.createPattern(tmp as CanvasImageSource, "repeat");
       }
 
+      // rotated pattern anchored at a stable point
       const W = Math.max(1, Math.floor(width * dpr));
       const H = Math.max(1, Math.floor(height * dpr));
       const layer = createLayerPx(W, H);
-      const lx = layer.getContext("2d", { alpha: true });
-      if (!isCtx2D(lx)) return null;
+      const lx = require2D(layer, { alpha: true });
 
       lx.save();
       const ax = Math.floor((anchor?.x ?? 0) * dpr);
@@ -403,8 +386,7 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
       const t = api.sampleTooth(x, y);
       const gain = profile.absorb * (t.body * 0.8 + t.flank * 0.2);
       let a = alpha * (1 + gain);
-      // subtle edge lift if flank is strong (prevents totally flat dark)
-      a *= 1 - profile.carve * 0.15 * t.flank;
+      a *= 1 - profile.carve * 0.15 * t.flank; // subtle edge lift
       return clamp01(a);
     },
 

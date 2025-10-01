@@ -13,6 +13,7 @@ import {
   isError,
   isPong,
 } from "@/lib/brush/workerTypes";
+
 import {
   drawStrokeToCanvas,
   type RenderOptions,
@@ -21,8 +22,8 @@ import {
   type RenderOverrides,
 } from "@/lib/brush/engine";
 
-// Use shared 2D utils instead of local guards
-import { type Ctx2D, get2DOrNull } from "@/lib/brush/backends/utils/ctx2d";
+// Use shared 2D utils from the canvas helper (barrel-friendly)
+import { type Ctx2D, get2DOrNull } from "@/lib/brush/backends/utils/canvas";
 
 /* ----------------------------- runtime guards ----------------------------- */
 
@@ -88,9 +89,13 @@ function waitFor<T extends WorkerResponse>(
     };
     const onError = (e: unknown) => {
       cleanup();
-      reject(
-        new Error(String((e as { message?: string } | null)?.message ?? e))
-      );
+      const m =
+        typeof e === "object" &&
+        e !== null &&
+        "message" in (e as Record<PropertyKey, unknown>)
+          ? String((e as { message?: string }).message)
+          : String(e);
+      reject(new Error(m));
     };
     const onAbort = () => {
       cleanup();
@@ -200,7 +205,7 @@ export async function renderStrokeToLayer(
     if (layerCanvas instanceof HTMLCanvasElement) {
       await drawStrokeToCanvas(layerCanvas, ropts);
     } else {
-      // OffscreenCanvas on main thread: draw via a temp HTMLCanvas and blit
+      // OffscreenCanvas on main thread: render into a temp HTMLCanvas and blit
       const temp = document.createElement("canvas");
       temp.width = layerCanvas.width;
       temp.height = layerCanvas.height;
@@ -210,6 +215,7 @@ export async function renderStrokeToLayer(
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
       ctx.drawImage(bmp, 0, 0);
+      if (typeof bmp.close === "function") bmp.close();
     }
     return;
   }
@@ -233,6 +239,7 @@ export async function renderStrokeToLayer(
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
   ctx.drawImage(bmp, 0, 0);
+  if (typeof bmp.close === "function") bmp.close();
 }
 
 export async function snapshotBrushSurface(

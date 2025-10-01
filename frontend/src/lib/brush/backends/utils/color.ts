@@ -1,3 +1,4 @@
+//src/lib/brush/backends/utils/color.ts
 import { SRGB_TO_LINEAR, linearToSrgb8LUT } from "./luts";
 import type { RGBA } from "@/lib/brush/core/types";
 

@@ -1,7 +1,8 @@
 // src/components/editor/StepHeader.tsx
 "use client";
 
-export type Step = "type" | "edit" | "variants" | "qa" | "export";
+import type { Step } from "@/features/editor/types/layers";
+export type { Step };
 
 export default function StepHeader({
   step,

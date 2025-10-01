@@ -5,23 +5,28 @@ import dynamic from "next/dynamic";
 import type Konva from "konva";
 
 const Stage = dynamic(
-  () => import("@/components/konva/StageClient").then((m) => m.default),
+  () =>
+    import("@features/editor/canvas/konva/StageClient").then((m) => m.default),
   { ssr: false }
 );
 const Layer = dynamic(
-  () => import("@/components/konva/LayerClient").then((m) => m.default),
+  () =>
+    import("@features/editor/canvas/konva/LayerClient").then((m) => m.default),
   { ssr: false }
 );
 const KonvaImage = dynamic(
-  () => import("@/components/konva/ImageClient").then((m) => m.default),
+  () =>
+    import("@features/editor/canvas/konva/ImageClient").then((m) => m.default),
   { ssr: false }
 );
 const KonvaText = dynamic(
-  () => import("@/components/konva/TextClient").then((m) => m.default),
+  () =>
+    import("@features/editor/canvas/konva/TextClient").then((m) => m.default),
   { ssr: false }
 );
 const Rect = dynamic(
-  () => import("@/components/konva/RectClient").then((m) => m.default),
+  () =>
+    import("@features/editor/canvas/konva/RectClient").then((m) => m.default),
   { ssr: false }
 );
 

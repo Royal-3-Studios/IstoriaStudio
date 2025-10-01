@@ -1,3 +1,4 @@
+// tsconfig.json
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -6,7 +7,7 @@
       "DOM.Iterable",
       "ES2022"
     ],
-    "allowJs": true,
+    "allowJs": false, // set to false once fully migrated to TS
     "checkJs": false,
     "skipLibCheck": true,
     "strict": true,
@@ -19,6 +20,11 @@
     "forceConsistentCasingInFileNames": true,
     "jsx": "preserve",
     "incremental": true,
+    // Safer typing defaults
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
     "plugins": [
       {
         "name": "next"
@@ -32,11 +38,23 @@
       "@core/*": [
         "./src/lib/brush/core/*"
       ],
+      // Import exactly "@backends"
       "@backends": [
         "./src/lib/brush/backends/index.ts"
       ],
+      // Deep imports like "@backends/utils/canvas"
       "@backends/*": [
         "./src/lib/brush/backends/*"
+      ],
+      "@features/*": [
+        "./src/features/*"
+      ],
+      "@components/*": [
+        "./src/components/*"
+      ],
+      // NEW: for StageView, PaintLayer, ReferenceLayer under src/ui
+      "@ui/*": [
+        "./src/ui/*"
       ]
     }
   },

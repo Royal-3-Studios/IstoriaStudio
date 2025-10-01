@@ -1,4 +1,6 @@
 // FILE: src/lib/brush/backends/index.ts
+
+// Namespace-style (grouped modules)
 export * as Mathx from "./utils/math";
 export * as Vec from "./utils/vector";
 export * as Rand from "./utils/random";
@@ -16,12 +18,31 @@ export * as CanvasUtil from "./utils/canvas";
 export * as Perf from "./utils/perf";
 export * as Timing from "@/lib/shared/timing";
 
-/* Also re-export named helpers so you can import them directly */
+// Named convenience re-exports (hot path)
+export {
+  withCompositeAndAlpha,
+  withComposite,
+  withAlpha,
+  toCompositeOp,
+  isCompositeSupported,
+  type Ctx2D as BlendCtx2D,
+} from "./utils/blending";
+
+export {
+  createLayer,
+  ensureCanvas2D,
+  clearCanvas,
+  get2D,
+  get2DOrNull,
+  type Ctx2D,
+} from "./utils/canvas";
+
 export {
   resamplePath,
   resolveSpacingFraction,
   segmentNormal,
 } from "./utils/stroke";
+
 export {
   makeMultiplyTile,
   makeAlphaNoiseTile,

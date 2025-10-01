@@ -83,6 +83,10 @@ export type PressureSynth =
       curve: "linear" | "easeIn" | "easeOut" | "easeInOut";
     };
 
+/**
+ * UI-facing input config, extended to include optional `gain` and `deadZone`
+ * so adapters (e.g., to PressureMapOpts) can build a complete mapping without casts.
+ */
 export type BrushInputConfig = {
   /** clamp & shape the incoming pressure signal */
   pressure: {
@@ -93,15 +97,27 @@ export type BrushInputConfig = {
     velocityComp?: { k: number; refSpeed: number };
     /** optional pressure synthesis for devices without pressure */
     synth?: PressureSynth;
+
+    /**
+     * Optional post-map multiplier (default 1).
+     * Useful to globally strengthen/soften pressure after curve/clamp.
+     */
+    gain?: number;
+
+    /**
+     * Optional small dead-zone near 0 in [0..0.5] (default 0).
+     * Convenience in addition to clamp.min; many engines support this directly.
+     */
+    deadZone?: number;
   };
   /** event → stroke sampling quality hints */
-  quality: {
-    /** look-ahead / prediction distance in px */
-    predictPx: number;
-    /** factor to increase spacing as speed increases (0..~0.5 typical) */
-    speedToSpacing: number;
-    /** minimum resampling step in px */
-    minStepPx: number;
+  quality?: {
+    /** look-ahead / prediction distance in px (default 0) */
+    predictPx?: number;
+    /** factor to increase spacing as speed increases (0..~0.5 typical; default 0) */
+    speedToSpacing?: number;
+    /** minimum resampling step in px (default ~0.5–1) */
+    minStepPx?: number;
   };
 };
 

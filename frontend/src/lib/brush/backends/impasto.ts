@@ -12,30 +12,44 @@ import { Rand, Stroke as StrokeUtil, CanvasUtil, Blend } from "@backends";
 import type { BrushInputConfig } from "@/data/brushPresets";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
-type Ctx2D = CanvasUtil.Ctx2D;
+import type { CanvasLike, Ctx2D } from "./utils/canvas";
+
+/* --------------------------------- Utils -------------------------------- */
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+// Safe array element fetchers (silence noUncheckedIndexedAccess)
+const atClamp = <T>(arr: readonly T[], i: number): T =>
+  i <= 0 ? arr[0]! : i >= arr.length - 1 ? arr[arr.length - 1]! : arr[i]!;
+
+const get = <T>(arr: readonly T[], i: number): T => arr[i]!;
+const getNum = (arr: readonly number[], i: number): number => arr[i]!;
+
 /* ============================================================================
- * Pressure mapping from normalized input
+ * Pressure mapping from normalized input (no undefined keys)
  * ========================================================================== */
 
 function toPressureMapFromInput(
   input?: BrushInputConfig
 ): PressureMapOpts | undefined {
   if (!input) return undefined;
+
   const gamma =
     input.pressure.curve?.type === "gamma"
       ? input.pressure.curve.gamma
       : undefined;
-  const deadZone =
+
+  const dead =
     typeof input.pressure.clamp?.min === "number"
       ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
       : undefined;
-  return gamma === undefined && deadZone === undefined
-    ? undefined
-    : { gamma, deadZone };
+
+  const o: Partial<PressureMapOpts> = {};
+  if (gamma !== undefined) o.gamma = gamma;
+  if (dead !== undefined) o.deadZone = dead;
+
+  return Object.keys(o).length ? (o as PressureMapOpts) : undefined;
 }
 
 /* ============================================================================
@@ -55,57 +69,67 @@ function resamplePath(
       stepPx
     ) as Array<{ x: number; y: number; t: number; p: number; angle?: number }>;
 
+    if (base.length === 0) return [];
+
     const out: Sample[] = [];
     for (let i = 0; i < base.length; i++) {
-      const a = base[Math.max(0, i - 1)];
-      const b = base[Math.min(base.length - 1, i + 1)];
+      const a = atClamp(base, i - 1);
+      const c = get(base, i);
+      const b = atClamp(base, i + 1);
+
       const ang =
-        typeof base[i].angle === "number"
-          ? (base[i].angle as number)
+        typeof c.angle === "number"
+          ? c.angle
           : Math.atan2(b.y - a.y, b.x - a.x);
-      const p = clamp01(mapPressure(clamp01(base[i].p), pmap));
-      out.push({ x: base[i].x, y: base[i].y, t: base[i].t, p, ang });
+      const p = clamp01(mapPressure(clamp01(c.p), pmap));
+      out.push({ x: c.x, y: c.y, t: c.t, p, ang });
     }
     return out;
   }
 
-  // Local fallback
+  // Local fallback (strict-safe)
   const out: Sample[] = [];
-  if (!pts || pts.length < 2) return out;
+  const n = pts.length;
+  if (n < 2) return out;
 
-  const n: number = pts.length;
   const segLen: number[] = new Array(n).fill(0);
   let total = 0;
+
   for (let i = 1; i < n; i++) {
-    const dx = pts[i].x - pts[i - 1].x;
-    const dy = pts[i].y - pts[i - 1].y;
+    const b = get(pts, i);
+    const a = get(pts, i - 1);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
     const L = Math.hypot(dx, dy);
-    segLen[i] = L;
+    segLen[i] = L; // set
     total += L;
   }
   if (total <= 0) return out;
 
   const prefix: number[] = new Array(n).fill(0);
-  for (let i = 1; i < n; i++) prefix[i] = prefix[i - 1] + segLen[i];
+  for (let i = 1; i < n; i++) {
+    // both entries are initialized
+    prefix[i] = getNum(prefix, i - 1) + getNum(segLen, i);
+  }
 
-  function posAt(sArc: number): {
-    x: number;
-    y: number;
-    p: number;
-    ang: number;
-  } {
+  function posAt(sArc: number) {
     const s = Math.max(0, Math.min(total, sArc));
+
+    // find first index where prefix[idx] >= s
     let idx = 1;
-    while (idx < n && prefix[idx] < s) idx++;
-    const i0 = Math.max(1, idx);
-    const s0 = prefix[i0 - 1];
-    const L = segLen[i0];
+    while (idx < n && getNum(prefix, idx) < s) idx++;
+
+    // Clamp to valid segment [1 .. n-1]
+    const i0 = Math.min(n - 1, Math.max(1, idx));
+    const s0 = getNum(prefix, i0 - 1);
+    const L = getNum(segLen, i0);
     const u = L > 0 ? (s - s0) / L : 0;
 
-    const a = pts[i0 - 1];
-    const b = pts[i0];
+    const a = get(pts, i0 - 1);
+    const b = get(pts, i0);
     const x = a.x + (b.x - a.x) * u;
     const y = a.y + (b.y - a.y) * u;
+
     const ap = typeof a.pressure === "number" ? clamp01(a.pressure) : 0.7;
     const bp = typeof b.pressure === "number" ? clamp01(b.pressure) : 0.7;
     const p = clamp01(mapPressure(lerp(ap, bp, u), pmap));
@@ -124,7 +148,7 @@ function resamplePath(
       ang: r.ang,
     });
   }
-  if (out.length && out[out.length - 1].t < 1) {
+  if (out.length && out[out.length - 1]!.t < 1) {
     const r = posAt(total);
     out.push({ x: r.x, y: r.y, t: 1, p: r.p, ang: r.ang });
   }
@@ -154,12 +178,12 @@ function shadeFromHeightAlpha(
   ambient: number
 ): ImageData {
   const out = new ImageData(width, height);
-  const s = src.data;
+  const s = src.data; // Uint8ClampedArray
   const d = out.data;
 
-  // Sobel kernels
-  const kx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-  const ky = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+  // Sobel kernels (typed so index is number, not number|undefined)
+  const kx: number[] = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const ky: number[] = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
 
   const clampIdx = (x: number, y: number): number => {
     const ix = x < 0 ? 0 : x >= width ? width - 1 : x;
@@ -176,9 +200,9 @@ function shadeFromHeightAlpha(
       for (let j = -1; j <= 1; j++) {
         for (let i = -1; i <= 1; i++) {
           const idx = clampIdx(x + i, y + j);
-          const h = s[idx + 3] / 255; // alpha as height
-          gx += kx[k] * h;
-          gy += ky[k] * h;
+          const h = s[idx + 3]! / 255; // alpha as height; in-bounds by clampIdx
+          gx += kx[k]! * h;
+          gy += ky[k]! * h;
           k++;
         }
       }
@@ -204,7 +228,7 @@ function shadeFromHeightAlpha(
       d[oi + 0] = v;
       d[oi + 1] = v;
       d[oi + 2] = v;
-      d[oi + 3] = s[oi + 3]; // preserve coverage
+      d[oi + 3] = s[oi + 3]!;
     }
   }
   return out;
@@ -229,7 +253,7 @@ export async function drawImpasto(
   // ---- Per-brush knobs (threaded via overrides, with sane defaults) ----
   const ov = (opt.engine.overrides ?? {}) as Record<string, unknown>;
   const spacingUI =
-    opt.engine.strokePath?.spacing ?? (ov.spacing as number) ?? 6;
+    opt.engine.strokePath?.spacing ?? (ov.spacing as number | undefined) ?? 6;
 
   const heightBlurPx = Math.max(0, Number(ov.heightBlurPx ?? 0.6));
   const reliefIntensity = Math.max(0.1, Number(ov.reliefIntensity ?? 1.5));
@@ -247,7 +271,7 @@ export async function drawImpasto(
     z: Math.sin(el),
   };
 
-  // Spacing fraction (prefer shared util)
+  // Spacing fraction
   const spacingFrac = StrokeUtil?.resolveSpacingFraction
     ? StrokeUtil.resolveSpacingFraction(spacingUI, 6)
     : (() => {
@@ -278,15 +302,15 @@ export async function drawImpasto(
   hx.lineJoin = "round";
 
   for (let i = 1; i < samples.length; i++) {
-    const a = samples[i - 1];
-    const b = samples[i];
+    const a = get(samples, i - 1);
+    const b = get(samples, i);
     const pMid = (a.p + b.p) * 0.5;
 
     const r = pressureToRadius(baseSizePx, pMid);
     const alpha = pressureToAlpha(pMid) * (0.82 + 0.18 * rand());
 
     hx.globalAlpha = alpha;
-    (hx as CanvasRenderingContext2D).strokeStyle = color;
+    (hx as unknown as { strokeStyle: string }).strokeStyle = color;
     hx.lineWidth = Math.max(0.5, r * 2);
     hx.beginPath();
     hx.moveTo(a.x, a.y);
@@ -294,26 +318,23 @@ export async function drawImpasto(
     hx.stroke();
   }
 
-  // Gentle blur to smooth the height field (when DOM 2D ctx present)
-  const hctxDom = heightLayer.getContext(
-    "2d"
-  ) as CanvasRenderingContext2D | null;
-  if (hctxDom) {
-    hctxDom.filter = `blur(${heightBlurPx}px)`;
-    hctxDom.drawImage(heightLayer, 0, 0);
-    hctxDom.filter = "none";
+  // Gentle blur to smooth the height field (feature-detect filter)
+  {
+    const hctx = heightLayer.getContext("2d") as Ctx2D | null;
+    if (hctx) {
+      const anyCtx = hctx as unknown as { filter?: string };
+      if (typeof anyCtx.filter === "string") {
+        anyCtx.filter = `blur(${heightBlurPx}px)`;
+        hctx.drawImage(heightLayer, 0, 0);
+        anyCtx.filter = "none";
+      }
+    }
   }
 
   // ---- Shade from height (Sobel -> normals -> Lambert) ----
-  let heightImg: ImageData | null = null;
-  const hForRead = heightLayer.getContext("2d") as
-    | CanvasRenderingContext2D
-    | OffscreenCanvasRenderingContext2D
-    | null;
-  if (hForRead) {
-    heightImg = hForRead.getImageData(0, 0, viewW, viewH);
-  }
-  if (!heightImg) return;
+  const hForRead = heightLayer.getContext("2d") as Ctx2D | null;
+  if (!hForRead) return;
+  const heightImg = hForRead.getImageData(0, 0, viewW, viewH);
 
   const shadeImg = shadeFromHeightAlpha(
     heightImg,
@@ -325,11 +346,10 @@ export async function drawImpasto(
   );
 
   const shadeCanvas = CanvasUtil.createLayer(viewW, viewH);
-  const scx = shadeCanvas.getContext("2d", { alpha: true }) as
-    | CanvasRenderingContext2D
-    | OffscreenCanvasRenderingContext2D
-    | null;
-  if (scx) scx.putImageData(shadeImg, 0, 0);
+  {
+    const scx = shadeCanvas.getContext("2d", { alpha: true }) as Ctx2D | null;
+    if (scx) scx.putImageData(shadeImg, 0, 0);
+  }
 
   // ---- Pigment restricted to the height mask ----
   const pigment = CanvasUtil.createLayer(viewW, viewH);
@@ -338,7 +358,7 @@ export async function drawImpasto(
 
   // Fill pigment with brush color, then clip to height
   Blend.withComposite(px, "source-over", () => {
-    (px as CanvasRenderingContext2D).fillStyle = color;
+    (px as unknown as { fillStyle: string }).fillStyle = color;
     px.fillRect(0, 0, viewW, viewH);
   });
   Blend.withComposite(px, "destination-in", () => {
@@ -369,7 +389,7 @@ export async function drawImpasto(
     }
   }
 
-  // ---- Composite to destination ctx (engine handles global blend & opacity) ----
+  // ---- Composite to destination ctx (engine handles global blend & opacity)
   Blend.withComposite(ctx, "source-over", () => {
     ctx.drawImage(pigment, 0, 0);
   });
@@ -380,11 +400,11 @@ export async function drawImpasto(
  * ========================================================================== */
 
 export async function drawImpastoToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
+  canvas: CanvasLike,
   opt: RenderOptions
 ): Promise<void> {
   const ctx = canvas.getContext("2d", { alpha: true }) as Ctx2D | null;
-  if (!ctx) return;
+  if (!ctx) throw new Error("2D context not available.");
   await drawImpasto(ctx, opt);
 }
 

@@ -3,22 +3,24 @@
  * Wet backend — soft watercolor/ink wash with wet-edge darkening,
  * inner bloom/bleed, and pressure-driven pooling.
  *
- * - Reads: baseSizePx, overrides.flow/opacity, engine.rendering.wetEdges
- * - Input: opt.path (x,y,angle?,pressure?)
- * - Output: draws into given canvas (DPR handled by engine; draw in CSS space)
+ * Draw only in CSS space; the engine already sized the canvas and applied DPR.
  */
 
 import type { RenderOptions } from "../engine";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
+import type { CanvasLike, Ctx2D } from "./utils/canvas";
 
 /* ========================================================================== *
- * Small utilities (fully typed)
+ * Small utilities (strict-safe)
  * ========================================================================== */
-
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+// strict-safe array helpers
+const get = <T>(arr: readonly T[], i: number): T => arr[i]!;
+const last = <T>(arr: readonly T[]): T => arr[arr.length - 1]!;
+const getNum = (arr: readonly number[], i: number): number => arr[i]!;
 
 function createCanvas(
   w: number,
@@ -91,28 +93,29 @@ function createDefaultPreviewPath(width: number, height: number): InputPoint[] {
 
 /** Resample by arc step; carry angle & pressure; arcLen monotonically increases. */
 function resamplePathUniform(path: InputPoint[], step: number): SamplePoint[] {
-  if (!path.length) return [];
+  const n = path.length;
+  if (n === 0) return [];
 
   const prefix: number[] = [0];
-  for (let i = 1; i < path.length; i++) {
-    const dx = path[i].x - path[i - 1].x;
-    const dy = path[i].y - path[i - 1].y;
-    prefix[i] = prefix[i - 1] + Math.hypot(dx, dy);
+  for (let i = 1; i < n; i++) {
+    const dx = get(path, i).x - get(path, i - 1).x;
+    const dy = get(path, i).y - get(path, i - 1).y;
+    prefix.push(getNum(prefix, i - 1) + Math.hypot(dx, dy));
   }
-  const totalLen = prefix[prefix.length - 1];
+  const totalLen = last(prefix);
   if (totalLen <= 0) return [];
 
   const arcAt = (
     s: number
   ): { x: number; y: number; angle: number; pressure: number } => {
     let i = 1;
-    while (i < prefix.length && prefix[i] < s) i++;
+    while (i < prefix.length && getNum(prefix, i) < s) i++;
     const i1 = Math.min(prefix.length - 1, Math.max(1, i));
-    const s0 = prefix[i1 - 1];
-    const s1 = prefix[i1];
+    const s0 = getNum(prefix, i1 - 1);
+    const s1 = getNum(prefix, i1);
     const t = Math.min(1, Math.max(0, (s - s0) / Math.max(1e-6, s1 - s0)));
-    const a = path[i1 - 1];
-    const b = path[i1];
+    const a = get(path, i1 - 1);
+    const b = get(path, i1);
 
     const angle =
       a.angle != null && b.angle != null
@@ -138,7 +141,7 @@ function resamplePathUniform(path: InputPoint[], step: number): SamplePoint[] {
       arcLen: s,
     });
   }
-  if (out[out.length - 1]?.arcLen < totalLen) {
+  if (last(out).arcLen < totalLen) {
     const p = arcAt(totalLen);
     out.push({
       x: p.x,
@@ -177,7 +180,7 @@ function paintDab(
   grd.addColorStop(0.0, `rgba(0,0,0,${(a * 0.65).toFixed(4)})`);
   grd.addColorStop(0.55, `rgba(0,0,0,${(a * 0.85).toFixed(4)})`);
   grd.addColorStop(1.0, `rgba(0,0,0,0)`);
-  ctx.fillStyle = grd;
+  (ctx as unknown as { fillStyle: CanvasGradient | string }).fillStyle = grd;
   const d = r * 2;
   ctx.fillRect(x - r, y - r, d, d);
 }
@@ -191,6 +194,7 @@ function toPressureMapFromInput(
 ): PressureMapOpts | undefined {
   const input = opt.input;
   if (!input) return undefined;
+
   const gamma =
     input.pressure.curve?.type === "gamma"
       ? input.pressure.curve.gamma
@@ -199,8 +203,13 @@ function toPressureMapFromInput(
     typeof input.pressure.clamp?.min === "number"
       ? Math.max(0, Math.min(0.5, input.pressure.clamp.min))
       : undefined;
-  if (gamma === undefined && deadZone === undefined) return undefined;
-  return { gamma, deadZone };
+
+  // exactOptionalPropertyTypes-safe: only include keys when defined
+  const out: Partial<PressureMapOpts> = {};
+  if (gamma !== undefined) out.gamma = gamma;
+  if (deadZone !== undefined) out.deadZone = deadZone;
+
+  return Object.keys(out).length ? (out as PressureMapOpts) : undefined;
 }
 
 /* ========================================================================== *
@@ -208,37 +217,39 @@ function toPressureMapFromInput(
  * ========================================================================== */
 
 export async function drawWetToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
+  canvas: CanvasLike,
   opt: RenderOptions
 ): Promise<void> {
-  const ctx = getCtx2D(canvas);
+  const ctx = canvas.getContext("2d", { alpha: true }) as Ctx2D | null;
+  if (!ctx) throw new Error("2D context not available.");
 
   // Engine has already set DPR transform on this context; draw in CSS space.
-  const viewW: number = Math.max(1, Math.floor(opt.width));
-  const viewH: number = Math.max(1, Math.floor(opt.height));
+  const viewW = Math.max(1, Math.floor(opt.width));
+  const viewH = Math.max(1, Math.floor(opt.height));
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
+  (
+    ctx as unknown as { imageSmoothingQuality?: ImageSmoothingQuality }
+  ).imageSmoothingQuality = "high";
 
   // Inputs
-  const flow01: number = clamp01(
-    ((opt.overrides?.flow ?? opt.engine?.overrides?.flow ?? 100) as number) /
-      100
+  const num = (v: unknown, d: number): number =>
+    typeof v === "number" ? v : d;
+  const flow01 = clamp01(
+    num(opt.overrides?.flow ?? opt.engine?.overrides?.flow, 100) / 100
   );
-  const opacity01: number = clamp01(
-    ((opt.overrides?.opacity ??
-      opt.engine?.overrides?.opacity ??
-      100) as number) / 100
+  const opacity01 = clamp01(
+    num(opt.overrides?.opacity ?? opt.engine?.overrides?.opacity, 100) / 100
   );
-  const baseRadius: number = Math.max(0.5, (opt.baseSizePx || 8) * 0.5);
+  const baseRadius = Math.max(0.5, (opt.baseSizePx ?? 8) * 0.5);
   const strokeColor = opt.color ?? "#000000";
 
-  // Respect rendering mode, engine overrides, and runtime overrides for wet edges
+  // Respect rendering mode & overrides for wet edges
   const wetEdgesEnabled =
     (opt.overrides?.wetEdges ??
       opt.engine?.overrides?.wetEdges ??
       opt.engine?.rendering?.wetEdges ??
-      opt.engine?.rendering?.mode === "wet") === true;
+      (opt.engine?.rendering?.mode as string | undefined) === "wet") === true;
 
   // Path
   const inputPath: InputPoint[] =
@@ -247,20 +258,17 @@ export async function drawWetToCanvas(
       : createDefaultPreviewPath(viewW, viewH);
 
   // Resample (uniform arc length)
-  const arcStep: number = Math.max(0.42, baseRadius * 0.18);
+  const arcStep = Math.max(0.42, baseRadius * 0.18);
   let samples: SamplePoint[] = resamplePathUniform(inputPath, arcStep);
-  if (!samples.length) return;
+  if (samples.length === 0) return;
 
-  // Predictive nudge (from input.quality.predictPx); fade toward tips.
-  const predictPx = Math.max(
-    0,
-    Math.min(24, opt.input?.quality?.predictPx ?? 0)
-  );
+  // Predictive nudge; fade toward tips.
+  const predictPx = clamp01(num(opt.input?.quality?.predictPx, 0) / 24) * 24;
   if (predictPx > 0 && samples.length >= 2) {
-    const totalLen = samples[samples.length - 1].arcLen || 1;
+    const totalLen = last(samples).arcLen || 1;
     samples = samples.map((s, i) => {
-      const prev = i > 0 ? samples[i - 1] : s;
-      const next = i < samples.length - 1 ? samples[i + 1] : s;
+      const prev = i > 0 ? get(samples, i - 1) : s;
+      const next = i < samples.length - 1 ? get(samples, i + 1) : s;
       const ang = Math.atan2(next.y - prev.y, next.x - prev.x);
       const u = s.arcLen / totalLen;
       const fade = 1 - 4 * Math.pow(u - 0.5, 2); // bell 0..1..0
@@ -279,7 +287,8 @@ export async function drawWetToCanvas(
   const pmap = toPressureMapFromInput(opt);
   if (pmap) {
     for (let i = 0; i < samples.length; i++) {
-      samples[i].pressure = clamp01(mapPressure(samples[i].pressure, pmap));
+      const s = get(samples, i);
+      s.pressure = clamp01(mapPressure(s.pressure, pmap));
     }
   }
 
@@ -288,19 +297,19 @@ export async function drawWetToCanvas(
   const mx = getCtx2D(mask);
   mx.clearRect(0, 0, viewW, viewH);
   mx.globalCompositeOperation = "source-over";
-  mx.filter = "none";
+  (mx as unknown as { filter?: string }).filter = "none";
 
   for (let i = 0; i < samples.length; i++) {
-    const s = samples[i];
+    const s = get(samples, i);
     const r = baseRadius * pressureToRadiusK(s.pressure);
     const a = opacity01 * flow01 * 0.22 * pressureToFlowK(s.pressure);
-    paintDab(mx, s.x, s.y, Math.max(0.5, r), a);
+    paintDab(mx as unknown as Ctx2D, s.x, s.y, Math.max(0.5, r), a);
   }
 
   /* B) Diffusion (soft bleed) */
-  mx.filter = "blur(0.9px)";
+  (mx as unknown as { filter?: string }).filter = "blur(0.9px)";
   mx.drawImage(mask as CanvasImageSource, 0, 0);
-  mx.filter = "none";
+  (mx as unknown as { filter?: string }).filter = "none";
 
   /* C) Wet edge emphasis */
   if (wetEdgesEnabled) {
@@ -310,14 +319,14 @@ export async function drawWetToCanvas(
     ex.drawImage(mask as CanvasImageSource, 0, 0);
 
     ex.globalCompositeOperation = "source-over";
-    ex.filter = "blur(1.6px)";
+    (ex as unknown as { filter?: string }).filter = "blur(1.6px)";
     ex.drawImage(edge as CanvasImageSource, 0, 0);
-    ex.filter = "none";
+    (ex as unknown as { filter?: string }).filter = "none";
 
     ex.globalCompositeOperation = "destination-out";
-    ex.filter = "blur(0.9px)";
+    (ex as unknown as { filter?: string }).filter = "blur(0.9px)";
     ex.drawImage(mask as CanvasImageSource, 0, 0);
-    ex.filter = "none";
+    (ex as unknown as { filter?: string }).filter = "none";
     ex.globalCompositeOperation = "source-over";
 
     mx.globalCompositeOperation = "multiply";
@@ -335,14 +344,14 @@ export async function drawWetToCanvas(
     bx.drawImage(mask as CanvasImageSource, 0, 0);
 
     bx.globalCompositeOperation = "source-over";
-    bx.filter = "blur(1.8px)";
+    (bx as unknown as { filter?: string }).filter = "blur(1.8px)";
     bx.drawImage(bloom as CanvasImageSource, 0, 0);
-    bx.filter = "none";
+    (bx as unknown as { filter?: string }).filter = "none";
 
     bx.globalCompositeOperation = "destination-in";
-    bx.filter = "blur(0.6px)";
+    (bx as unknown as { filter?: string }).filter = "blur(0.6px)";
     bx.drawImage(mask as CanvasImageSource, 0, 0);
-    bx.filter = "none";
+    (bx as unknown as { filter?: string }).filter = "none";
     bx.globalCompositeOperation = "source-over";
 
     mx.globalCompositeOperation = "screen";
@@ -354,14 +363,23 @@ export async function drawWetToCanvas(
 
   /* E) Core reinforcement */
   {
-    const first = samples[0];
-    const last = samples[samples.length - 1];
+    const firstS = get(samples, 0);
+    const lastS = last(samples);
     mx.globalCompositeOperation = "multiply";
-    const core = mx.createLinearGradient(first.x, first.y, last.x, last.y);
+    const core = (
+      mx as unknown as {
+        createLinearGradient: (
+          x0: number,
+          y0: number,
+          x1: number,
+          y1: number
+        ) => CanvasGradient;
+      }
+    ).createLinearGradient(firstS.x, firstS.y, lastS.x, lastS.y);
     core.addColorStop(0.0, "rgba(0,0,0,0.15)");
     core.addColorStop(0.5, "rgba(0,0,0,0.30)");
     core.addColorStop(1.0, "rgba(0,0,0,0.15)");
-    mx.fillStyle = core;
+    (mx as unknown as { fillStyle: CanvasGradient | string }).fillStyle = core;
     mx.fillRect(0, 0, viewW, viewH);
     mx.globalCompositeOperation = "source-over";
   }
@@ -372,7 +390,7 @@ export async function drawWetToCanvas(
   tx.clearRect(0, 0, viewW, viewH);
 
   // Fill solid color
-  tx.fillStyle = strokeColor;
+  (tx as unknown as { fillStyle: string }).fillStyle = strokeColor;
   tx.fillRect(0, 0, viewW, viewH);
 
   // Clip by wet mask

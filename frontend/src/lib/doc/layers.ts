@@ -1,6 +1,8 @@
 // FILE: src/lib/painting/layers.ts
 // Minimal in-memory layer stack with composite, resize, and snapshot helpers.
 
+import type { CanvasLike, Ctx2D } from "@/lib/brush/backends/utils/canvas";
+
 export type BlendMode = GlobalCompositeOperation;
 
 export interface Layer {
@@ -9,7 +11,7 @@ export interface Layer {
   opacity: number; // 0..1
   blend: BlendMode; // e.g. "source-over"
   visible: boolean;
-  canvas: HTMLCanvasElement | OffscreenCanvas;
+  canvas: CanvasLike;
 }
 
 export interface LayerStack {
@@ -22,8 +24,6 @@ export interface LayerStack {
 
 /* ------------------------------ Utilities ------------------------------ */
 
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-
 function isCtx2D(ctx: unknown): ctx is Ctx2D {
   if (!ctx || typeof ctx !== "object") return false;
   const c = ctx as Partial<CanvasRenderingContext2D>;
@@ -35,7 +35,7 @@ function isCtx2D(ctx: unknown): ctx is Ctx2D {
   );
 }
 
-function get2D(c: HTMLCanvasElement | OffscreenCanvas): Ctx2D {
+function get2D(c: CanvasLike): Ctx2D {
   const ctx = c.getContext("2d", { alpha: true }) as Ctx2D | null;
   if (!isCtx2D(ctx)) throw new Error("2D context unavailable");
   return ctx;
@@ -48,25 +48,23 @@ function pixelSize(cssW: number, cssH: number, dpr: number) {
   };
 }
 
-function sizeCanvas(
-  c: HTMLCanvasElement | OffscreenCanvas,
-  pixelW: number,
-  pixelH: number
-): void {
-  (c as HTMLCanvasElement | OffscreenCanvas).width = pixelW;
-  (c as HTMLCanvasElement | OffscreenCanvas).height = pixelH;
+function sizeCanvas(c: CanvasLike, pixelW: number, pixelH: number): void {
+  // Both HTMLCanvasElement and OffscreenCanvas expose width/height
+  (c as { width: number; height: number }).width = pixelW;
+  (c as { width: number; height: number }).height = pixelH;
 }
 
-export function createCanvas(
-  w: number,
-  h: number
-): HTMLCanvasElement | OffscreenCanvas {
+export function createCanvas(w: number, h: number): CanvasLike {
   if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
   return c;
 }
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const clampIndex = (arrLen: number, i: number) =>
+  Math.max(0, Math.min(arrLen, i));
 
 /* ----------------------------- Stack & Layers ----------------------------- */
 
@@ -104,20 +102,41 @@ export function addLayer(
   return layer;
 }
 
+/** Returns the first layer with matching id, or null. */
 export function findLayer(stack: LayerStack, id: string): Layer | null {
-  return stack.layers.find((l) => l.id === id) ?? null;
+  const found = stack.layers.find((l) => l.id === id);
+  return found ?? null; // normalize undefined -> null
+}
+
+/** Returns index of layer id, or -1 if not found. */
+export function getLayerIndex(stack: LayerStack, id: string): number {
+  return stack.layers.findIndex((l) => l.id === id);
 }
 
 export function setActiveLayer(stack: LayerStack, id: string | null): void {
   stack.activeId = id;
 }
 
+/** Removes the layer and returns it, or null if not found. */
 export function removeLayer(stack: LayerStack, id: string): Layer | null {
   const i = stack.layers.findIndex((l) => l.id === id);
   if (i < 0) return null;
   const [removed] = stack.layers.splice(i, 1);
-  if (stack.activeId === id) stack.activeId = stack.layers.at(-1)?.id ?? null;
-  return removed;
+  // New active layer: top-most existing or null
+  const last =
+    stack.layers.length > 0 ? stack.layers[stack.layers.length - 1] : null;
+  stack.activeId = last ? last.id : null;
+  return removed ?? null;
+}
+
+/** Moves layer to a new index; no-op if not found. */
+function spliceOne<T>(arr: T[], index: number): T | null {
+  const out = arr.splice(index, 1);
+  if (out.length > 0) {
+    // Safe under noUncheckedIndexedAccess: length > 0 ⇒ out[0] exists
+    return out[0] as T;
+  }
+  return null;
 }
 
 export function moveLayer(
@@ -127,28 +146,163 @@ export function moveLayer(
 ): void {
   const i = stack.layers.findIndex((l) => l.id === id);
   if (i < 0) return;
-  const [l] = stack.layers.splice(i, 1);
-  const idx = Math.max(0, Math.min(stack.layers.length, newIndex));
+
+  const l = spliceOne(stack.layers, i);
+  if (!l) return; // nothing to move
+
+  const idx = clampIndex(stack.layers.length, newIndex);
   stack.layers.splice(idx, 0, l);
 }
 
-export function setLayerVisibility(layer: Layer, visible: boolean): void {
-  layer.visible = visible;
+/* --------------------------- Safe access helpers --------------------------- */
+
+export function getActiveLayer(stack: LayerStack): Layer | null {
+  return stack.activeId ? findLayer(stack, stack.activeId) : null;
 }
-export function setLayerOpacity(layer: Layer, opacity01: number): void {
-  layer.opacity = Math.max(0, Math.min(1, opacity01));
-}
-export function setLayerBlend(layer: Layer, blend: BlendMode): void {
-  layer.blend = blend;
+export function getTopLayer(stack: LayerStack): Layer | null {
+  const l =
+    stack.layers.length > 0 ? stack.layers[stack.layers.length - 1] : undefined;
+  return l ?? null;
 }
 
-export function clearLayer(layer: Layer): void {
+/* -------- Make common ops accept nullable layers via overloads (no-op safe) -------- */
+
+// clearLayer
+export function clearLayer(layer: Layer): void;
+export function clearLayer(layer: Layer | null | undefined): void;
+export function clearLayer(layer: Layer | null | undefined): void {
+  if (!layer) return; // no-op if missing
   const ctx = get2D(layer.canvas);
-  const w = (layer.canvas as HTMLCanvasElement | OffscreenCanvas).width;
-  const h = (layer.canvas as HTMLCanvasElement | OffscreenCanvas).height;
+  const w = (layer.canvas as { width: number }).width;
+  const h = (layer.canvas as { height: number }).height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, w, h);
 }
+
+// setLayerVisibility
+export function setLayerVisibility(layer: Layer, visible: boolean): void;
+export function setLayerVisibility(
+  layer: Layer | null | undefined,
+  visible: boolean
+): void;
+export function setLayerVisibility(
+  layer: Layer | null | undefined,
+  visible: boolean
+): void {
+  if (!layer) return;
+  layer.visible = visible;
+}
+
+// setLayerOpacity
+export function setLayerOpacity(layer: Layer, opacity01: number): void;
+export function setLayerOpacity(
+  layer: Layer | null | undefined,
+  opacity01: number
+): void;
+export function setLayerOpacity(
+  layer: Layer | null | undefined,
+  opacity01: number
+): void {
+  if (!layer) return;
+  layer.opacity = clamp01(opacity01);
+}
+
+// setLayerBlend
+export function setLayerBlend(layer: Layer, blend: BlendMode): void;
+export function setLayerBlend(
+  layer: Layer | null | undefined,
+  blend: BlendMode
+): void;
+export function setLayerBlend(
+  layer: Layer | null | undefined,
+  blend: BlendMode
+): void {
+  if (!layer) return;
+  layer.blend = blend;
+}
+
+/* ----------------------------- Compositing ----------------------------- */
+
+export function compositeTo(
+  stack: LayerStack,
+  target: CanvasLike,
+  bg?: { color?: string }
+): void {
+  const { w: tw, h: th } = pixelSize(stack.width, stack.height, stack.dpr);
+
+  // Ensure target backing store matches stack pixel size
+  sizeCanvas(target, tw, th);
+
+  const tctx = get2D(target);
+  tctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  if (bg?.color) {
+    tctx.globalCompositeOperation = "source-over";
+    tctx.globalAlpha = 1;
+    tctx.fillStyle = bg.color; // Ctx2D supports fillStyle
+    tctx.fillRect(0, 0, tw, th);
+  } else {
+    tctx.clearRect(0, 0, tw, th);
+  }
+
+  for (const l of stack.layers) {
+    if (!l.visible || l.opacity <= 0) continue;
+    tctx.globalCompositeOperation = l.blend;
+    tctx.globalAlpha = clamp01(l.opacity);
+    tctx.drawImage(l.canvas, 0, 0);
+  }
+
+  tctx.globalAlpha = 1;
+  tctx.globalCompositeOperation = "source-over";
+}
+
+/* ------------------------------ Snapshots ------------------------------ */
+
+export type LayerSnapshot = ImageBitmap | ImageData;
+
+export async function snapshotLayer(layer: Layer): Promise<LayerSnapshot> {
+  const c = layer.canvas;
+  if (typeof createImageBitmap === "function") {
+    // ImageBitmap preserves premultiplied alpha and is fast to copy/composite
+    return await createImageBitmap(c as unknown as CanvasImageSource);
+  }
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("2D context unavailable for snapshot");
+  return (ctx as Ctx2D).getImageData(
+    0,
+    0,
+    (c as { width: number }).width,
+    (c as { height: number }).height
+  );
+}
+
+// restoreLayer (tolerant overloads)
+export function restoreLayer(layer: Layer, snap: LayerSnapshot): void;
+export function restoreLayer(
+  layer: Layer | null | undefined,
+  snap: LayerSnapshot
+): void;
+export function restoreLayer(
+  layer: Layer | null | undefined,
+  snap: LayerSnapshot
+): void {
+  if (!layer) return;
+  const c = layer.canvas;
+  const ctx = get2D(c);
+  const w = (c as { width: number }).width;
+  const h = (c as { height: number }).height;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  if (typeof ImageData !== "undefined" && snap instanceof ImageData) {
+    ctx.putImageData(snap, 0, 0);
+  } else {
+    ctx.drawImage(snap as unknown as CanvasImageSource, 0, 0);
+  }
+}
+
+/* ------------------------------ Resize ------------------------------ */
 
 /**
  * Resize the stack (CSS size and/or DPR) and rescale all layer backstores.
@@ -189,76 +343,5 @@ export function resizeStack(
       sizeCanvas(l.canvas, nextPx.w, nextPx.h);
       clearLayer(l);
     }
-  }
-}
-
-/* ----------------------------- Compositing ----------------------------- */
-
-export function compositeTo(
-  stack: LayerStack,
-  target: HTMLCanvasElement | OffscreenCanvas,
-  bg?: { color?: string }
-): void {
-  const { w: tw, h: th } = pixelSize(stack.width, stack.height, stack.dpr);
-
-  // Ensure target backing store matches stack pixel size
-  sizeCanvas(target, tw, th);
-
-  const tctx = get2D(target);
-  tctx.setTransform(1, 0, 0, 1, 0, 0);
-
-  if (bg?.color) {
-    tctx.globalCompositeOperation = "source-over";
-    tctx.globalAlpha = 1;
-    (tctx as CanvasRenderingContext2D).fillStyle = bg.color;
-    tctx.fillRect(0, 0, tw, th);
-  } else {
-    tctx.clearRect(0, 0, tw, th);
-  }
-
-  for (const l of stack.layers) {
-    if (!l.visible || l.opacity <= 0) continue;
-    tctx.globalCompositeOperation = l.blend;
-    tctx.globalAlpha = Math.max(0, Math.min(1, l.opacity));
-    tctx.drawImage(l.canvas, 0, 0);
-  }
-
-  tctx.globalAlpha = 1;
-  tctx.globalCompositeOperation = "source-over";
-}
-
-/* ------------------------------ Snapshots ------------------------------ */
-
-export type LayerSnapshot = ImageBitmap | ImageData;
-
-export async function snapshotLayer(layer: Layer): Promise<LayerSnapshot> {
-  const c = layer.canvas;
-  if (typeof createImageBitmap === "function") {
-    // ImageBitmap preserves premultiplied alpha and is fast to copy/composite
-    return await createImageBitmap(c as unknown as CanvasImageSource);
-  }
-  const ctx = c.getContext("2d");
-  if (!ctx) throw new Error("2D context unavailable for snapshot");
-  return (ctx as CanvasRenderingContext2D).getImageData(
-    0,
-    0,
-    (c as HTMLCanvasElement | OffscreenCanvas).width,
-    (c as HTMLCanvasElement | OffscreenCanvas).height
-  );
-}
-
-export function restoreLayer(layer: Layer, snap: LayerSnapshot): void {
-  const c = layer.canvas;
-  const ctx = get2D(c);
-  const w = (c as HTMLCanvasElement | OffscreenCanvas).width;
-  const h = (c as HTMLCanvasElement | OffscreenCanvas).height;
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-
-  if (typeof ImageData !== "undefined" && snap instanceof ImageData) {
-    (ctx as CanvasRenderingContext2D).putImageData(snap, 0, 0);
-  } else {
-    ctx.drawImage(snap as unknown as CanvasImageSource, 0, 0);
   }
 }

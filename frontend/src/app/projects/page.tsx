@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuthStore } from "@/store/auth";
 import type { Project } from "@/types/project";
-import { ProjectCard } from "@/components/ProjectCard";
+import { ProjectCard } from "@/components/cards/ProjectCard";
 import { NewProjectInlineCard } from "@/components/NewProjectInlineCard";
 
 export default function ProjectsPage() {

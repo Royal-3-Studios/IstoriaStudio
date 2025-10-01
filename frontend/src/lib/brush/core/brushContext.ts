@@ -4,12 +4,15 @@
  * Lifetime: ONE stroke.
  */
 
-import { createLayer } from "@/lib/brush/backends/utils/canvas";
+import {
+  createLayer,
+  type Ctx2D,
+  type CanvasLike,
+} from "@/lib/brush/backends/utils/canvas";
 
 /* ============================== Types / Guards ============================== */
 
 export type RNG = { nextFloat(): number };
-type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 function isCtx2D(ctx: unknown): ctx is Ctx2D {
   if (!ctx || typeof ctx !== "object") return false;
@@ -43,13 +46,17 @@ export function srgbToLinear(c: number): number {
 }
 
 export function colorHexToLinearRGB(hex?: string): [number, number, number] {
-  if (!hex || typeof hex !== "string" || hex[0] !== "#") return [0, 0, 0];
+  if (!hex || typeof hex !== "string" || hex.charAt(0) !== "#")
+    return [0, 0, 0];
+
   const h =
     hex.length === 4
-      ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+      ? `#${hex.charAt(1)}${hex.charAt(1)}${hex.charAt(2)}${hex.charAt(2)}${hex.charAt(3)}${hex.charAt(3)}`
       : hex;
+
   const n = parseInt(h.slice(1), 16);
   if (!Number.isFinite(n)) return [0, 0, 0];
+
   const r = ((n >> 16) & 255) / 255;
   const g = ((n >> 8) & 255) / 255;
   const b = (n & 255) / 255;
@@ -74,11 +81,11 @@ export type GrainPhase = {
 };
 
 export type TempLayerRegistry = {
-  [key: string]: (HTMLCanvasElement | OffscreenCanvas) | undefined;
+  [key: string]: CanvasLike | undefined;
 };
 
 export type SmudgeState = {
-  source: HTMLCanvasElement | OffscreenCanvas | null;
+  source: CanvasLike | null;
   strength: number; // 0..2
   alphaMul: number; // 0..2
   blurPx: number; // >= 0
@@ -104,13 +111,9 @@ export type BrushContext = {
   sampleIndex: number;
   stampIndex: number;
 
-  getTempLayer: (
-    key: string,
-    pxWidth: number,
-    pxHeight: number
-  ) => HTMLCanvasElement | OffscreenCanvas;
+  getTempLayer: (key: string, pxWidth: number, pxHeight: number) => CanvasLike;
 
-  ensureSmudgeSource: (fromCanvas: HTMLCanvasElement | OffscreenCanvas) => void;
+  ensureSmudgeSource: (fromCanvas: CanvasLike) => void;
 
   updateVelocity: (
     x: number,
@@ -169,13 +172,17 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
     lastHeadY: null,
   };
 
-  const smudge: SmudgeState = {
+  // Build SmudgeState without setting any optional property to `undefined`
+  const smudgeBase: Omit<SmudgeState, "spacingOverride"> = {
     source: null,
     strength: Math.max(0, init.smudgeDefaults?.strength ?? 0.65),
     alphaMul: Math.max(0, init.smudgeDefaults?.alphaMul ?? 0.85),
     blurPx: Math.max(0, init.smudgeDefaults?.blurPx ?? 0),
-    spacingOverride: init.smudgeDefaults?.spacingOverride,
   };
+  const smudge: SmudgeState =
+    init.smudgeDefaults?.spacingOverride !== undefined
+      ? { ...smudgeBase, spacingOverride: init.smudgeDefaults.spacingOverride }
+      : smudgeBase;
 
   const layers: TempLayerRegistry = Object.create(null);
 
@@ -201,7 +208,10 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
       const tag = `${key}:${w}x${h}`;
       const existing = layers[tag];
       if (existing && "width" in existing && "height" in existing) {
-        if (existing.width !== w || existing.height !== h) {
+        if (
+          (existing as { width: number; height: number }).width !== w ||
+          (existing as { width: number; height: number }).height !== h
+        ) {
           const fresh = createLayer(w, h);
           layers[tag] = fresh;
           return fresh;
@@ -215,7 +225,10 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
 
     ensureSmudgeSource(fromCanvas) {
       if (!ctx.smudge.source) {
-        const src = createLayer(fromCanvas.width, fromCanvas.height);
+        const src = createLayer(
+          (fromCanvas as { width: number }).width,
+          (fromCanvas as { height: number }).height
+        );
         const sctx = src.getContext("2d", { alpha: true });
         if (isCtx2D(sctx)) {
           sctx.drawImage(fromCanvas as unknown as CanvasImageSource, 0, 0);
