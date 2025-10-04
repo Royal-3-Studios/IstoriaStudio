@@ -1,5 +1,5 @@
-// FILE: src/lib/brush/backends/stampingAdapter.ts
-import type { BackendAdapter, RenderStrokeOptions } from "./types";
+// FILE: src/lib/brush/backends/stamping/stampingAdapter.ts
+
 import type {
   RenderOptions,
   RenderPathPoint,
@@ -7,24 +7,38 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawStampingToCanvas } from "./stamping";
+import drawStamping from "./stamping";
+import type {
+  RenderStrokeOptions,
+  BackendAdapter,
+  CanvasSurface,
+} from "./types";
 
 /* ============================ Local helper types ============================ */
 
 type IncomingPoint = {
   x: number;
   y: number;
-  p?: number; // shorthand pressure
-  pressure?: number; // verbose pressure
+  p?: number;
+  pressure?: number;
   angle?: number;
   tilt?: number;
-  t?: number; // timestamp (optional)
+  t?: number;
 };
 
 type StampingExtras = Partial<RenderOverrides> & {
-  baseSizePx?: number; // allow passing base size via extra
-  sizePx?: number; // legacy alias
-  streamline?: number; // route to EngineStrokePath.streamline
+  baseSizePx?: number;
+  sizePx?: number;
+  streamline?: number;
+  /** Optional variant mode; forwarded to backendOverrides.stamping.mode */
+  mode?:
+    | "graphite"
+    | "ink"
+    | "marker"
+    | "calligraphy"
+    | "scatter"
+    | "stamp"
+    | "ornament";
 };
 
 /* ================================= Helpers ================================= */
@@ -36,11 +50,10 @@ function isFiniteNumber(v: unknown): v is number {
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 1; // default to firm press
+  return 1; // firm default
 }
 
-// Normalize external path → engine path (omit undefined optionals)
-function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
+function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
     const p = readPressure(pt);
@@ -52,40 +65,39 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-/* ================================= Adapter ================================= */
+/* ================================ Adapter ================================= */
 
 const stampingAdapter: BackendAdapter = {
   id: "stamping",
   name: "stamping",
 
   async renderStroke(
-    canvas: HTMLCanvasElement | OffscreenCanvas,
+    surface: CanvasSurface,
     opts: RenderStrokeOptions
   ): Promise<void> {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Narrow `extra` to a typed surface
     const rawExtra: StampingExtras = (opts.extra ?? {}) as StampingExtras;
 
-    // Peel off base size keys; keep the rest as typed overrides
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
+      mode,
       ...restOverrides
     } = rawExtra;
 
     const overrides: Partial<RenderOverrides> = { ...restOverrides };
 
-    // Choose a base size
-    const baseSizePx = isFiniteNumber(extraBase)
-      ? extraBase
-      : isFiniteNumber(sizePx)
-        ? sizePx
-        : 12;
+    const baseSizePx = isFiniteNumber(opts.baseSizePx)
+      ? opts.baseSizePx
+      : isFiniteNumber(extraBase)
+        ? extraBase
+        : isFiniteNumber(sizePx)
+          ? sizePx
+          : 12;
 
-    // Build strokePath by conditionally assigning keys (avoid undefined)
     const strokePath: EngineStrokePath = {};
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing!;
@@ -95,10 +107,17 @@ const stampingAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Build engine config (omit strokePath if empty to satisfy exactOptionalPropertyTypes)
-    const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) {
-      engineCfg.strokePath = strokePath;
+    // Build engine config (omit empty objects)
+    const engineCfg: EngineConfig & {
+      backendOverrides?: { stamping?: { mode?: StampingExtras["mode"] } };
+    } = { overrides };
+    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+
+    // Optional: forward variant mode via backendOverrides.stamping.mode
+    if (typeof mode === "string") {
+      engineCfg.backendOverrides ??= {};
+      engineCfg.backendOverrides.stamping ??= {};
+      engineCfg.backendOverrides.stamping.mode = mode;
     }
 
     const renderOpts: RenderOptions = {
@@ -108,12 +127,15 @@ const stampingAdapter: BackendAdapter = {
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      // Optionally forward color/pixelRatio if your backends expect them:
-      // color: opts.color,
-      // pixelRatio: opts.dpr,
+      ...(typeof opts.color === "string" ? { color: opts.color } : {}),
+      ...(isFiniteNumber(opts.pixelRatio)
+        ? { pixelRatio: opts.pixelRatio }
+        : {}),
     };
 
-    await Promise.resolve(drawStampingToCanvas(canvas, renderOpts));
+    const ctx = surface.getContext("2d", { alpha: true });
+    if (!ctx) return;
+    drawStamping(ctx, renderOpts);
   },
 };
 

@@ -1,5 +1,6 @@
 // FILE: src/lib/brush/backends/ribbonAdapter.ts
 import type { BackendAdapter, RenderStrokeOptions } from "./types";
+import type { RibbonMode } from "./ribbon";
 import type {
   RenderOptions,
   RenderOverrides,
@@ -10,10 +11,17 @@ import { drawRibbonToCanvas } from "./ribbon";
 import { toEnginePath, pickPixelRatio, isFiniteNumber } from "./normalize";
 import { hasColor, hasPixelRatio, hasDpr, hasInput } from "../utils/typing";
 
+type EngineConfigWithRibbon = EngineConfig & {
+  backendOverrides?: {
+    ribbon?: { mode?: RibbonMode };
+  };
+};
+
 type RibbonExtras = Partial<RenderOverrides> & {
   baseSizePx?: number;
   sizePx?: number; // legacy alias
   streamline?: number; // route to EngineStrokePath.streamline
+  mode?: RibbonMode;
 };
 
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
@@ -63,6 +71,13 @@ const ribbonAdapter: BackendAdapter = {
 
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+
+    const engineCfg2: EngineConfigWithRibbon = { ...engineCfg };
+    if (typeof rawExtra.mode === "string") {
+      engineCfg2.backendOverrides ??= {};
+      engineCfg2.backendOverrides.ribbon ??= {};
+      engineCfg2.backendOverrides.ribbon.mode = rawExtra.mode;
+    }
 
     // Compute pixel ratio candidate once
     const prCandidate = hasPixelRatio(opts)

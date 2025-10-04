@@ -1,4 +1,6 @@
 // FILE: src/lib/brush/backends/particleAdapter.ts
+import drawParticle, { type ParticleMode } from "./particle"; // resolves to ./particle/index.ts
+
 import type {
   BackendAdapter,
   RenderStrokeOptions,
@@ -8,9 +10,9 @@ import type {
   RenderOptions,
   RenderPathPoint,
   RenderOverrides,
+  EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawParticleToCanvas } from "./particle";
 
 /* ============================ Local helper types ============================ */
 
@@ -21,29 +23,20 @@ type IncomingPoint = {
   pressure?: number; // verbose pressure
   angle?: number;
   tilt?: number;
-  t?: number; // timestamp (optional)
+  t?: number; // timestamp
 };
 
 type ParticleExtras = Partial<RenderOverrides> & {
-  /** Convenience knobs accepted by this adapter. */
-  baseSizePx?: number; // prefer this; falls back to sizePx
+  // Adapter convenience
+  baseSizePx?: number;
   sizePx?: number; // legacy alias
-  streamline?: number; // route to EngineStrokePath.streamline
+  streamline?: number; // -> strokePath.streamline
 
-  /** Particle-specific tunables (if your backend reads them from overrides). */
-  particleEmissionBase?: number;
-  particleSizeK?: number;
-  particleSpeedK?: number;
-  particleDamping?: number;
-  particleLifeMin?: number;
-  particleLifeMax?: number;
-  particleConeDeg?: number;
-  particleBlurPx?: number;
-  particleComposite?: CanvasRenderingContext2D["globalCompositeOperation"];
-  particleFadePow?: number;
+  // Optional: choose variant in backend
+  mode?: ParticleMode; // "trail" | "smoke" | "sparkle"
 };
 
-/* ================================= Helpers ================================= */
+/* ================================ Helpers ================================== */
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -52,10 +45,9 @@ function isFiniteNumber(v: unknown): v is number {
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 0.7;
+  return 0.7; // sensible default for non-pressure inputs
 }
 
-// Remove keys whose value is strictly undefined (for exactOptionalPropertyTypes)
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const k in obj) {
@@ -65,7 +57,6 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out as Partial<T>;
 }
 
-// Normalize external path → engine path (omit undefined optionals)
 function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -100,109 +91,77 @@ const particleAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Narrow extras to a typed surface
+    // Typed extras
     const rawExtra: ParticleExtras = (opts.extra ?? {}) as ParticleExtras;
-
-    // Peel off convenience keys; keep the rest as typed overrides and prune undefineds
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
-      ...restOverrides
+      mode,
+      ...rest
     } = rawExtra;
 
-    const cleanedOverrides = pruneUndefined<ParticleExtras>(
-      restOverrides as Partial<ParticleExtras>
+    // RenderOverrides without undefined keys
+    const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
+      rest as Partial<RenderOverrides>
     );
 
-    // Defaults (tweak as desired for smoke tests)
-    const defaultBaseSize = 10;
-    const defaultColor = "#222222";
-
-    // Base diameter (with convenience fallbacks)
-    const baseSizePx = isFiniteNumber(opts.baseSizePx)
-      ? opts.baseSizePx
-      : isFiniteNumber(extraBase)
-        ? extraBase
-        : isFiniteNumber(sizePx)
-          ? sizePx
-          : defaultBaseSize;
-
-    // Provide sensible spacing/etc defaults if caller didn’t supply them
-    const spacing = isFiniteNumber(cleanedOverrides.spacing)
-      ? cleanedOverrides.spacing!
-      : 6;
-    const jitter = isFiniteNumber(cleanedOverrides.jitter)
-      ? cleanedOverrides.jitter!
-      : 0;
-    const scatter = isFiniteNumber(cleanedOverrides.scatter)
-      ? cleanedOverrides.scatter!
-      : 0;
-    const count = isFiniteNumber(cleanedOverrides.count)
-      ? cleanedOverrides.count!
-      : 1;
-
-    // Build strokePath conditionally (avoid undefined writes)
-    const strokePath: EngineStrokePath = { spacing, jitter, scatter, count };
+    // StrokePath (only defined keys)
+    const strokePath: EngineStrokePath = {};
+    if (isFiniteNumber(overrides.spacing))
+      strokePath.spacing = overrides.spacing!;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter!;
+    if (isFiniteNumber(overrides.scatter))
+      strokePath.scatter = overrides.scatter!;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Seed particle defaults, then let cleaned overrides replace them
-    const fullOverrides: ParticleExtras = {
-      // Particle defaults
-      particleEmissionBase: 3,
-      particleSizeK: 0.22,
-      particleSpeedK: 0.85,
-      particleDamping: 0.86,
-      particleLifeMin: 4,
-      particleLifeMax: 5,
-      particleConeDeg: 18,
-      particleBlurPx: 0,
-      particleComposite: "multiply",
-      particleFadePow: 1.0,
+    // Build engine config
+    const engineCfg: EngineConfig = { overrides };
+    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
-      // Generic brush controls (with sensible defaults)
-      opacity: isFiniteNumber(cleanedOverrides.opacity)
-        ? cleanedOverrides.opacity!
-        : 100,
-      flow: isFiniteNumber(cleanedOverrides.flow)
-        ? cleanedOverrides.flow!
-        : 100,
+    // Forward backend-local mode safely (no `any`)
+    if (typeof mode === "string") {
+      engineCfg.backendOverrides ??= {};
+      (
+        engineCfg.backendOverrides as { particle?: { mode?: ParticleMode } }
+      ).particle ??= {};
+      (
+        engineCfg.backendOverrides as { particle?: { mode?: ParticleMode } }
+      ).particle!.mode = mode;
+    }
 
-      // Path distribution
-      spacing,
-      jitter,
-      scatter,
-      count,
+    // Base diameter preference chain — avoid `number | false` by not using `&&`
+    const baseSizePx =
+      (isFiniteNumber(opts.baseSizePx) ? opts.baseSizePx : undefined) ??
+      (isFiniteNumber(extraBase) ? extraBase : undefined) ??
+      (isFiniteNumber(sizePx) ? sizePx : undefined) ??
+      12;
 
-      // Allow caller to override any of the above
-      ...cleanedOverrides,
-    };
+    const pr = pickPixelRatio(opts as { pixelRatio?: number; dpr?: number });
 
-    // Narrow to RenderOverrides (extra particle* keys can remain at runtime if your backend reads them)
-    const overrides: Partial<RenderOverrides> =
-      fullOverrides as Partial<RenderOverrides>;
-
-    // Precompute pixel ratio candidate
-    const prCandidate = pickPixelRatio(opts);
-
-    // Final RenderOptions (single expression; no undefined writes)
     const renderOpts: RenderOptions = {
-      engine: {
-        overrides,
-        strokePath,
-      },
+      engine: engineCfg,
       baseSizePx,
       width,
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      color: typeof opts.color === "string" ? opts.color : defaultColor,
-      ...(isFiniteNumber(prCandidate) ? { pixelRatio: prCandidate } : {}),
-      // Forward input only if your RenderStrokeOptions includes it and it's defined:
-      // ...("input" in opts && opts.input ? { input: opts.input } : {}),
+      ...(typeof opts.color === "string" ? { color: opts.color } : {}),
+      ...(isFiniteNumber(pr) ? { pixelRatio: pr } : {}),
+      // Forward input if your RenderStrokeOptions includes it:
+      // ...( "input" in opts && (opts as any).input ? { input: (opts as any).input } : {}),
     };
 
-    await Promise.resolve(drawParticleToCanvas(surface, renderOpts));
+    // Resolve 2D context and delegate to particle/index
+    const ctx =
+      (surface.getContext?.("2d", { alpha: true }) as
+        | CanvasRenderingContext2D
+        | OffscreenCanvasRenderingContext2D
+        | null) ?? null;
+    if (!ctx) throw new Error("2D context not available.");
+
+    drawParticle(ctx, renderOpts);
   },
 };
 

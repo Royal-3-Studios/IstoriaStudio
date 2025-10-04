@@ -1,4 +1,6 @@
 // FILE: src/lib/brush/backends/patternAdapter.ts
+import { drawPatternToCanvas } from "./pattern";
+import type { PatternMode } from "./pattern";
 import type {
   BackendAdapter,
   RenderStrokeOptions,
@@ -12,7 +14,6 @@ import type {
   EngineStrokePath,
   EngineGrain,
 } from "@/lib/brush/engine";
-import { drawPatternToCanvas } from "./pattern";
 
 /* ============================ Local helper types ============================ */
 
@@ -27,17 +28,19 @@ type IncomingPoint = {
 };
 
 type PatternExtras = Partial<RenderOverrides> & {
-  /** Convenience knobs accepted by this adapter. */
-  baseSizePx?: number; // prefer this; falls back to sizePx
+  baseSizePx?: number; // preferred
   sizePx?: number; // legacy alias
-
-  /** StrokePath convenience (if you want to drive from extras). */
-  streamline?: number; // routes to engine.strokePath.streamline
-
-  /** Grain routing (pattern.ts may read engine.grain). */
+  streamline?: number; // → engine.strokePath.streamline
   grainKind?: "none" | "paper" | "canvas" | "noise";
   grainScale?: number; // 0.5..3
   grainRotate?: number; // degrees
+  mode?: PatternMode; // "stroke" | "fill" | "scatter"
+};
+
+type EngineConfigWithPattern = EngineConfig & {
+  backendOverrides?: {
+    pattern?: { mode?: PatternMode };
+  };
 };
 
 /* ================================= Helpers ================================= */
@@ -49,10 +52,9 @@ function isFiniteNumber(v: unknown): v is number {
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 0.7; // sensible default for previews/tests
+  return 0.7;
 }
 
-// Remove keys whose value is strictly undefined (for exactOptionalPropertyTypes)
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const k in obj) {
@@ -62,7 +64,6 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out as Partial<T>;
 }
 
-// Normalize external path → engine path (omit undefined optionals)
 function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -80,7 +81,7 @@ function pickPixelRatio(opts: {
   dpr?: number;
 }): number | undefined {
   if (isFiniteNumber(opts.pixelRatio)) return opts.pixelRatio;
-  if (isFiniteNumber(opts.dpr)) return opts.dpr; // legacy alias
+  if (isFiniteNumber(opts.dpr)) return opts.dpr;
   return undefined;
 }
 
@@ -97,10 +98,8 @@ const patternAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Narrow extras to a typed surface
     const rawExtra: PatternExtras = (opts.extra ?? {}) as PatternExtras;
 
-    // Peel off convenience keys; keep the rest as typed overrides and prune undefineds
     const {
       baseSizePx: extraBase,
       sizePx,
@@ -108,6 +107,7 @@ const patternAdapter: BackendAdapter = {
       grainKind,
       grainScale,
       grainRotate,
+      mode,
       ...restOverrides
     } = rawExtra;
 
@@ -115,8 +115,8 @@ const patternAdapter: BackendAdapter = {
       restOverrides as Partial<RenderOverrides>
     );
 
-    // Base diameter (with convenience fallbacks)
-    const baseSizePx = isFiniteNumber(opts.baseSizePx)
+    // ✅ FIX: Use ternaries so the type stays `number` (no `false` leaks)
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
       : isFiniteNumber(extraBase)
         ? extraBase
@@ -124,7 +124,7 @@ const patternAdapter: BackendAdapter = {
           ? sizePx
           : 14;
 
-    // Build strokePath conditionally (avoid undefined writes)
+    // StrokePath (only defined keys)
     const strokePath: EngineStrokePath = {};
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing!;
@@ -134,30 +134,40 @@ const patternAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Grain routing: add only defined fields
+    // Grain (prefer local extras, fall back to overrides)
     const grain: EngineGrain = {};
-    if (grainKind ?? overrides.grainKind)
-      grain.kind = (grainKind ?? overrides.grainKind)!;
+    if (typeof grainKind === "string") grain.kind = grainKind;
     if (isFiniteNumber(grainScale)) grain.scale = grainScale;
-    else if (isFiniteNumber(overrides.grainScale))
-      grain.scale = overrides.grainScale!;
     if (isFiniteNumber(grainRotate)) grain.rotate = grainRotate;
-    else if (isFiniteNumber(overrides.grainRotate))
+    if (overrides.grainKind !== undefined && grain.kind === undefined)
+      grain.kind = overrides.grainKind!;
+    if (isFiniteNumber(overrides.grainScale) && grain.scale === undefined)
+      grain.scale = overrides.grainScale!;
+    if (isFiniteNumber(overrides.grainRotate) && grain.rotate === undefined)
       grain.rotate = overrides.grainRotate!;
     if (overrides.grainMotion !== undefined)
       grain.motion = overrides.grainMotion;
     if (isFiniteNumber(overrides.grainDepth))
       grain.depth = overrides.grainDepth!;
 
-    // Engine config: attach optionals only if non-empty
-    const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
-    if (Object.keys(grain).length > 0) engineCfg.grain = grain;
+    // Base engine config
+    const engineCfgBase: EngineConfig = { overrides };
+    if (Object.keys(strokePath).length > 0)
+      engineCfgBase.strokePath = strokePath;
+    if (Object.keys(grain).length > 0) engineCfgBase.grain = grain;
 
-    // Precompute pixel ratio candidate (pixelRatio -> dpr -> undefined)
-    const prCandidate = pickPixelRatio(opts);
+    // Attach backendOverrides.pattern.mode only if provided
+    const engineCfg: EngineConfigWithPattern = { ...engineCfgBase };
+    if (typeof mode === "string") {
+      engineCfg.backendOverrides ??= {};
+      engineCfg.backendOverrides.pattern ??= {};
+      engineCfg.backendOverrides.pattern.mode = mode;
+    }
 
-    // Final RenderOptions (single expression, no undefined writes)
+    const prCandidate = pickPixelRatio(
+      opts as { pixelRatio?: number; dpr?: number }
+    );
+
     const renderOpts: RenderOptions = {
       engine: engineCfg,
       baseSizePx,
@@ -167,8 +177,6 @@ const patternAdapter: BackendAdapter = {
       path: toEnginePath(opts.path),
       ...(typeof opts.color === "string" ? { color: opts.color } : {}),
       ...(isFiniteNumber(prCandidate) ? { pixelRatio: prCandidate } : {}),
-      // Forward input only if your RenderStrokeOptions includes it and it's defined:
-      // ...("input" in opts && opts.input ? { input: opts.input } : {}),
     };
 
     await Promise.resolve(drawPatternToCanvas(surface, renderOpts));

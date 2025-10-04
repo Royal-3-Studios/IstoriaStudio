@@ -7,7 +7,7 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawSprayToCanvas } from "./spray";
+import drawSpray from "./spray/index"; // "./spray" resolves to ./spray/index.ts
 
 /* ============================ Local helper types ============================ */
 
@@ -39,7 +39,6 @@ function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   return 1; // default full press for spray feel
 }
 
-// Remove keys whose value is strictly undefined
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const k in obj) {
@@ -49,7 +48,6 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out as Partial<T>;
 }
 
-// Normalize external path → engine path (omit undefined optionals)
 function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -75,6 +73,16 @@ const sprayAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
+    // Get a 2D context — drawSpray expects a context, not the canvas
+    const ctx =
+      (canvas.getContext &&
+        (canvas.getContext("2d", { alpha: true }) as
+          | CanvasRenderingContext2D
+          | OffscreenCanvasRenderingContext2D
+          | null)) ||
+      null;
+    if (!ctx) throw new Error("2D context not available.");
+
     // Narrow `extra` to a typed surface (no any)
     const rawExtra: SprayExtras = (opts.extra ?? {}) as SprayExtras;
 
@@ -95,7 +103,9 @@ const sprayAdapter: BackendAdapter = {
       ? extraBase
       : isFiniteNumber(sizePx)
         ? sizePx
-        : 12;
+        : isFiniteNumber(opts.baseSizePx)
+          ? opts.baseSizePx
+          : 12;
 
     // Build strokePath conditionally (avoid setting any key to undefined)
     const strokePath: EngineStrokePath = {};
@@ -111,6 +121,7 @@ const sprayAdapter: BackendAdapter = {
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
+    // Build RenderOptions, forwarding color/pixelRatio/input if present
     const renderOpts: RenderOptions = {
       engine: engineCfg,
       baseSizePx,
@@ -118,13 +129,20 @@ const sprayAdapter: BackendAdapter = {
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      // Forward if your backend honors them:
-      // color: opts.color,
-      // pixelRatio: opts.dpr, // or opts.pixelRatio in your typings
-      // input: opts.input,
+      ...(typeof opts.color === "string" ? { color: opts.color } : {}),
+      ...(isFiniteNumber((opts as unknown as { dpr?: number }).dpr)
+        ? { pixelRatio: (opts as unknown as { dpr: number }).dpr }
+        : {}),
+      ...(isFiniteNumber(
+        (opts as unknown as { pixelRatio?: number }).pixelRatio
+      )
+        ? { pixelRatio: (opts as unknown as { pixelRatio: number }).pixelRatio }
+        : {}),
+      ...(opts.input ? { input: opts.input } : {}),
     };
 
-    await Promise.resolve(drawSprayToCanvas(canvas, renderOpts));
+    // Call the spray index (which switches between airbrush/nozzle/splatter/stipple)
+    drawSpray(ctx, renderOpts);
   },
 };
 

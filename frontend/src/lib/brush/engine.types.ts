@@ -284,11 +284,35 @@ export type SprayOverrides = {
 };
 
 /* ---- Wet ---- */
+// engine.types.ts (excerpt)
 export type WetOverrides = {
-  wetEdges?: boolean;
-  diffusion?: number;
-  pooling?: number;
-  pickup?: number;
+  // global wet controls
+  wetEdges?: boolean; // quick toggle
+  diffusion?: number; // 0..2 (base diffusion rate)
+  pooling?: number; // 0..2 (pigment pooling intensity)
+  pickup?: number; // 0..2 (paper pickup / staining)
+
+  // paper model
+  paperTooth?: number; // 0..1
+  paperSizing?: number; // 0..1 (resists/accepts water)
+  granulation?: number; // 0..1 (graininess in pooling)
+
+  // edges/bloom
+  edgeGain?: number; // 0..2 (capillary darkening)
+  edgeRadiusPx?: number; // 0.5..6
+  bloomGain?: number; // 0..2 (backrun strength)
+  bloomThreshold?: number; // 0..1 (when reverse flow kicks in)
+
+  // glaze/wash
+  glazeAlpha?: number; // 0..1
+  glazeFollowShade?: number; // 0..1
+
+  // lift
+  liftStrength?: number; // 0..1
+
+  // performance
+  iterations?: number; // diffusion solver steps per frame
+  stepPx?: number; // solver grid cell size in CSS px
 };
 
 /* ---- Particle (placeholder; extend as you build it) ---- */

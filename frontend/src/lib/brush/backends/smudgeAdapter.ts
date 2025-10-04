@@ -1,4 +1,3 @@
-// FILE: src/lib/brush/backends/smudgeAdapter.ts
 import type { BackendAdapter, RenderStrokeOptions } from "./types";
 import type {
   RenderOptions,
@@ -7,49 +6,39 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawSmudgeToCanvas } from "./smudge";
-
-/* ============================ Local helper types ============================ */
+import drawSmudge from "./smudge"; // resolves to ./smudge/index.ts
 
 type IncomingPoint = {
   x: number;
   y: number;
-  p?: number; // shorthand pressure
-  pressure?: number; // verbose pressure
+  p?: number;
+  pressure?: number;
   angle?: number;
   tilt?: number;
-  t?: number; // timestamp (optional)
+  t?: number;
 };
 
 type SmudgeExtras = Partial<RenderOverrides> & {
-  baseSizePx?: number; // allow passing base size via extra
-  sizePx?: number; // legacy alias if you had it
-  smudgeSpacing?: number; // map to strokePath.spacing when provided
+  baseSizePx?: number;
+  sizePx?: number;
+  spacing?: number; // forwards to engine.strokePath.spacing
 };
-
-/* =============================== Helpers =================================== */
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
-
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
-  if (isFiniteNumber(pt.p)) return pt.p;
-  if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 0.7; // friendly default for mice/tests
+  return isFiniteNumber(pt.p)
+    ? pt.p
+    : isFiniteNumber(pt.pressure)
+      ? pt.pressure
+      : 0.7;
 }
-
-// Remove keys whose value is strictly undefined (helps exactOptionalPropertyTypes)
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
-  for (const k in obj) {
-    const v = obj[k];
-    if (v !== undefined) out[k] = v;
-  }
+  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
   return out as Partial<T>;
 }
-
-// Normalize external path → engine path (omit undefined optionals)
 function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -62,8 +51,6 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-/* ================================ Adapter ================================== */
-
 const smudgeAdapter: BackendAdapter = {
   id: "smudge",
   name: "smudge",
@@ -75,14 +62,20 @@ const smudgeAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Narrow `extra` to a typed surface (no any)
-    const rawExtra: SmudgeExtras = (opts.extra ?? {}) as SmudgeExtras;
+    const ctx =
+      (canvas.getContext &&
+        (canvas.getContext("2d", { alpha: true }) as
+          | CanvasRenderingContext2D
+          | OffscreenCanvasRenderingContext2D
+          | null)) ||
+      null;
+    if (!ctx) throw new Error("2D context not available.");
 
-    // Strip special keys; keep the rest as overrides and prune undefineds
+    const rawExtra: SmudgeExtras = (opts.extra ?? {}) as SmudgeExtras;
     const {
       baseSizePx: extraBase,
       sizePx,
-      smudgeSpacing,
+      spacing,
       ...restOverrides
     } = rawExtra;
 
@@ -90,18 +83,17 @@ const smudgeAdapter: BackendAdapter = {
       restOverrides as Partial<RenderOverrides>
     );
 
-    // Base size (support both keys), default 12
     const baseSizePx = isFiniteNumber(extraBase)
       ? extraBase
       : isFiniteNumber(sizePx)
         ? sizePx
-        : 12;
+        : isFiniteNumber(opts.baseSizePx)
+          ? opts.baseSizePx
+          : 12;
 
-    // Build strokePath conditionally (map smudgeSpacing -> spacing)
     const strokePath: EngineStrokePath = {};
-    if (isFiniteNumber(smudgeSpacing)) strokePath.spacing = smudgeSpacing;
+    if (isFiniteNumber(spacing)) strokePath.spacing = spacing;
 
-    // Build engine config, omitting empty optionals
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
@@ -112,13 +104,19 @@ const smudgeAdapter: BackendAdapter = {
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      // Forward optional fields only if your RenderStrokeOptions includes them:
-      // color: (opts as { color?: string }).color,
-      // pixelRatio: (opts as { pixelRatio?: number }).pixelRatio,
-      // input: (opts as { input?: BrushInputConfig }).input,
+      ...(typeof (opts as { color?: string }).color === "string"
+        ? { color: (opts as { color: string }).color }
+        : {}),
+      ...(isFiniteNumber((opts as { dpr?: number }).dpr)
+        ? { pixelRatio: (opts as { dpr: number }).dpr }
+        : {}),
+      ...(isFiniteNumber((opts as { pixelRatio?: number }).pixelRatio)
+        ? { pixelRatio: (opts as { pixelRatio: number }).pixelRatio }
+        : {}),
+      ...(opts.input ? { input: opts.input } : {}),
     };
 
-    await Promise.resolve(drawSmudgeToCanvas(canvas, renderOpts));
+    drawSmudge(ctx, renderOpts);
   },
 };
 

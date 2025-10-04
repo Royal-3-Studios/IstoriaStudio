@@ -1,48 +1,81 @@
 // FILE: src/lib/brush/backends/stamping/index.ts
-import type { Ctx2D } from "@/lib/canvas/context";
-import type {
-  RenderOptions,
-  StampingOverrides,
-  StampingRenderingMode,
-} from "@/lib/brush/engine.types";
-import { drawGraphite } from "./graphite";
-import { drawInk } from "./ink";
+import type { RenderOptions } from "@/lib/brush/engine";
+import type { Ctx2D } from "./utils/canvas";
 
-export const backendId = "stamping" as const;
+import { drawStampGraphite } from "./variants/graphite";
+import { drawStampInk } from "./variants/ink";
+import { drawStampMarker } from "./variants/marker";
+import { drawStampCalligraphy } from "./variants/calligraphy";
+import { drawStampScatter } from "./variants/scatter";
+import { drawSingleStamp } from "./variants/stamp";
+import { drawStampOrnament } from "./variants/ornament";
 
-type StampingMode = StampingRenderingMode; // "ink" | "graphite"
+/** High-level stamping modes. */
+export type StampingMode =
+  | "graphite"
+  | "ink"
+  | "marker"
+  | "calligraphy"
+  | "scatter"
+  | "stamp"
+  | "ornament";
 
-function pickStampingModeNormalized(opt: RenderOptions): StampingMode {
-  // 1) Backend-specific override wins (if provided)
-  const bo = (opt.engine.backendOverrides?.stamping ?? {}) as StampingOverrides;
-  const m1 = bo.renderingMode;
-  if (m1 === "ink" || m1 === "graphite") return m1;
+export type StampingOverrides = Partial<{
+  /** Selects which variant to draw (also settable via backendOverrides.stamping.mode). */
+  stampingMode: StampingMode;
 
-  // 2) Generic cross-backend override (legacy/compat)
-  const m2 = (opt.engine.overrides as { renderingMode?: unknown } | undefined)
-    ?.renderingMode;
-  if (m2 === "ink" || m2 === "graphite") return m2;
+  /** Calligraphy-only: chisel nib angle in degrees. */
+  nibAngleDeg: number;
 
-  // 3) Rendering intent hint
-  const intent = opt.engine.rendering?.intent;
-  if (intent === "ink" || intent === "marker") return "ink";
-  if (intent === "graphite" || intent === "charcoal") return "graphite";
+  /** Clamp minimum tip width in CSS px. */
+  tipMinPx: number;
+}>;
 
-  // 4) Heuristics as a last resort (shape/grain)
-  const shapeType = opt.engine.shape?.type;
-  const grainKind = opt.engine.grain?.kind ?? "none";
-  if (shapeType === "charcoal") return "graphite";
-  if (grainKind !== "none" && shapeType !== "round") return "graphite";
+function pickMode(opt: RenderOptions): StampingMode {
+  const local = opt.engine.backendOverrides?.stamping as
+    | { mode?: StampingMode }
+    | undefined;
 
-  // 5) Safe default
-  return "graphite";
+  const m =
+    local?.mode ??
+    (opt.engine.overrides?.stampingMode as StampingMode | undefined);
+
+  switch (m) {
+    case "ink":
+    case "marker":
+    case "calligraphy":
+    case "scatter":
+    case "stamp":
+    case "ornament":
+      return m;
+    default:
+      return "graphite";
+  }
 }
 
-export default function drawStamping(ctx: Ctx2D, options: RenderOptions): void {
-  const mode = pickStampingModeNormalized(options);
-  if (mode === "ink") {
-    drawInk(ctx, options);
-  } else {
-    drawGraphite(ctx, options);
+export default function drawStamping(ctx: Ctx2D, opt: RenderOptions): void {
+  switch (pickMode(opt)) {
+    case "ink":
+      drawStampInk(ctx, opt);
+      break;
+    case "marker":
+      drawStampMarker(ctx, opt);
+      break;
+    case "calligraphy":
+      drawStampCalligraphy(ctx, opt);
+      break;
+    case "scatter":
+      drawStampScatter(ctx, opt);
+      break;
+    case "stamp":
+      drawSingleStamp(ctx, opt);
+      break;
+    case "ornament":
+      drawStampOrnament(ctx, opt);
+      break;
+    case "graphite":
+    default:
+      drawStampGraphite(ctx, opt);
+      break;
   }
 }
