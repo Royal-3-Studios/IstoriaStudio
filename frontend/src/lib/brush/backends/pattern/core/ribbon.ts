@@ -4,8 +4,8 @@ import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
 import {
   resamplePath as engineResamplePath,
   resolveSpacingFraction,
-} from "@/lib/brush/backends/utils/stroke";
-import type { SamplePoint } from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
+import type { SamplePoint } from "@backends/utils/stroke";
 
 /** Resample with simple angle estimation (centered diff). */
 export type SampleWithAngle = SamplePoint & { ang: number };

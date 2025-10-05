@@ -15,7 +15,6 @@ import {
   type BackendAdapter, // ✅ works because we re-exported the type
 } from "@/lib/brush/backends/adapters";
 // If you skipped the re-export, use:
-// import type { BackendAdapter } from "@/lib/brush/backends/types";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";

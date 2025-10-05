@@ -8,7 +8,7 @@ import {
   createLayer,
   type Ctx2D,
   type CanvasLike,
-} from "@/lib/brush/backends/utils/canvas";
+} from "@backends/utils/canvas";
 
 /* ============================== Types / Guards ============================== */
 

@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/stamping/core/inputMap.ts
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 import type { BrushInputConfig } from "@/data/brushPresets";
-import type { InputQualityOpts } from "@/lib/brush/backends/utils/stroke";
+import type { InputQualityOpts } from "@backends/utils/stroke";
 
 /* ---------------------------- concrete defaults ---------------------------- */
 

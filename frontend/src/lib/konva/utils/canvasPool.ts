@@ -3,7 +3,7 @@
 /**
  * Tiny pool for (Offscreen|HTML) canvases to reduce churn/GC.
  * - Works in both main thread and worker.
- * - Never uses `any`; fully typed.
+ * - Strict TypeScript (no `any`, `noUncheckedIndexedAccess` safe).
  */
 
 export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
@@ -12,9 +12,9 @@ export type Ctx2D =
   | OffscreenCanvasRenderingContext2D;
 
 export type RentOptions = {
-  /** If true, the pool will try to find a canvas with *at least* the size; otherwise exact. Default: true */
+  /** If true, find a canvas with *at least* the size; otherwise exact. Default: true */
   allowLarger?: boolean;
-  /** If provided, the canvas will be cleared before returned (CSS px). Default: true */
+  /** If true, the canvas is cleared before returned. Default: true */
   clear?: boolean;
 };
 
@@ -24,24 +24,26 @@ export type PoolStats = {
   total: number;
 };
 
-type Pooled = {
+type PooledCanvas = {
   canvas: CanvasLike;
   width: number; // device pixels
   height: number; // device pixels
   busy: boolean;
 };
 
-function hasOffscreen(): boolean {
+/* ─────────────────────────── Environment helpers ─────────────────────────── */
+
+function supportsOffscreen(): boolean {
   return typeof OffscreenCanvas !== "undefined";
 }
 
 function createCanvas(width: number, height: number): CanvasLike {
-  if (hasOffscreen()) return new OffscreenCanvas(width, height);
-  // In workers `document` is undefined; this is guarded by hasOffscreen()
-  const c = document.createElement("canvas");
-  c.width = width;
-  c.height = height;
-  return c;
+  if (supportsOffscreen()) return new OffscreenCanvas(width, height);
+  // In workers `document` is undefined; this branch only runs when DOM exists.
+  const el = document.createElement("canvas");
+  el.width = width;
+  el.height = height;
+  return el;
 }
 
 /** Structural guard for 2D contexts across HTML and Offscreen implementations. */
@@ -66,74 +68,88 @@ export function get2D(target: CanvasLike): Ctx2D {
   return ctx;
 }
 
-/** Ensure device-pixel size; does not set CSS style size (callers control that). */
-function ensureSize(c: CanvasLike, w: number, h: number): void {
+/** Ensure device-pixel size; does not set CSS size (callers control that). */
+function ensureDeviceSize(c: CanvasLike, w: number, h: number): void {
   if (c.width !== w) c.width = w;
   if (c.height !== h) c.height = h;
 }
 
+/** Index helper for arrays under `noUncheckedIndexedAccess` once bounds are proven. */
+function atStrict<T>(arr: T[], idx: number): T {
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return arr[idx]!;
+}
+
+/* ────────────────────────────────── Pool ─────────────────────────────────── */
+
 export class CanvasPool {
-  private items: Pooled[] = [];
-  private _maxFree: number;
+  private items: PooledCanvas[] = [];
+  private maxFree: number;
 
   constructor(maxFree: number = 16) {
-    this._maxFree = Math.max(0, Math.floor(maxFree));
+    this.maxFree = Math.max(0, Math.floor(maxFree));
   }
 
   stats(): PoolStats {
     const total = this.items.length;
-    const busy = this.items.reduce((n, it) => (it.busy ? n + 1 : n), 0);
+    let busy = 0;
+    for (let i = 0; i < total; i++) {
+      const it = this.items[i];
+      if (it && it.busy) busy++;
+    }
     return { free: total - busy, busy, total };
   }
 
-  /** Rent a canvas in device pixels. */
+  /** Rent a canvas in *device pixels*. */
   rent(
     width: number,
     height: number,
-    opt: RentOptions = { allowLarger: true, clear: true }
+    opts: RentOptions = { allowLarger: true, clear: true }
   ): { canvas: CanvasLike; release: () => void } {
-    const w = Math.max(1, Math.floor(width));
-    const h = Math.max(1, Math.floor(height));
-    const allowLarger = opt.allowLarger ?? true;
-    const needClear = opt.clear ?? true;
-
-    let idx = -1;
+    const reqW = Math.max(1, Math.floor(width));
+    const reqH = Math.max(1, Math.floor(height));
+    const allowLarger = opts.allowLarger ?? true;
+    const clearBeforeUse = opts.clear ?? true;
 
     // Find an idle canvas that fits the request
+    let foundIndex = -1;
     for (let i = 0; i < this.items.length; i++) {
-      const it = this.items[i];
-      if (it.busy) continue;
+      const candidate = this.items[i];
+      if (!candidate || candidate.busy) continue;
+
       const sizeOk = allowLarger
-        ? it.width >= w && it.height >= h
-        : it.width === w && it.height === h;
+        ? candidate.width >= reqW && candidate.height >= reqH
+        : candidate.width === reqW && candidate.height === reqH;
+
       if (sizeOk) {
-        idx = i;
+        foundIndex = i;
         break;
       }
     }
 
-    let pooled: Pooled;
-    if (idx >= 0) {
-      pooled = this.items[idx];
-      // Resize up if needed (only grows; avoids shrinking thrash)
-      const nw = Math.max(pooled.width, w);
-      const nh = Math.max(pooled.height, h);
-      if (nw !== pooled.width || nh !== pooled.height) {
-        ensureSize(pooled.canvas, nw, nh);
-        pooled.width = nw;
-        pooled.height = nh;
+    let pooled: PooledCanvas;
+
+    if (foundIndex >= 0) {
+      pooled = atStrict(this.items, foundIndex);
+      // Grow (never shrink) to avoid resize churn
+      const newW = Math.max(pooled.width, reqW);
+      const newH = Math.max(pooled.height, reqH);
+      if (newW !== pooled.width || newH !== pooled.height) {
+        ensureDeviceSize(pooled.canvas, newW, newH);
+        pooled.width = newW;
+        pooled.height = newH;
       }
     } else {
-      const canvas = createCanvas(w, h);
-      pooled = { canvas, width: w, height: h, busy: false };
+      const canvas = createCanvas(reqW, reqH);
+      pooled = { canvas, width: reqW, height: reqH, busy: false };
       this.items.push(pooled);
     }
 
     pooled.busy = true;
 
-    if (needClear) {
+    if (clearBeforeUse) {
       const ctx = get2D(pooled.canvas);
-      // Identity transform and clear in device px
+      // Reset transform (when available) and clear in device pixels
       if (
         typeof (ctx as CanvasRenderingContext2D).setTransform === "function"
       ) {
@@ -157,55 +173,42 @@ export class CanvasPool {
 
   /** Reduce free canvases to the maxFree cap (keep the largest ones). */
   trim(): void {
-    if (this._maxFree < 0) return;
+    if (this.maxFree < 0) return;
 
-    // Partition into busy/free
-    const busy: Pooled[] = [];
-    const free: Pooled[] = [];
-    for (const it of this.items) {
+    const busy: PooledCanvas[] = [];
+    const free: PooledCanvas[] = [];
+
+    for (let i = 0; i < this.items.length; i++) {
+      const it = this.items[i];
+      if (!it) continue;
       (it.busy ? busy : free).push(it);
     }
 
-    // Sort free by area descending so we keep the most generally useful
+    // Keep the largest free canvases (by area)
     free.sort((a, b) => b.width * b.height - a.width * a.height);
 
-    const keep = free.slice(0, this._maxFree);
-    const drop = free.slice(this._maxFree);
+    const kept = free.slice(0, this.maxFree);
+    // const dropped = free.slice(this.maxFree); // allow GC naturally
 
-    // Rebuild list
-    this.items = busy.concat(keep);
-
-    // Help GC by clearing references of dropped canvases (not strictly necessary)
-    for (let i = 0; i < drop.length; i++) {
-      // No explicit dispose API for canvas; just let them be GC’ed.
-      // If these were attached to DOM elsewhere, caller should handle removal.
-      // Here we just avoid retaining them.
-      // (Intentional no-op body)
-    }
+    this.items = busy.concat(kept);
   }
 
   setMaxFree(n: number): void {
-    this._maxFree = Math.max(0, Math.floor(n));
+    this.maxFree = Math.max(0, Math.floor(n));
     this.trim();
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
+/* ──────────────────────────────── Helpers ───────────────────────────────── */
 
-/**
- * Convenience: rent → draw (CSS space) → release, even on throw.
- * `fn` receives the rented canvas and its 2D context.
- */
 export async function withCanvas<T>(
   pool: CanvasPool,
   width: number,
   height: number,
   fn: (canvas: CanvasLike, ctx: Ctx2D) => Promise<T> | T,
-  opt?: RentOptions
+  opts?: RentOptions
 ): Promise<T> {
-  const { canvas, release } = pool.rent(width, height, opt);
+  const { canvas, release } = pool.rent(width, height, opts);
   try {
     const ctx = get2D(canvas);
     return await fn(canvas, ctx);
@@ -215,10 +218,10 @@ export async function withCanvas<T>(
 }
 
 /**
- * Create a snapshot bitmap from a canvas (clone, not transfer).
- * The ImageBitmap is transferable by the caller if needed.
+ * Create a snapshot ImageBitmap from a canvas (clone, not transfer).
+ * The resulting ImageBitmap can be transferred by the caller if needed.
  */
 export async function snapshotBitmap(canvas: CanvasLike): Promise<ImageBitmap> {
-  // createImageBitmap works for both HTMLCanvasElement and OffscreenCanvas
+  // Works for both HTMLCanvasElement and OffscreenCanvas
   return await createImageBitmap(canvas as unknown as CanvasImageSource);
 }

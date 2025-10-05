@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/impastoAdapter.ts
-import { drawImpastoToCanvas } from "./impasto";
+import { drawToCanvas as drawImpastoToCanvas } from "./impasto";
 import type {
   BackendAdapter,
   CanvasSurface,

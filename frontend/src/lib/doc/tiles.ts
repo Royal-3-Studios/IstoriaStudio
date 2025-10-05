@@ -1,3 +1,4 @@
+// FILE: src/lib/doc/tiles.ts
 // Optional tiling scaffold for future memory wins (e.g., 512x512 tiles).
 
 export type TileKey = string; // `${tx},${ty}`
@@ -8,6 +9,7 @@ export interface TileRect {
   w: number;
   h: number;
 }
+
 export interface TileIndex {
   size: number;
   keys: TileKey[];
@@ -17,9 +19,15 @@ export function tileKey(tx: number, ty: number): TileKey {
   return `${tx},${ty}`;
 }
 
+function toInt(s: string, fallback = 0): number {
+  const n = Number.parseInt(s, 10);
+  return Number.isNaN(n) ? fallback : n;
+}
+
 export function parseTileKey(key: TileKey): { tx: number; ty: number } {
-  const [sx, sy] = key.split(",");
-  return { tx: parseInt(sx, 10) || 0, ty: parseInt(sy, 10) || 0 };
+  // split() may return fewer than 2 parts; default to "0"
+  const [sx = "0", sy = "0"] = key.split(",", 2);
+  return { tx: toInt(sx, 0), ty: toInt(sy, 0) };
 }
 
 export function rectForTile(tx: number, ty: number, tileSize = 512): TileRect {

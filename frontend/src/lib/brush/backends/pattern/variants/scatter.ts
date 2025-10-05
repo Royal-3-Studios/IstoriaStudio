@@ -3,7 +3,7 @@
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
-import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
+import { pathToStamps } from "@backends/utils/stroke";
 import { withCompositeAndAlpha } from "../core/fill";
 import {
   makeDotsTile,
@@ -11,7 +11,7 @@ import {
   makeCheckerTile,
   makeHashNoiseTile,
 } from "../utils/tiles";
-import { clamp01 } from "../core/color";
+import { clamp01 } from "@backends/utils/color";
 
 /** Pattern sources we support. */
 export type PatternKind = "paper" | "canvas" | "noise" | "checker";

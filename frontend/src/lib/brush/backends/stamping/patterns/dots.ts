@@ -1,6 +1,6 @@
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
-import { mulberry32 } from "../utils/rng";
+import { mulberry32 } from "@backends/utils/random";
 
 export type DotsPatternOpts = {
   /** Tile size in CSS px (repeat unit). */

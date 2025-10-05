@@ -12,7 +12,7 @@
 
 import { createLayer, get2DOrNull, type Ctx2D } from "@backends";
 import { generateFbmNoiseTexture } from "@/lib/brush/backends/utils/texture";
-import { mulberry32 } from "@/lib/brush/backends/utils/random";
+import { mulberry32 } from "@backends/utils/random";
 
 /* ========================================================================== *
  * Small helpers
@@ -39,6 +39,14 @@ function require2D(
 function supportsFilter(ctx: Ctx2D): ctx is CanvasRenderingContext2D {
   // OffscreenCanvasRenderingContext2D may not expose 'filter'
   return "filter" in (ctx as CanvasRenderingContext2D);
+}
+
+/** Safe byte read (handles noUncheckedIndexedAccess). */
+function u8At(arr: Uint8ClampedArray, idx: number): number {
+  const i = idx | 0;
+  if (i < 0 || i >= arr.length) return 0;
+  // `!` is safe because of bounds check above
+  return arr[i]!;
 }
 
 /* ========================================================================== *
@@ -300,13 +308,18 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
     const img = nx.getImageData(0, 0, W, H);
     const d = img.data;
     for (let i = 0; i < d.length; i += 4) {
-      const l = d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722; // 0..255
+      const r = u8At(d, i);
+      const g = u8At(d, i + 1);
+      const b = u8At(d, i + 2);
+      const l = r * 0.2126 + g * 0.7152 + b * 0.0722; // 0..255
+
       const nxC = 128 + (l - 128) * 0.6;
       const nyC = 128 + (128 - l) * 0.6;
-      d[i] = nxC;
-      d[i + 1] = nyC;
+
+      d[i] = Math.round(nxC);
+      d[i + 1] = Math.round(nyC);
       d[i + 2] = 255;
-      d[i + 3] = 255;
+      d[i + 3] = u8At(d, i + 3); // preserve original alpha safely
     }
     nx.putImageData(img, 0, 0);
     cache.normalMap = nm;
@@ -326,12 +339,16 @@ export function createPaperSystem(init: PaperInit): PaperSystem {
       const bx = require2D(body);
       const fx = require2D(flank);
       // map CSS -> device, wrap to tile
-      const px = Math.floor((x * dpr) % (body.width as number));
-      const py = Math.floor((y * dpr) % (body.height as number));
+      const bw = (body as HTMLCanvasElement | OffscreenCanvas).width | 0;
+      const bh = (body as HTMLCanvasElement | OffscreenCanvas).height | 0;
+      const px = ((Math.floor(x * dpr) % bw) + bw) % bw;
+      const py = ((Math.floor(y * dpr) % bh) + bh) % bh;
+
       const bd = bx.getImageData(px, py, 1, 1).data;
       const fd = fx.getImageData(px, py, 1, 1).data;
-      const b = clamp01(bd[0] / 255); // treat red channel as scalar
-      const f = clamp01(fd[0] / 255);
+
+      const b = clamp01(u8At(bd, 0) / 255); // treat red channel as scalar
+      const f = clamp01(u8At(fd, 0) / 255);
       return { body: b, flank: f };
     },
 

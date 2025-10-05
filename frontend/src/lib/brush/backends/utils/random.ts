@@ -1,6 +1,14 @@
-// Lightweight, seedable RNG utilities for deterministic brush jitter.
+// FILE: src/lib/brush/backends/utils/random.ts
+// Canonical RNG for all backends — deterministic, strict-safe.
+// Keeps your original API (RNG, mulberry32, seedFrom, createRNG) and adds:
+// - RNGLike support (RNG | {nextFloat():number} | () => number)
+// - rngFrom() to normalize legacy/random functions into a full RNG.
 
-/** Simple 32-bit hash (xmur3). Great for turning strings -> seeds. */
+import { atOrThrow } from "@/lib/brush/core/guards";
+
+//////////////////// Hashing / seeding ////////////////////
+
+/** Simple 32-bit hash (xmur3). String -> uint32 seed. */
 function xmur3(str: string): number {
   let h = 1779033703 ^ str.length;
   for (let i = 0; i < str.length; i++) {
@@ -13,8 +21,8 @@ function xmur3(str: string): number {
 }
 
 /** Derive a 32-bit seed from arbitrary inputs (numbers/strings). */
-export function seedFrom(...parts: Array<string | number>): number {
-  let h = 0x9e3779b9; // golden ratio
+export function seedFrom(...parts: ReadonlyArray<string | number>): number {
+  let h = 0x9e3779b9 >>> 0; // golden ratio
   for (const p of parts) {
     const v = typeof p === "number" ? p >>> 0 : xmur3(String(p));
     h ^= v + 0x9e3779b9 + ((h << 6) | 0) + (h >>> 2);
@@ -23,12 +31,14 @@ export function seedFrom(...parts: Array<string | number>): number {
   return h >>> 0;
 }
 
+//////////////////// Core generator ////////////////////
+
 export interface RNG {
-  /** [0,1) */
+  /** Uniform float in [0,1) */
   nextFloat(): number;
-  /** [0, max) */
+  /** Integer in [0, max) */
   nextIntExclusive(max: number): number;
-  /** [min, max] inclusive */
+  /** Integer in [min, max] inclusive */
   nextIntInclusive(min: number, max: number): number;
   /** Uniform float in [min, max) */
   range(min: number, max: number): number;
@@ -47,10 +57,9 @@ export interface RNG {
   fork(label?: string | number): RNG;
 }
 
-/** Fast 32-bit generator (Mulberry32). Good speed/quality for UI effects. */
+/** Fast 32-bit PRNG (Mulberry32). Deterministic; good for rendering jitter. */
 export function mulberry32(seed = 123456789): RNG {
   let s = seed >>> 0;
-  // cache for Box–Muller second variate
   let haveSpare = false;
   let spare = 0;
 
@@ -58,15 +67,15 @@ export function mulberry32(seed = 123456789): RNG {
     s = (s + 0x6d2b79f5) >>> 0;
     let t = Math.imul(s ^ (s >>> 15), 1 | s);
     t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296; // [0,1)
   }
 
   const api: RNG = {
     nextFloat,
 
     nextIntExclusive(max: number): number {
-      // Bias is tiny for moderately sized max; good enough for brush jitter.
-      return (nextFloat() * Math.max(0, max | 0)) | 0;
+      const m = Math.max(0, max | 0);
+      return (nextFloat() * m) | 0; // bias negligible for UI
     },
 
     nextIntInclusive(min: number, max: number): number {
@@ -80,18 +89,18 @@ export function mulberry32(seed = 123456789): RNG {
     },
 
     bool(p = 0.5): boolean {
-      return nextFloat() < (p <= 0 ? 0 : p >= 1 ? 1 : p);
+      const pp = p <= 0 ? 0 : p >= 1 ? 1 : p;
+      return nextFloat() < pp;
     },
 
     normal(mean = 0, sigma = 1): number {
-      // Box–Muller with caching; sufficient for jitter.
       if (haveSpare) {
         haveSpare = false;
         return mean + spare * sigma;
       }
       let u = 0,
         v = 0;
-      // avoid 0 to prevent log(0)
+      // Avoid log(0). nextFloat() never returns 1, but may be ~0.
       do {
         u = nextFloat();
       } while (u <= 1e-12);
@@ -106,7 +115,6 @@ export function mulberry32(seed = 123456789): RNG {
 
     skip(n: number): void {
       for (let i = 0; i < n; i++) void nextFloat();
-      // clear Box–Muller cache because stream alignment changed
       haveSpare = false;
       spare = 0;
     },
@@ -131,9 +139,7 @@ export function mulberry32(seed = 123456789): RNG {
     },
 
     fork(label: string | number = 0): RNG {
-      // Derive a distinct child seed from current state + label.
-      const childSeed = seedFrom(s, label);
-      return mulberry32(childSeed);
+      return mulberry32(seedFrom(s, label));
     },
   };
 
@@ -141,9 +147,175 @@ export function mulberry32(seed = 123456789): RNG {
 }
 
 /** Convenience: create a RNG from mixed seeds (string, numbers). */
-export function createRNG(...parts: Array<string | number>): RNG {
+export function createRNG(...parts: ReadonlyArray<string | number>): RNG {
   return mulberry32(seedFrom(...parts));
 }
-export const uniform = (rng: RNG) => rng.nextFloat();
-export const pick = <T>(rng: RNG, arr: readonly T[]) =>
-  arr[rng.nextIntExclusive(arr.length)];
+
+//////////////////// RNGLike support ////////////////////
+
+/** Accepts RNG, {nextFloat()}, or () => number; returns a full RNG facade. */
+export type RNGLike = RNG | { nextFloat: () => number } | (() => number);
+
+export function rngFrom(src: RNGLike): RNG {
+  // Already a full RNG
+  if (
+    typeof src === "object" &&
+    src !== null &&
+    "range" in src &&
+    "normal" in src
+  ) {
+    return src as RNG;
+  }
+  // Object with nextFloat only
+  if (
+    typeof src === "object" &&
+    src !== null &&
+    "nextFloat" in src &&
+    typeof src.nextFloat === "function"
+  ) {
+    const base = (src as { nextFloat: () => number }).nextFloat;
+    return rngFacade(base);
+  }
+  // Plain function () => number
+  if (typeof src === "function") {
+    return rngFacade(src);
+  }
+  // Should not happen, but fallback to deterministic mulberry
+  return mulberry32(0xdeadbeef);
+}
+function rngFacade(next: () => number): RNG {
+  // Box–Muller cache for normal()
+  let haveSpare = false;
+  let spare = 0;
+
+  // Normalize arbitrary generator output to [0,1) robustly
+  const u01 = () => {
+    let v = next();
+    if (!Number.isFinite(v)) return 0;
+    // Map to fractional part
+    v = v - Math.floor(v); // now in [0,1)
+    // Guard weird cases: if generator ever returns exactly 1
+    if (v >= 1) v = 1 - Number.EPSILON;
+    if (v < 0) v = ((v % 1) + 1) % 1; // just in case
+    return v === 1 ? 1 - Number.EPSILON : v;
+  };
+
+  const rng: RNG = {
+    nextFloat(): number {
+      return u01();
+    },
+    nextIntExclusive(max: number): number {
+      const m = Math.max(0, max | 0);
+      return (u01() * m) | 0;
+    },
+    nextIntInclusive(min: number, max: number): number {
+      const lo = Math.min(min | 0, max | 0);
+      const hi = Math.max(min | 0, max | 0);
+      return lo + ((u01() * (hi - lo + 1)) | 0);
+    },
+    range(min: number, max: number): number {
+      return min + (max - min) * u01();
+    },
+    bool(p = 0.5): boolean {
+      const pp = p <= 0 ? 0 : p >= 1 ? 1 : p;
+      return u01() < pp;
+    },
+    normal(mean = 0, sigma = 1): number {
+      if (haveSpare) {
+        haveSpare = false;
+        return mean + spare * sigma;
+      }
+      let u = 0,
+        v = 0;
+      do {
+        u = u01();
+      } while (u <= 1e-12);
+      v = u01();
+      const mag = Math.sqrt(-2.0 * Math.log(u));
+      const z0 = mag * Math.cos(2 * Math.PI * v);
+      const z1 = mag * Math.sin(2 * Math.PI * v);
+      spare = z1;
+      haveSpare = true;
+      return mean + z0 * sigma;
+    },
+    skip(n: number): void {
+      for (let i = 0; i < n; i++) void u01();
+      haveSpare = false;
+      spare = 0;
+    },
+    state(): number {
+      return 0;
+    }, // not available for function-backed RNG
+    save(): number {
+      return 0;
+    },
+    restore(): void {
+      haveSpare = false;
+      spare = 0;
+    },
+    seed(): void {
+      haveSpare = false;
+      spare = 0;
+    },
+    fork(): RNG {
+      return rng;
+    }, // stateless facade; reuse
+  };
+  return rng;
+}
+
+//////////////////// Helpers ////////////////////
+
+export const uniform = (rng: RNGLike): number => rngFrom(rng).nextFloat();
+
+/** Weighted index with >=0 weights (if all zero, returns 0). */
+export function weightedIndex(
+  rng: RNGLike,
+  weights: ReadonlyArray<number>
+): number {
+  const R = rngFrom(rng);
+  let sum = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const w = weights[i] ?? 0;
+    sum += w >= 0 ? w : 0;
+  }
+  if (!(sum > 0)) return 0;
+
+  let t = R.range(0, sum);
+  for (let i = 0; i < weights.length; i++) {
+    const w = weights[i] ?? 0;
+    const wi = w >= 0 ? w : 0;
+    t -= wi;
+    if (t <= 0) return i;
+  }
+  return Math.max(0, weights.length - 1);
+}
+
+/** Uniform pick with bounds-safe indexing (uses core/guards). */
+export function pick<T>(rng: RNGLike, arr: ReadonlyArray<T>): T {
+  if (arr.length === 0) throw new Error("pick() from empty array");
+  const R = rngFrom(rng);
+  const idx = R.nextIntExclusive(arr.length);
+  return atOrThrow(arr, idx); // guarantees T (not T | undefined)
+}
+
+//////////////////// Optional OO wrapper (ergonomic) ////////////////////
+
+export class Rand implements RNG {
+  private r: RNG;
+  constructor(seed: number) {
+    this.r = mulberry32(seed);
+  }
+  nextFloat = () => this.r.nextFloat();
+  nextIntExclusive = (m: number) => this.r.nextIntExclusive(m);
+  nextIntInclusive = (a: number, b: number) => this.r.nextIntInclusive(a, b);
+  range = (a: number, b: number) => this.r.range(a, b);
+  bool = (p?: number) => this.r.bool(p);
+  normal = (m?: number, s?: number) => this.r.normal(m, s);
+  skip = (n: number) => this.r.skip(n);
+  state = () => this.r.state();
+  save = () => this.r.save();
+  restore = (s: number) => this.r.restore(s);
+  seed = (v: number) => this.r.seed(v);
+  fork = (label?: string | number) => this.r.fork(label);
+}

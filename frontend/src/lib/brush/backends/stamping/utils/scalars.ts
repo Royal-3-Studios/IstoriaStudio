@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/stamping/utils/scalars.ts
-import { clamp, clamp01 } from "../utils/math";
+import { clamp, clamp01 } from "@backends/utils/math";
 
 /** Safe override reader with default. */
 export function ov<T extends object, K extends keyof T, F>(

@@ -3,6 +3,16 @@
 /** Clamp to [0,1] without branching noise. */
 export const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+/** Safe, bounds-checked read for Uint8ClampedArray (never undefined). */
+function u8At(buf: Uint8ClampedArray, idx: number): number {
+  const n = buf.length;
+  if (n === 0) return 0;
+  let i = idx | 0; // to int
+  if (i < 0) i = 0;
+  if (i > n - 1) i = n - 1;
+  return buf[i] as number; // after clamping, value exists
+}
+
 /** 8-bit sRGB -> linear table (exact for codes 0..255). */
 export const SRGB_TO_LINEAR = (() => {
   const t = new Float32Array(256);
@@ -42,9 +52,9 @@ export const LINEAR_TO_SRGB_LUT = (() => {
 
 /** Convenience helper to sample the high-res LUT correctly. */
 export function linearToSrgb8LUT(linear: number): number {
-  const N = LINEAR_TO_SRGB_LUT.length;
-  const idx = Math.round(clamp01(linear) * (N - 1));
-  return LINEAR_TO_SRGB_LUT[idx];
+  const n = LINEAR_TO_SRGB_LUT.length;
+  const idx = Math.round(clamp01(linear) * (n - 1));
+  return u8At(LINEAR_TO_SRGB_LUT, idx);
 }
 
 /**
@@ -63,6 +73,6 @@ export const LINEAR_TO_SRGB8_256 = (() => {
 
 /** Sample the 256-entry table by first quantizing linear to 0..255. */
 export function linearToSrgb8LUT256(linear: number): number {
-  const i = Math.round(clamp01(linear) * 255);
-  return LINEAR_TO_SRGB8_256[i];
+  const idx = Math.round(clamp01(linear) * 255);
+  return u8At(LINEAR_TO_SRGB8_256, idx);
 }

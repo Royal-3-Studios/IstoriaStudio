@@ -4,8 +4,30 @@ import { SRGB_TO_LINEAR, LINEAR_TO_SRGB_LUT } from "./luts";
 
 export type WrapMode = "clamp" | "repeat" | "mirror";
 
-export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (numbers 0..255)
+export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (0..255)
 export type SampleLinear = { r: number; g: number; b: number; a: number }; // linear floats 0..1 (non-premul)
+
+/* ====================== safe typed-array accessors ====================== */
+
+function u8At(buf: Uint8ClampedArray, idx: number): number {
+  const n = buf.length;
+  if (n === 0) return 0;
+  let i = idx | 0;
+  if (i < 0) i = 0;
+  if (i > n - 1) i = n - 1;
+  return buf[i] as number;
+}
+
+function f32At(buf: Float32Array, idx: number): number {
+  const n = buf.length;
+  if (n === 0) return 0;
+  let i = idx | 0;
+  if (i < 0) i = 0;
+  if (i > n - 1) i = n - 1;
+  return buf[i] as number;
+}
+
+/* ============================== wrapping =============================== */
 
 /** Wrap a coordinate index into [0, max-1] according to wrap mode. */
 function wrap(i: number, max: number, mode: WrapMode): number {
@@ -18,6 +40,8 @@ function wrap(i: number, max: number, mode: WrapMode): number {
   const t = ((i % period) + period) % period;
   return t <= m ? t : period - t;
 }
+
+/* ============================== samplers =============================== */
 
 /** Nearest neighbor sample. Returns sRGB bytes (as numbers). */
 export function sampleNearest(
@@ -34,7 +58,13 @@ export function sampleNearest(
   const iy = wrap(Math.round(y), h, wrapMode);
   const i = (iy * w + ix) * 4;
   const d = img.data;
-  return { r: d[i], g: d[i + 1], b: d[i + 2], a: d[i + 3] };
+
+  return {
+    r: u8At(d, i),
+    g: u8At(d, i + 1),
+    b: u8At(d, i + 2),
+    a: u8At(d, i + 3),
+  };
 }
 
 /** Bilinear sample in sRGB byte space. Handy for non-critical paths. */
@@ -72,13 +102,26 @@ export function sampleBilinear(
   const w01 = (1 - tx) * ty;
   const w11 = tx * ty;
 
-  const r = d[i00] * w00 + d[i10] * w10 + d[i01] * w01 + d[i11] * w11;
+  const r =
+    u8At(d, i00) * w00 +
+    u8At(d, i10) * w10 +
+    u8At(d, i01) * w01 +
+    u8At(d, i11) * w11;
   const g =
-    d[i00 + 1] * w00 + d[i10 + 1] * w10 + d[i01 + 1] * w01 + d[i11 + 1] * w11;
+    u8At(d, i00 + 1) * w00 +
+    u8At(d, i10 + 1) * w10 +
+    u8At(d, i01 + 1) * w01 +
+    u8At(d, i11 + 1) * w11;
   const b =
-    d[i00 + 2] * w00 + d[i10 + 2] * w10 + d[i01 + 2] * w01 + d[i11 + 2] * w11;
+    u8At(d, i00 + 2) * w00 +
+    u8At(d, i10 + 2) * w10 +
+    u8At(d, i01 + 2) * w01 +
+    u8At(d, i11 + 2) * w11;
   const a =
-    d[i00 + 3] * w00 + d[i10 + 3] * w10 + d[i01 + 3] * w01 + d[i11 + 3] * w11;
+    u8At(d, i00 + 3) * w00 +
+    u8At(d, i10 + 3) * w10 +
+    u8At(d, i01 + 3) * w01 +
+    u8At(d, i11 + 3) * w11;
 
   return { r, g, b, a };
 }
@@ -91,11 +134,10 @@ export function sampleBilinearLinear(
   wrapMode: WrapMode = "repeat"
 ): SampleLinear {
   const s = sampleBilinear(img, x, y, wrapMode);
-  // Index clamps to 0..255 to avoid OOB
   return {
-    r: SRGB_TO_LINEAR[(s.r | 0) & 0xff],
-    g: SRGB_TO_LINEAR[(s.g | 0) & 0xff],
-    b: SRGB_TO_LINEAR[(s.b | 0) & 0xff],
+    r: f32At(SRGB_TO_LINEAR, (s.r | 0) & 0xff),
+    g: f32At(SRGB_TO_LINEAR, (s.g | 0) & 0xff),
+    b: f32At(SRGB_TO_LINEAR, (s.b | 0) & 0xff),
     a: ((s.a | 0) & 0xff) / 255,
   };
 }
@@ -121,7 +163,7 @@ export function sampleBilinearToSrgb8(
   const lin = sampleBilinearLinear(img, x, y, wrapMode);
   const N = LINEAR_TO_SRGB_LUT.length - 1;
   const idx = (v: number) =>
-    LINEAR_TO_SRGB_LUT[Math.round(Math.max(0, Math.min(1, v)) * N)];
+    u8At(LINEAR_TO_SRGB_LUT, Math.round(Math.max(0, Math.min(1, v)) * N));
   return {
     r: idx(lin.r),
     g: idx(lin.g),

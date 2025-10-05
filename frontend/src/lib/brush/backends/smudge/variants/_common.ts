@@ -4,8 +4,8 @@ import type {
   InputQualityOpts,
   StrokePlacementOptions,
   Stamp,
-} from "@/lib/brush/backends/utils/stroke";
-import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
+import { pathToStamps } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
 /** Clamp to [0,1]. */

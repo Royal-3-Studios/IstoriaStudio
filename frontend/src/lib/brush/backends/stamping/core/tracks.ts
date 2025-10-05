@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/stamping/core/tracks.ts
-import { clamp } from "../../utils/math";
+import { clamp } from "@backends/utils/math";
 
 /** Unit outward normal for segment A→B. */
 function segmentNormal(ax: number, ay: number, bx: number, by: number) {

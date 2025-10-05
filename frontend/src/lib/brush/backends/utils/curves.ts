@@ -1,9 +1,8 @@
-// src/lib/brush/backends/utils/curves.ts
+// FILE: src/lib/brush/backends/utils/curves.ts
 import type { CurvePoint } from "@/lib/brush/core/types";
+import { atOrThrow } from "@/lib/brush/core/guards";
 
-/* ============================================================
-   EASINGS
-   ============================================================ */
+/* ============================ EASINGS ============================ */
 export const Easing = {
   linear: (t: number) => t,
   easeIn: (t: number) => t * t,
@@ -14,41 +13,61 @@ export const Easing = {
 } as const;
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
-/* ============================================================
-   SANITIZE POINTS (sorted, de-duped, clamped)
-   - forces x,y into [0,1]
-   - sorts by x
-   - removes duplicate x within EPS
-   - guarantees first.x=0 and last.x=1 (by inserting if missing)
-   ============================================================ */
 const EPS = 1e-6;
-function sanitize(points: CurvePoint[]): CurvePoint[] {
-  if (!points || points.length === 0)
-    return [
-      { x: 0, y: 0 },
-      { x: 1, y: 1 },
-    ];
-  const pts = points
+
+/* ---------- safe helpers for arrays ---------- */
+
+// For typed arrays (Float32Array / Float64Array) — bracket indexing is always number.
+function tAt<T extends Float32Array | Float64Array>(ta: T, i: number): number {
+  const n = ta.length;
+  if (n === 0) return 0; // safe default
+  let idx = i | 0; // to int
+  if (idx < 0) idx = 0;
+  if (idx > n - 1) idx = n - 1;
+  return ta[idx]!; // index is clamped → definitely number
+}
+
+/* ========================= SANITIZE POINTS ======================= */
+function sanitize(points: ReadonlyArray<CurvePoint>): CurvePoint[] {
+  const base =
+    points && points.length > 0
+      ? points
+      : ([
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ] satisfies CurvePoint[]);
+
+  const pts = base
     .map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) }))
     .sort((a, b) => a.x - b.x);
 
   const out: CurvePoint[] = [];
   for (let i = 0; i < pts.length; i++) {
-    if (i === 0 || Math.abs(pts[i].x - pts[i - 1].x) > EPS) out.push(pts[i]);
-    else out[out.length - 1] = pts[i]; // keep the last for identical x
+    if (i === 0) {
+      out.push(atOrThrow(pts, 0));
+    } else {
+      const prev = atOrThrow(pts, i - 1);
+      const cur = atOrThrow(pts, i);
+      if (Math.abs(cur.x - prev.x) > EPS) out.push(cur);
+      else {
+        if (out.length === 0) out.push(cur);
+        else out[out.length - 1] = cur; // keep last for duplicate x
+      }
+    }
   }
-  if (out[0].x > EPS) out.unshift({ x: 0, y: out[0].y }); // extend to x=0
-  if (1 - out[out.length - 1].x > EPS)
-    out.push({ x: 1, y: out[out.length - 1].y }); // extend to x=1
+
+  if (out.length === 0) out.push({ x: 0, y: 0 }, { x: 1, y: 1 });
+
+  const first = atOrThrow(out, 0);
+  if (first.x > EPS) out.unshift({ x: 0, y: first.y });
+
+  const last = atOrThrow(out, out.length - 1);
+  if (1 - last.x > EPS) out.push({ x: 1, y: last.y });
+
   return out;
 }
 
-/* ============================================================
-   MONOTONE CUBIC HERMITE (Fritsch–Carlson)
-   - preserves monotonicity; avoids overshoot
-   - perfect for pressure/size/taper curves
-   ============================================================ */
+/* ============== MONOTONE CUBIC HERMITE (Fritsch–Carlson) ============== */
 type Segment = {
   x0: number;
   x1: number;
@@ -58,99 +77,124 @@ type Segment = {
   m1: number;
 };
 
-function buildMonotoneSegments(points: CurvePoint[]): Segment[] {
+function buildMonotoneSegments(points: ReadonlyArray<CurvePoint>): Segment[] {
   const pts = sanitize(points);
   const n = pts.length;
-  const dx = new Array(n - 1);
-  const dy = new Array(n - 1);
-  const slope = new Array(n - 1);
 
-  for (let i = 0; i < n - 1; i++) {
-    dx[i] = pts[i + 1].x - pts[i].x;
-    dy[i] = pts[i + 1].y - pts[i].y;
-    slope[i] = dy[i] / (dx[i] || EPS);
+  if (n === 1) {
+    const p = atOrThrow(pts, 0);
+    return [{ x0: 0, x1: 1, y0: p.y, y1: p.y, m0: 0, m1: 0 }];
   }
 
-  const m = new Array(n).fill(0);
-  m[0] = slope[0];
-  m[n - 1] = slope[n - 2];
+  // Typed arrays => elements are always number (never undefined)
+  const dx = new Float64Array(n - 1);
+  const dy = new Float64Array(n - 1);
+  const slope = new Float64Array(n - 1);
+
+  for (let i = 0; i < n - 1; i++) {
+    const a = atOrThrow(pts, i);
+    const b = atOrThrow(pts, i + 1);
+    dx[i] = b.x - a.x;
+    dy[i] = b.y - a.y;
+    {
+      const dx_i = tAt(dx, i);
+      const dy_i = tAt(dy, i);
+      slope[i] = dy_i / (dx_i || EPS);
+    }
+  }
+
+  // Tangent estimates at each knot (typed array => numbers)
+  const m = new Float64Array(n);
+  m[0] = tAt(slope, 0);
+  m[n - 1] = tAt(slope, n - 2);
+
   for (let i = 1; i < n - 1; i++) {
-    if (slope[i - 1] * slope[i] <= 0) m[i] = 0;
-    else m[i] = (slope[i - 1] + slope[i]) / 2;
+    const s0 = tAt(slope, i - 1);
+    const s1 = tAt(slope, i);
+    m[i] = s0 * s1 <= 0 ? 0 : (s0 + s1) / 2;
   }
 
-  // Fritsch–Carlson limiter
+  // Fritsch–Carlson limiter (bounds-safe reads)
   for (let i = 0; i < n - 1; i++) {
-    if (slope[i] === 0) {
+    const si = tAt(slope, i); // <-- guarantees a number
+    if (si === 0) {
       m[i] = 0;
       m[i + 1] = 0;
       continue;
     }
-    const a = m[i] / slope[i];
-    const b = m[i + 1] / slope[i];
+    const mi = tAt(m, i);
+    const mip1 = tAt(m, i + 1);
+    const a = mi / si;
+    const b = mip1 / si;
     const h = Math.hypot(a, b);
     if (h > 3) {
       const t = 3 / h;
-      m[i] = a * t * slope[i];
-      m[i + 1] = b * t * slope[i];
+      const adj = t * si;
+      m[i] = a * adj;
+      m[i + 1] = b * adj;
     }
   }
 
-  const segs: Segment[] = [];
+  // Build segments
+  const segs: Segment[] = new Array(n - 1);
   for (let i = 0; i < n - 1; i++) {
-    segs.push({
-      x0: pts[i].x,
-      x1: pts[i + 1].x,
-      y0: pts[i].y,
-      y1: pts[i + 1].y,
-      m0: m[i],
-      m1: m[i + 1],
-    });
+    const p0 = atOrThrow(pts, i);
+    const p1 = atOrThrow(pts, i + 1);
+    segs[i] = {
+      x0: p0.x,
+      x1: p1.x,
+      y0: p0.y,
+      y1: p1.y,
+      m0: tAt(m, i),
+      m1: tAt(m, i + 1),
+    };
   }
   return segs;
 }
 
-function evalMonotone(segs: Segment[], x: number): number {
+function evalMonotone(segs: ReadonlyArray<Segment>, x: number): number {
+  const N = segs.length;
+  if (N === 0) return clamp01(x);
+
   const X = clamp01(x);
-  // binary search segment
+  // binary search
   let lo = 0,
-    hi = segs.length - 1,
+    hi = N - 1,
     mid = 0;
   while (lo <= hi) {
     mid = (lo + hi) >>> 1;
-    const s = segs[mid];
+    const s = atOrThrow(segs, mid);
     if (X < s.x0) hi = mid - 1;
     else if (X > s.x1) lo = mid + 1;
     else break;
   }
-  const s = segs[mid];
+  if (mid < 0) mid = 0;
+  if (mid > N - 1) mid = N - 1;
+
+  const s = atOrThrow(segs, mid);
   const h = s.x1 - s.x0 || EPS;
   const t = (X - s.x0) / h;
-  // Hermite basis
+
   const t2 = t * t,
     t3 = t2 * t;
   const h00 = 2 * t3 - 3 * t2 + 1;
   const h10 = t3 - 2 * t2 + t;
   const h01 = -2 * t3 + 3 * t2;
   const h11 = t3 - t2;
+
   const y = h00 * s.y0 + h10 * h * s.m0 + h01 * s.y1 + h11 * h * s.m1;
   return clamp01(y);
 }
 
-/* ============================================================
-   CUBIC BÉZIER SUPPORT (optional; assumes x is monotonic)
-   - useful for classic UI bezier handles (0,0)-(c1)-(c2)-(1,1)
-   ============================================================ */
+/* ========================= CUBIC BÉZIER LUT ======================== */
 export function cubicBezierLUT(
   c1: CurvePoint,
   c2: CurvePoint,
   n = 256
 ): Float32Array {
-  // assume endpoints are (0,0) and (1,1), and x is monotonic
   const out = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const x = i / (n - 1);
-    // invert x(t) with Newton iterations
     let t = x,
       it = 0;
     for (; it < 6; it++) {
@@ -189,23 +233,20 @@ function bezier1dPrime(
   return 3 * u * u * (p1 - p0) + 6 * u * t * (p2 - p1) + 3 * t * t * (p3 - p2);
 }
 
-/* ============================================================
-   LUT BUILD + SAMPLE (PUBLIC API)
-   - buildLUT(): uses monotone cubic by default for user-supplied points
-   - sampleLUT(): bilinear sample
-   ============================================================ */
+/* ========================== LUT BUILD/SAMPLE ======================= */
 const CACHE = new Map<string, Float32Array>();
 
-function keyFor(points: CurvePoint[], n: number): string {
-  // stringify with small rounding to improve cache hits
+function keyFor(points: ReadonlyArray<CurvePoint>, n: number): string {
   const s = sanitize(points)
     .map((p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`)
     .join("|");
   return `${n}:${s}`;
 }
 
-/** Build a LUT from control points using monotone cubic interpolation. */
-export function buildLUT(points: CurvePoint[], n = 256): Float32Array {
+export function buildLUT(
+  points: ReadonlyArray<CurvePoint>,
+  n = 256
+): Float32Array {
   if (!points || points.length < 2) return new Float32Array([0, 1]);
 
   const key = keyFor(points, n);
@@ -222,13 +263,18 @@ export function buildLUT(points: CurvePoint[], n = 256): Float32Array {
   return out;
 }
 
-/** Sample a LUT with linear interpolation. */
+/** Bounds-safe read for Float32Array (never returns undefined). */
+function fAt(buf: Float32Array, i: number): number {
+  return tAt(buf, i);
+}
+
 export function sampleLUT(lut: Float32Array, t: number): number {
-  if (!lut || lut.length < 2) return clamp01(t);
-  const x = clamp01(t) * (lut.length - 1);
-  const i = Math.floor(x),
-    f = x - i;
-  const a = lut[i],
-    b = lut[i + 1] ?? a;
+  const n = lut.length;
+  if (n < 2) return clamp01(t);
+  const x = clamp01(t) * (n - 1);
+  const i = Math.floor(x);
+  const f = x - i;
+  const a = fAt(lut, i);
+  const b = fAt(lut, i + 1);
   return a + (b - a) * f;
 }

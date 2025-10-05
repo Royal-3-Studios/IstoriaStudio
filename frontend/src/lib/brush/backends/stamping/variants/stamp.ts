@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/stamping/variants/stamp.ts
 import type { RenderOptions } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 
 /** Example: draw one stamp at the last path point (placeholder for textured stamps). */
 export function drawSingleStamp(ctx: Ctx2D, opt: RenderOptions): void {

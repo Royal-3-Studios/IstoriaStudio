@@ -1,9 +1,6 @@
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
 import { Rand, Texture as TexUtil, Blend } from "@backends";
-import {
-  pathToStamps,
-  type InputQualityOpts,
-} from "@/lib/brush/backends/utils/stroke";
+import { pathToStamps, type InputQualityOpts } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
 import type { Ctx2D } from "@backends/utils/canvas";
@@ -24,7 +21,7 @@ import {
   buildGrainLayerFromTile,
   multiplyGrainOverColor,
 } from "../core/mask";
-import { jitterColorHSLA } from "../core/color";
+import { jitterColorHSLA } from "@backends/utils/color";
 
 /** Per-backend knobs for spray. All are optional. */
 export type SprayBackendOverrides = Partial<{
@@ -129,8 +126,8 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
 
   // Randomness
   const seed = (opt.seed ?? 1337) >>> 0;
-  const rng = Rand.mulberry32(seed);
-  const rand = (): number => rng.nextFloat();
+  const rng = new Rand(seed);
+  const rand = () => rng.nextFloat();
 
   // Pressure mapping + input quality
   const pmap = toPressureMapFromInput(opt);
@@ -235,7 +232,7 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
 
       // 2) Color layer with optional HSL jitter
       const tint = cj?.perDroplet
-        ? jitterColorHSLA(color, cj, rand, alpha)
+        ? jitterColorHSLA(color, cj, rng, alpha) // <-- pass RNG object here
         : color;
       paintDroplet(cx, {
         x: px,

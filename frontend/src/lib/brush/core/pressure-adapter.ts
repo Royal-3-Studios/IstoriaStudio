@@ -1,6 +1,4 @@
 // FILE: src/lib/brush/core/pressure-adapter.ts
-// Adapt your BrushPreset.input → engine/core PressureOptions and Tracker (no `any`).
-
 import type {
   BrushPreset,
   BrushInputConfig,
@@ -17,24 +15,20 @@ import {
   type VelocityCompSpec,
 } from "./pressure";
 
-/* ------------------------- Type-safe helpers ------------------------- */
+/* ------------------------- helpers ------------------------- */
 
 function numOr(v: unknown, def: number): number {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : def;
 }
 
-/** Map preset curve → engine curve. Extend here if you add more curve types. */
 function mapCurve(curve: PresetCurve | undefined): CurveSpec | undefined {
   if (!curve) return undefined;
-  if (curve.type === "gamma") {
+  if (curve.type === "gamma")
     return { type: "gamma", gamma: numOr(curve.gamma, 1) };
-  }
-  // Unknown preset curve types → omit to keep engine neutral
   return undefined;
 }
 
-/** Map preset smoothing → engine smoother. */
 function mapSmoothing(
   s: PresetSmoothing | undefined
 ): SmootherSpec | undefined {
@@ -51,11 +45,9 @@ function mapSmoothing(
       },
     };
   }
-  // Unknown mode → omit to use engine defaults
   return undefined;
 }
 
-/** Map preset synth → engine synth. */
 function mapSynth(
   synth: BrushInputConfig["pressure"]["synth"] | undefined
 ): SynthesisSpec | undefined {
@@ -70,43 +62,42 @@ function mapSynth(
   };
 }
 
-/** Map preset velocity compensation directly. */
 function mapVelocityComp(
   v: BrushInputConfig["pressure"]["velocityComp"] | undefined
 ): VelocityCompSpec | undefined {
   if (!v) return undefined;
-  return {
-    k: numOr(v.k, 0.15),
-    refSpeed: numOr(v.refSpeed, 1500),
-  };
+  return { k: numOr(v.k, 0.15), refSpeed: numOr(v.refSpeed, 1500) };
 }
 
-/* ---------------------- Public adapter functions --------------------- */
+/* ---------------------- Public adapter --------------------- */
 
-/**
- * Convert a BrushInputConfig → PressureOptions understood by PressureTracker.
- * Leaves fields undefined to allow engine defaults when preset omits things.
- */
 export function toPressureOptions(input: BrushInputConfig): PressureOptions {
+  const out: Partial<PressureOptions> = {};
+
   const clamp = input.pressure?.clamp;
-  return {
-    clamp: clamp
-      ? { min: numOr(clamp.min, 0), max: numOr(clamp.max, 1) }
-      : undefined,
-    curve: mapCurve(input.pressure?.curve),
-    smoothing: mapSmoothing(input.pressure?.smoothing),
-    velocityComp: mapVelocityComp(input.pressure?.velocityComp),
-    synth: mapSynth(input.pressure?.synth),
-  };
+  if (clamp && (clamp.min !== undefined || clamp.max !== undefined)) {
+    out.clamp = { min: numOr(clamp.min, 0), max: numOr(clamp.max, 1) };
+  }
+
+  const curve = mapCurve(input.pressure?.curve);
+  if (curve) out.curve = curve;
+
+  const smoothing = mapSmoothing(input.pressure?.smoothing);
+  if (smoothing) out.smoothing = smoothing;
+
+  const vel = mapVelocityComp(input.pressure?.velocityComp);
+  if (vel) out.velocityComp = vel;
+
+  const synth = mapSynth(input.pressure?.synth);
+  if (synth) out.synth = synth;
+
+  // It’s fine to assert here: all keys are optional and we only set defined ones
+  return out as PressureOptions;
 }
 
-/** Build a tracker directly from a preset (uses preset.input; falls back to engine defaults). */
 export function makePressureTrackerForPreset(
   preset: BrushPreset | undefined
 ): PressureTracker {
-  if (!preset?.input) {
-    // Use PressureTracker internal defaults
-    return new PressureTracker();
-  }
+  if (!preset?.input) return new PressureTracker();
   return new PressureTracker(toPressureOptions(preset.input));
 }

@@ -1,10 +1,6 @@
 // FILE: src/lib/brush/backends/spray/index.ts
 import type { RenderOptions } from "@/lib/brush/engine.types";
-import {
-  type Ctx2D,
-  type CanvasLike,
-  get2D,
-} from "@/lib/brush/backends/utils/canvas";
+import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
 
 import { drawSprayAirbrush } from "./variants/airbrush";
 import { drawSpraySplatter } from "./variants/splatter";

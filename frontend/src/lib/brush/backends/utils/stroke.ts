@@ -1,7 +1,9 @@
 // FILE: src/lib/brush/backends/utils/stroke.ts
-import type { RenderPathPoint } from "@/lib/brush/engine";
-import type { RNG } from "./random";
-import { clamp, lerp } from "./math";
+// Canonical stroke/path utilities for all backends (strict-safe; no `any`)
+
+import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
+import type { RNG } from "@backends/utils/random";
+import { clamp, lerp } from "@backends/utils/math";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
 /* ============================== Types ============================== */
@@ -109,6 +111,9 @@ export interface Stamp {
 /** Resampled point used by backends that operate in the arc-length domain. */
 export type SamplePoint = { x: number; y: number; t: number; p: number };
 
+/** Resampled point with a tangent angle in degrees (for ribbon outlines, etc.). */
+export type SampleWithAngle = SamplePoint & { tangentDeg: number };
+
 /* ============================== Internals ============================== */
 
 // Fully-concrete path point used internally (no optionals)
@@ -120,17 +125,24 @@ interface P {
   t: number; // cumulative arc fraction 0..1 (unnormalized until pathLengthAndT)
 }
 
-// Utility to assert non-undefined (keeps runtime safe & satisfies TS with noUncheckedIndexedAccess)
+// Utility to assert non-undefined (strict + runtime safety)
 function must<T>(v: T | undefined, where = "value"): T {
   if (v === undefined) throw new Error(`Invariant: ${where} is undefined`);
   return v;
 }
 
-function sub(a: P, b: P) {
+function sub(a: { x: number; y: number }, b: { x: number; y: number }) {
   return { x: a.x - b.x, y: a.y - b.y };
 }
 function len(v: { x: number; y: number }) {
   return Math.hypot(v.x, v.y);
+}
+function tangentDeg(
+  a: { x: number; y: number },
+  b: { x: number; y: number }
+): number {
+  const d = sub(b, a);
+  return (Math.atan2(d.y, d.x) * 180) / Math.PI;
 }
 
 /** simple one-pole smoother in *distance* domain */
@@ -195,8 +207,7 @@ function pathLengthAndT(points: ReadonlyArray<P>): {
   for (let i = 1; i < n; i++) {
     const cur = must(points[i], `points[${i}]`);
     const prev = must(points[i - 1], `points[${i - 1}]`);
-    const d = sub(cur, prev);
-    const ds = len(d);
+    const ds = len(sub(cur, prev));
     total += ds;
     out[i] = copyP(cur, total);
   }
@@ -249,18 +260,12 @@ function interp(a: P, b: P, u: number): P {
   };
 }
 
-function tangentDeg(a: P, b: P): number {
-  const d = sub(b, a);
-  return (Math.atan2(d.y, d.x) * 180) / Math.PI;
-}
-
 function rand(rng?: RNG): number {
   return rng ? rng.nextFloat() : Math.random();
 }
 
 /* ---------- predictive nudge (px) & speed→spacing ---------- */
 
-/** Nudge a point forward along its local tangent by predictPx (CSS px). */
 function predictPointPx(
   a: P,
   b: P,
@@ -277,12 +282,6 @@ function predictPointPx(
   return { x: b.x + ux * px, y: b.y + uy * px };
 }
 
-/**
- * Modulate step size based on a geometric "speed proxy":
- *  - localSegPx is the length (px) of the nearby source segment.
- *  - speedToSpacing ∈ [−0.3..+0.5] expands/contracts step with localSegPx.
- *  - minStepPx is a hard floor after modulation.
- */
 function modulatedStepPx(
   baseStepPx: number,
   localSegPx: number,
@@ -333,6 +332,126 @@ function pickTaperValue(
 
 /* ============================== Public API ============================== */
 
+/** Convenience: resolve UI spacing from RenderOptions to a *pixel* step size. */
+export function spacingToStepPx(opt: RenderOptions): number {
+  const spacingUi = (opt.engine.strokePath?.spacing ??
+    (opt.engine.overrides?.spacing as number | undefined) ??
+    6) as number;
+  const baseSize = opt.baseSizePx ?? 8;
+  const frac = spacingUi > 1 ? spacingUi / 100 : spacingUi;
+  return Math.max(0.25, frac * baseSize);
+}
+
+/**
+ * Resample a path at ~stepPx (CSS px) and carry a tangent angle in degrees.
+ * Pressure is linearly interpolated; t is 0..1 over arc length.
+ */
+export function resampleWithAngle(
+  points: ReadonlyArray<RenderPathPoint>,
+  stepPx: number
+): SampleWithAngle[] {
+  const out: SampleWithAngle[] = [];
+  if (!points || points.length < 2) return out;
+
+  // Build concrete P points (no smoothing here)
+  const Pts: P[] = points.map((p) => ({
+    x: Number.isFinite(p.x) ? p.x : 0,
+    y: Number.isFinite(p.y) ? p.y : 0,
+    pressure: Number.isFinite(p.pressure as number)
+      ? (p.pressure as number)
+      : 1,
+    angleDeg: Number.isFinite(p.angle as number)
+      ? ((p.angle as number) * 180) / Math.PI
+      : 0,
+    t: 0,
+  }));
+  const { pts, length } = pathLengthAndT(Pts);
+  if (length <= 0) return out;
+
+  const step = Math.max(0.3, Math.min(0.75, stepPx));
+  const evalAtS = (sArc: number) => {
+    const s = clamp(sArc / length, 0, 1);
+    const seg = segmentAt(pts, s);
+    const a = must(pts[seg.i0], `pts[${seg.i0}]`);
+    const b = must(pts[seg.i1], `pts[${seg.i1}]`);
+    const p = interp(a, b, seg.u);
+    const tan = tangentDeg(a, b);
+    return { p, tan };
+  };
+
+  const first = evalAtS(0);
+  out.push({
+    x: first.p.x,
+    y: first.p.y,
+    t: 0,
+    p: first.p.pressure,
+    tangentDeg: first.tan,
+  });
+
+  for (let s = step; s < length; s += step) {
+    const e = evalAtS(s);
+    out.push({
+      x: e.p.x,
+      y: e.p.y,
+      t: e.p.t,
+      p: e.p.pressure,
+      tangentDeg: e.tan,
+    });
+  }
+  const last = evalAtS(length);
+  out.push({
+    x: last.p.x,
+    y: last.p.y,
+    t: 1,
+    p: last.p.pressure,
+    tangentDeg: last.tan,
+  });
+
+  return out;
+}
+
+/**
+ * Build a ribbon outline from centerline samples + width function.
+ * - `samples`: output of resampleWithAngle
+ * - `widthAt(u)`: returns *radius in px* (not scale) at t∈[0,1]
+ * Returns a Path2D suitable for `ctx.clip()` or filling.
+ */
+export function buildRibbonOutline(
+  samples: ReadonlyArray<SampleWithAngle>,
+  widthAt: (u: number) => number
+): Path2D {
+  const n = samples.length;
+  const left: Array<{ x: number; y: number }> = [];
+  const right: Array<{ x: number; y: number }> = [];
+
+  if (n === 0) return new Path2D();
+
+  for (let i = 0; i < n; i++) {
+    const s = must(samples[i], `samples[${i}]`);
+    const rad = (s.tangentDeg * Math.PI) / 180;
+    const nx = -Math.sin(rad);
+    const ny = Math.cos(rad);
+    const w = Math.max(0.25, widthAt(s.t)); // radius in px
+    left.push({ x: s.x + nx * w, y: s.y + ny * w });
+    right.push({ x: s.x - nx * w, y: s.y - ny * w });
+  }
+
+  const path = new Path2D();
+  // move along left side
+  path.moveTo(left[0]!.x, left[0]!.y);
+  for (let i = 1; i < left.length; i++) {
+    const p = must(left[i], `left[${i}]`);
+    path.lineTo(p.x, p.y);
+  }
+  // back along right side (reverse)
+  for (let i = right.length - 1; i >= 0; i--) {
+    const p = must(right[i], `right[${i}]`);
+    path.lineTo(p.x, p.y);
+  }
+  path.closePath();
+  return path;
+}
+
 /**
  * Turn a raw input path into evenly/variably spaced stamp placements with tapering and jitter.
  * - Input points are in **CSS px** (like RenderPathPoint).
@@ -351,12 +470,12 @@ export function pathToStamps(
   const stampsPerStep = Math.max(1, Math.round(opts.stampsPerStep ?? 1));
 
   // path smoothing factor: map 0..100 -> alpha 0..1
-  const streamline = clamp(opts.streamline ?? 0, 0, 100) / 100;
-  const alpha = streamline <= 0 ? 1 : Math.max(0.05, 1 - streamline);
+  const streamlineAmt = clamp(opts.streamline ?? 0, 0, 100) / 100;
+  const alpha = streamlineAmt <= 0 ? 1 : Math.max(0.05, 1 - streamlineAmt);
 
   // Smooth (if requested) into P points
   const smoothed: P[] =
-    streamline > 0
+    streamlineAmt > 0
       ? smoothPath(rawPath as RenderPathPoint[], alpha)
       : rawPath.map((p) => ({
           x: Number.isFinite(p.x) ? p.x : 0,
@@ -519,7 +638,7 @@ export function computeWidthScale(
   return clamp(scale, 0, 1);
 }
 
-/* ============================== Helpers expected by backends ============================== */
+/* ============================== Misc helpers ============================== */
 
 /** Map UI spacing (percent or fraction) to a safe fraction of diameter. */
 export function resolveSpacingFraction(

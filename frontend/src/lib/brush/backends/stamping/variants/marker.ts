@@ -9,7 +9,7 @@ import {
 } from "../core/resample";
 import { buildRibbonOutline } from "../core/outline";
 import { widthPxFromScale } from "../core/width";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 
 export function drawStampMarker(ctx: Ctx2D, opt: RenderOptions): void {
   const path = opt.path ?? [];

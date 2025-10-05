@@ -54,7 +54,7 @@ function writeStorage<T>(key: string, value: T): void {
 export const defaultBrushPrefs = (): BrushPrefs => ({
   favorites: [],
   recents: [],
-  lastBrushId: undefined,
+  // NOTE: omit `lastBrushId` entirely until it is known (do NOT set undefined)
   showOnlyFavorites: false,
   __v: 1,
 });
@@ -67,7 +67,6 @@ export function loadBrushPrefs(): BrushPrefs {
   if (isValidPrefs(current)) return current;
 
   // Migrate older schemas here if you had any (stub for future changes)
-  // Example legacy keys:
   const legacy = tryLoadLegacy();
   if (legacy) return persist(legacy);
 
@@ -103,13 +102,21 @@ function isValidPrefs(v: unknown): v is BrushPrefs {
 function sanitize(p: BrushPrefs): BrushPrefs {
   const favs = dedupeStringArray(p.favorites);
   const rec = dedupeStringArray(p.recents);
-  return {
+
+  // Build base shape without optional keys
+  const base: BrushPrefs = {
     __v: 1,
     favorites: favs,
     recents: rec,
-    lastBrushId: typeof p.lastBrushId === "string" ? p.lastBrushId : undefined,
-    showOnlyFavorites: !!p.showOnlyFavorites,
+    ...(p.showOnlyFavorites !== undefined
+      ? { showOnlyFavorites: !!p.showOnlyFavorites }
+      : {}),
   };
+
+  // Conditionally add lastBrushId only when it is a string
+  return typeof p.lastBrushId === "string"
+    ? { ...base, lastBrushId: p.lastBrushId }
+    : base;
 }
 
 function dedupeStringArray(arr: unknown): string[] {
@@ -138,7 +145,7 @@ function tryLoadLegacy(): BrushPrefs | undefined {
   //     __v: 1,
   //     favorites: old.favorites,
   //     recents: old.recents ?? [],
-  //     lastBrushId: old.lastBrushId,
+  //     lastBrushId: typeof old.lastBrushId === "string" ? old.lastBrushId : undefined,
   //     showOnlyFavorites: !!old.showOnlyFavorites,
   //   });
   // }
@@ -186,7 +193,14 @@ export function setLastBrushId(
   prefs: BrushPrefs,
   id: string | undefined
 ): BrushPrefs {
-  return saveBrushPrefs({ ...prefs, lastBrushId: id });
+  // Add when defined; otherwise remove the key entirely
+  if (id !== undefined) {
+    return saveBrushPrefs({ ...prefs, lastBrushId: id });
+  }
+  const next: BrushPrefs = { ...prefs };
+  // Remove the optional property; keep type-safe with a local alias cast
+  delete (next as { lastBrushId?: string }).lastBrushId;
+  return saveBrushPrefs(next);
 }
 
 export function pushRecent(
@@ -235,7 +249,6 @@ export function useBrushPrefs() {
 
   // Derived helpers bound to state setter
   const { favorites } = prefs;
-
   const favoritesSet = React.useMemo(() => new Set(favorites), [favorites]);
 
   const api = React.useMemo(() => {

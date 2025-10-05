@@ -1,5 +1,4 @@
 // FILE: src/lib/brush/backends/pattern/variants/stroke.ts
-
 import type { RenderOptions } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
@@ -7,7 +6,10 @@ import {
   resampleWithAngle,
   spacingToStepPx,
   buildRibbonOutline,
-} from "../core/ribbon";
+} from "@backends/utils/stroke";
+import { clamp01, rgbaFromHex } from "@backends/utils/color";
+
+// backend-local helpers
 import { withClip, withCompositeAndAlpha } from "../core/fill";
 import {
   makeDotsTile,
@@ -15,7 +17,6 @@ import {
   makeCheckerTile,
   makeHashNoiseTile,
 } from "../utils/tiles";
-import { clamp01, rgbaFromHex } from "../core/color";
 
 /** Style (pattern source) to use while stroking. */
 export type PatternKind = "paper" | "canvas" | "noise" | "checker";
@@ -46,26 +47,26 @@ export function drawPatternStroke(ctx: Ctx2D, opt: RenderOptions): void {
   const viewW = Math.max(1, Math.floor(opt.width));
   const viewH = Math.max(1, Math.floor(opt.height));
 
-  // Read only the keys that *are* in RenderOverrides from engine.overrides
+  // Engine overrides → flow/opacity (0..100 UI → 0..1)
   const ro = opt.engine.overrides ?? {};
   const flow01 = clamp01(((ro.flow as number | undefined) ?? 100) / 100);
   const opacity01 = clamp01(((ro.opacity as number | undefined) ?? 100) / 100);
 
-  // Backend-local pattern overrides live under engine.backendOverrides?.pattern
+  // Backend-local pattern overrides
   const pat =
     (opt.engine.backendOverrides?.pattern as
       | PatternStrokeOverrides
       | undefined) ?? {};
 
-  // Base radius
+  // Base radius ~ nib size
   const baseRadius = Math.max(0.5, (opt.baseSizePx ?? 8) * 0.5);
 
-  // Sample path
+  // Sample path using canonical utils
   const stepPx = spacingToStepPx(opt);
   const samples = resampleWithAngle(pts, stepPx);
   if (samples.length < 2) return;
 
-  // Pressure -> width scaling with soft tips
+  // Pressure → width scaling with soft tips (radius in px)
   const widthAt = (u: number): number => {
     const i = Math.max(
       0,
@@ -82,7 +83,6 @@ export function drawPatternStroke(ctx: Ctx2D, opt: RenderOptions): void {
   const outline = buildRibbonOutline(samples, widthAt);
 
   // --- Pattern parameters ---
-  // Prefer backend-local overrides (pat.*), then engine.grain for scale/rotate/kind.
   const grain = opt.engine.grain ?? {};
   const kind: PatternKind =
     pat.patternKind ?? asPatternKind(grain.kind as string | undefined);
@@ -121,7 +121,7 @@ export function drawPatternStroke(ctx: Ctx2D, opt: RenderOptions): void {
     | GlobalCompositeOperation
     | undefined) ?? "multiply") as GlobalCompositeOperation;
 
-  // Tile generation
+  // Tile generation (size scales inversely with `scale`)
   const seed = (opt.seed ?? 17) >>> 0;
   const tilePx = Math.max(
     8,
@@ -141,16 +141,15 @@ export function drawPatternStroke(ctx: Ctx2D, opt: RenderOptions): void {
   const lx = get2D(layer);
   lx.clearRect(0, 0, viewW, viewH);
 
-  // Build the colored base + multiplied pattern into this layer
   withClip(lx, outline, () => {
-    // Rotate about stroke start (cheap & stable)
+    // Rotate pattern about stroke start (cheap & stable)
     const first = samples[0]!;
     lx.save();
     lx.translate(first.x, first.y);
     lx.rotate((rotateDeg * Math.PI) / 180);
     lx.translate(-first.x, -first.y);
 
-    // 1) Fill with stroke color (so pattern multiplies into it)
+    // 1) Fill with stroke color (pattern multiplies into it)
     (lx as CanvasRenderingContext2D).fillStyle = rgbaFromHex(
       color,
       patternAlpha

@@ -25,6 +25,7 @@ export type GoldenResult = {
   maxErr: number;
 };
 
+/** Assert we have a browser-like DOM available. */
 function assertDomAvailable(): void {
   if (typeof document === "undefined") {
     throw new Error(
@@ -33,6 +34,7 @@ function assertDomAvailable(): void {
   }
 }
 
+/** Get ImageData from a canvas with a normalized context state. */
 function getImageDataFromCanvas(c: HTMLCanvasElement): ImageData {
   const ctx = c.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("2D context unavailable for golden test.");
@@ -42,27 +44,43 @@ function getImageDataFromCanvas(c: HTMLCanvasElement): ImageData {
   return ctx.getImageData(0, 0, c.width, c.height);
 }
 
+/**
+ * Safe indexer for typed arrays under `noUncheckedIndexedAccess`.
+ * We already verified bounds before calling; this keeps the element typed as `number`.
+ */
+function u8(a: Uint8ClampedArray, i: number): number {
+  // Invariant: caller guarantees 0 <= i < a.length
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return a[i]!;
+}
+
 function compareImageData(a: ImageData, b: GoldenBaseline) {
   if (a.width !== b.width || a.height !== b.height) {
     throw new Error(
       `Dimension mismatch: got ${a.width}x${a.height}, baseline ${b.width}x${b.height}`
     );
   }
-  const A = a.data;
-  const B = b.data;
+
+  const A = a.data; // Uint8ClampedArray
+  const B = b.data; // Uint8ClampedArray
+
   if (A.length !== B.length) {
     throw new Error(
       `Data length mismatch: got ${A.length}, baseline ${B.length}`
     );
   }
+
   let sumAbs = 0;
   let maxErr = 0;
   const N = A.length;
+
   for (let i = 0; i < N; i++) {
-    const d = Math.abs(A[i] - B[i]);
+    // With bounds guaranteed, u8(...) returns a `number` (not possibly undefined)
+    const d = Math.abs(u8(A, i) - u8(B, i));
     sumAbs += d;
     if (d > maxErr) maxErr = d;
   }
+
   const mae = sumAbs / N; // 0..255
   return { mae, maxErr };
 }
@@ -76,9 +94,10 @@ function validateBaseline(b: GoldenBaseline): void {
   ) {
     throw new Error("Invalid baseline: width/height/data are required.");
   }
-  if (b.data.length !== b.width * b.height * 4) {
+  const expectedLen = b.width * b.height * 4;
+  if (b.data.length !== expectedLen) {
     throw new Error(
-      `Invalid baseline data length: expected ${b.width * b.height * 4}, got ${b.data.length}.`
+      `Invalid baseline data length: expected ${expectedLen}, got ${b.data.length}.`
     );
   }
 }
@@ -128,7 +147,7 @@ export async function runGoldens(
 ): Promise<GoldenResult[]> {
   const out: GoldenResult[] = [];
   for (const t of cases) {
-    /// eslint-disable-next-line no-await-in-loop
+    // eslint-disable-next-line no-await-in-loop
     out.push(await runGolden(draw, t));
   }
   return out;

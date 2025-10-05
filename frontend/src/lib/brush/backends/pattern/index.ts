@@ -1,57 +1,57 @@
 // FILE: src/lib/brush/backends/pattern/index.ts
-import type { RenderOptions } from "@/lib/brush/engine.types";
-import {
-  type Ctx2D,
-  type CanvasLike,
-  get2D,
-} from "@/lib/brush/backends/utils/canvas";
+import type { RenderOptions } from "@/lib/brush/engine";
+import { get2D, type Ctx2D } from "@backends/utils/canvas";
 
 import { drawPatternStroke } from "./variants/stroke";
+// If you have these, keep; otherwise comment them out.
 import { drawPatternFill } from "./variants/fill";
 import { drawPatternScatter } from "./variants/scatter";
 
-/** Which *rendering style* to use. */
-export type PatternMode = "stroke" | "fill" | "scatter";
+export type PatternVariant = "stroke" | "fill" | "scatter";
 
-/** Optional overrides passed via engine.backendOverrides.pattern */
-export type PatternOverrides = Partial<{
-  mode: PatternMode;
-  patternKind: "paper" | "canvas" | "noise" | "checker";
-  patternScale: number;
-  patternRotateDeg: number;
-  patternAlpha: number;
-  patternContrast: number;
-  patternTipFade: number;
-  patternComposite: GlobalCompositeOperation;
-  patternHatchThickness: number;
-}>;
+const VARIANTS: Record<
+  PatternVariant,
+  (ctx: Ctx2D, opt: RenderOptions) => void
+> = {
+  stroke: drawPatternStroke,
+  fill: drawPatternFill,
+  scatter: drawPatternScatter,
+};
 
-function pickMode(opt: RenderOptions): PatternMode {
-  const local = opt.engine.backendOverrides?.pattern as
-    | PatternOverrides
-    | undefined;
-  const m = local?.mode;
-  return m === "fill" || m === "scatter" ? m : "stroke";
-}
-
-/** Core entry: draw using the selected variant. */
-export default function drawPattern(ctx: Ctx2D, opt: RenderOptions): void {
-  switch (pickMode(opt)) {
-    case "fill":
-      drawPatternFill(ctx, opt);
-      break;
-    case "scatter":
-      drawPatternScatter(ctx, opt);
-      break;
-    case "stroke":
-    default:
-      drawPatternStroke(ctx, opt);
-      break;
+/** Safely read a string `variant` off an unknown object (no `any`). */
+function readVariant(o: unknown): string | undefined {
+  if (o && typeof o === "object") {
+    const v = (o as Record<string, unknown>).variant;
+    return typeof v === "string" ? v : undefined;
   }
+  return undefined;
 }
 
-/** Convenience: accept a canvas surface, fetch 2D, then draw. */
-export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
-  const ctx = get2D(surface);
-  drawPattern(ctx, opt);
+/**
+ * Render entry for the pattern backend.
+ * If `variant` is not provided, it tries `opt.engine.variant`, else defaults to "stroke".
+ */
+export default function renderPattern(
+  ctx: Ctx2D,
+  opt: RenderOptions,
+  variant?: PatternVariant
+): void {
+  const hint = readVariant(opt.engine) as PatternVariant | undefined;
+  const key: PatternVariant = variant ?? hint ?? "stroke";
+  (VARIANTS[key] ?? drawPatternStroke)(ctx, opt);
 }
+
+/** Convenience: accept a canvas surface, fetch a 2D context, then draw. */
+export function drawToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  opt: RenderOptions,
+  variant?: PatternVariant
+): void {
+  const ctx = get2D(canvas);
+  renderPattern(ctx, opt, variant);
+}
+
+// Re-exports for direct access if you use them elsewhere
+export { drawPatternStroke } from "./variants/stroke";
+export { drawPatternFill } from "./variants/fill";
+export { drawPatternScatter } from "./variants/scatter";

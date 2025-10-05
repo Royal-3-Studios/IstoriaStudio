@@ -7,7 +7,7 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawWetToCanvas } from "./wet";
+import { drawToCanvas as drawWetToCanvas } from "./wet";
 
 /* ============================ Local helper types ============================ */
 

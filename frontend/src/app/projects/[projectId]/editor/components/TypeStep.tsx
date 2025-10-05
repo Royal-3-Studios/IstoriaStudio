@@ -1,4 +1,4 @@
-// src/app/projects/[projectId]/components/TypeStep.tsx
+// FILE: src/app/projects/[projectId]/components/TypeStep.tsx
 
 "use client";
 import { Card } from "@/components/ui/card";
@@ -53,14 +53,12 @@ export default function TypeStep({
                 <div className="mx-auto w-full">
                   <div className="max-w-4xl mx-auto">
                     <PresetGallery
-                      presets={
-                        /* you can pass PRESETS here if you want to keep it inside page */ [] as unknown as Preset[]
-                      }
+                      presets={[] as unknown as Preset[]}
                       value={
                         selectedId !== PRESET_PLACEHOLDER.id ? selectedId : null
                       }
                       onChangeAction={onSelectAction}
-                      projectType={projectType}
+                      {...(projectType !== undefined ? { projectType } : {})}
                       showFilters
                     />
                   </div>

@@ -8,7 +8,7 @@ import { createLayer, get2D } from "@backends/utils/canvas";
 import {
   resamplePath, // returns {x,y,t,p}
   resolveSpacingFraction, // maps UI spacing to fraction of diameter
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 /** Extra per-variant knobs we support via engine.overrides. */
 type CalligraphyOverrides = {

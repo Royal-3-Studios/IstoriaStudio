@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/impasto/core/bristle-model.ts
-import type { RNG } from "../utils/rng";
+import type { RNG } from "@backends/utils/random";
 
 export type BristleParams = {
   baseSizePx: number;

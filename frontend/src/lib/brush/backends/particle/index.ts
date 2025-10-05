@@ -1,10 +1,6 @@
 // FILE: src/lib/brush/backends/particle/index.ts
 import type { RenderOptions } from "@/lib/brush/engine.types";
-import {
-  type Ctx2D,
-  type CanvasLike,
-  get2D,
-} from "@/lib/brush/backends/utils/canvas";
+import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
 
 import { drawTrail } from "./variants/trail";
 import { drawSmoke } from "./variants/smoke";

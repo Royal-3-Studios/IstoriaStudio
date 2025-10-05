@@ -1,0 +1,15 @@
+{
+    "rules": {
+        "no-restricted-imports": [
+            "error",
+            {
+                "paths": [
+                    {
+                        "name": "@/lib/brush/backends/adapters",
+                        "message": "Use '@backends' (BACKENDS/getBackend) instead."
+                    }
+                ]
+            }
+        ]
+    }
+}

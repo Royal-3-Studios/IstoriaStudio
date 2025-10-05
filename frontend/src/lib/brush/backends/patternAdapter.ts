@@ -1,11 +1,13 @@
 // FILE: src/lib/brush/backends/patternAdapter.ts
-import { drawPatternToCanvas } from "./pattern";
-import type { PatternMode } from "./pattern";
+
+import { type PatternVariant } from "./pattern";
+import renderPattern from "./pattern";
 import type {
   BackendAdapter,
   RenderStrokeOptions,
-  CanvasSurface,
+  CanvasSurface, // assumed: HTMLCanvasElement | OffscreenCanvas
 } from "./types";
+
 import type {
   RenderOptions,
   RenderPathPoint,
@@ -14,6 +16,9 @@ import type {
   EngineStrokePath,
   EngineGrain,
 } from "@/lib/brush/engine";
+
+import type { Ctx2D } from "@backends/utils/canvas";
+import { get2D } from "@backends/utils/canvas";
 
 /* ============================ Local helper types ============================ */
 
@@ -34,12 +39,12 @@ type PatternExtras = Partial<RenderOverrides> & {
   grainKind?: "none" | "paper" | "canvas" | "noise";
   grainScale?: number; // 0.5..3
   grainRotate?: number; // degrees
-  mode?: PatternMode; // "stroke" | "fill" | "scatter"
+  mode?: PatternVariant; // "stroke" | "fill" | "scatter"
 };
 
 type EngineConfigWithPattern = EngineConfig & {
   backendOverrides?: {
-    pattern?: { mode?: PatternMode };
+    pattern?: { mode?: PatternVariant };
   };
 };
 
@@ -95,6 +100,9 @@ const patternAdapter: BackendAdapter = {
     surface: CanvasSurface,
     opts: RenderStrokeOptions
   ): Promise<void> {
+    // Resolve 2D context directly from the canvas-like surface.
+    const ctx: Ctx2D = get2D(surface);
+
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
@@ -115,7 +123,7 @@ const patternAdapter: BackendAdapter = {
       restOverrides as Partial<RenderOverrides>
     );
 
-    // ✅ FIX: Use ternaries so the type stays `number` (no `false` leaks)
+    // Avoid boolean→number leaks by using a clean ternary chain.
     const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
       : isFiniteNumber(extraBase)
@@ -124,7 +132,7 @@ const patternAdapter: BackendAdapter = {
           ? sizePx
           : 14;
 
-    // StrokePath (only defined keys)
+    // StrokePath (attach only defined keys)
     const strokePath: EngineStrokePath = {};
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing!;
@@ -134,11 +142,12 @@ const patternAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Grain (prefer local extras, fall back to overrides)
+    // Grain (prefer local extras; fall back to overrides)
     const grain: EngineGrain = {};
     if (typeof grainKind === "string") grain.kind = grainKind;
     if (isFiniteNumber(grainScale)) grain.scale = grainScale;
     if (isFiniteNumber(grainRotate)) grain.rotate = grainRotate;
+
     if (overrides.grainKind !== undefined && grain.kind === undefined)
       grain.kind = overrides.grainKind!;
     if (isFiniteNumber(overrides.grainScale) && grain.scale === undefined)
@@ -179,7 +188,8 @@ const patternAdapter: BackendAdapter = {
       ...(isFiniteNumber(prCandidate) ? { pixelRatio: prCandidate } : {}),
     };
 
-    await Promise.resolve(drawPatternToCanvas(surface, renderOpts));
+    // Render selected variant (default "stroke")
+    renderPattern(ctx, renderOpts, mode);
   },
 };
 

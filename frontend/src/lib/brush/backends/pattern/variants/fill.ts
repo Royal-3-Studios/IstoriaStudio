@@ -10,7 +10,7 @@ import {
   makeCheckerTile,
   makeHashNoiseTile,
 } from "../utils/tiles";
-import { rgbaFromHex, clamp01 } from "../core/color";
+import { rgbaFromHex, clamp01 } from "@backends/utils/color";
 
 /** Pattern sources we support. */
 export type PatternKind = "paper" | "canvas" | "noise" | "checker";

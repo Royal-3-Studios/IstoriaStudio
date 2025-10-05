@@ -7,7 +7,7 @@ import type { BrushInputConfig } from "@/data/brushPresets";
 import { Rand, Texture, CanvasUtil, Blend } from "@backends";
 
 import type { Ctx2D } from "@backends/utils/canvas";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 import {
   toPressureMapFromInput,
   toInputQualityFromInput,
@@ -17,7 +17,7 @@ import {
   pathToStamps,
   type TaperProfile,
   type InputQualityOpts,
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 /* ------------------------- Local util (no external deps) ------------------------- */
 

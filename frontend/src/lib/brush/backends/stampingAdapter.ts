@@ -6,13 +6,17 @@ import type {
   RenderOverrides,
   EngineConfig,
   EngineStrokePath,
-} from "@/lib/brush/engine";
+} from "@/lib/brush/engine.types"; // <- use the canonical types module you settled on
+
 import drawStamping from "./stamping";
+
 import type {
   RenderStrokeOptions,
   BackendAdapter,
   CanvasSurface,
-} from "./types";
+} from "@backends/types"; // <- import from the shared types module
+
+import { get2D } from "@backends/utils/canvas"; // <- use the typed 2D getter
 
 /* ============================ Local helper types ============================ */
 
@@ -30,7 +34,7 @@ type StampingExtras = Partial<RenderOverrides> & {
   baseSizePx?: number;
   sizePx?: number;
   streamline?: number;
-  /** Optional variant mode; forwarded to backendOverrides.stamping.mode */
+  /** Optional variant mode requested by the caller (wide). */
   mode?:
     | "graphite"
     | "ink"
@@ -40,6 +44,9 @@ type StampingExtras = Partial<RenderOverrides> & {
     | "stamp"
     | "ornament";
 };
+
+/** The *engine-accepted* narrow union for stamping mode. Adjust to your engine. */
+type EngineStampingMode = "graphite" | "ink";
 
 /* ================================= Helpers ================================= */
 
@@ -65,6 +72,13 @@ function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
+/** Narrow the wide caller mode to the engine-supported union. */
+function toEngineStampingMode(
+  m: StampingExtras["mode"]
+): EngineStampingMode | undefined {
+  return m === "graphite" || m === "ink" ? m : undefined;
+}
+
 /* ================================ Adapter ================================= */
 
 const stampingAdapter: BackendAdapter = {
@@ -79,12 +93,11 @@ const stampingAdapter: BackendAdapter = {
     const height = Math.max(1, Math.floor(opts.height));
 
     const rawExtra: StampingExtras = (opts.extra ?? {}) as StampingExtras;
-
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
-      mode,
+      mode, // wide
       ...restOverrides
     } = rawExtra;
 
@@ -100,24 +113,25 @@ const stampingAdapter: BackendAdapter = {
 
     const strokePath: EngineStrokePath = {};
     if (isFiniteNumber(overrides.spacing))
-      strokePath.spacing = overrides.spacing!;
-    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter!;
+      strokePath.spacing = overrides.spacing;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
     if (isFiniteNumber(overrides.scatter))
-      strokePath.scatter = overrides.scatter!;
-    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
+      strokePath.scatter = overrides.scatter;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Build engine config (omit empty objects)
+    // Base engine config (omit empties)
     const engineCfg: EngineConfig & {
-      backendOverrides?: { stamping?: { mode?: StampingExtras["mode"] } };
+      backendOverrides?: { stamping?: { mode?: EngineStampingMode } };
     } = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
-    // Optional: forward variant mode via backendOverrides.stamping.mode
-    if (typeof mode === "string") {
+    // Only forward mode when it matches the engine’s accepted set
+    const narrowed = toEngineStampingMode(mode);
+    if (narrowed) {
       engineCfg.backendOverrides ??= {};
       engineCfg.backendOverrides.stamping ??= {};
-      engineCfg.backendOverrides.stamping.mode = mode;
+      engineCfg.backendOverrides.stamping.mode = narrowed;
     }
 
     const renderOpts: RenderOptions = {
@@ -133,8 +147,8 @@ const stampingAdapter: BackendAdapter = {
         : {}),
     };
 
-    const ctx = surface.getContext("2d", { alpha: true });
-    if (!ctx) return;
+    // ✅ Strongly-typed 2D context (CanvasRenderingContext2D or OffscreenCanvasRenderingContext2D)
+    const ctx = get2D(surface);
     drawStamping(ctx, renderOpts);
   },
 };

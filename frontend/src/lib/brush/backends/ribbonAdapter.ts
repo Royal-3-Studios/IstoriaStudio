@@ -7,13 +7,13 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine";
-import { drawRibbonToCanvas } from "./ribbon";
+import { drawToCanvas as drawRibbonToCanvas } from "./ribbon";
 import { toEnginePath, pickPixelRatio, isFiniteNumber } from "./normalize";
 import { hasColor, hasPixelRatio, hasDpr, hasInput } from "../utils/typing";
 
 type EngineConfigWithRibbon = EngineConfig & {
   backendOverrides?: {
-    ribbon?: { mode?: RibbonMode };
+    ribbon?: { mode?: "pencil" | "ink" | "calligraphy" };
   };
 };
 
@@ -32,6 +32,15 @@ function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   }
   return out as Partial<T>;
 }
+
+/** Narrow RibbonMode to the engine-accepted set. */
+type EngineRibbonMode = "pencil" | "ink" | "calligraphy";
+function toEngineRibbonMode(
+  m: RibbonMode | undefined
+): EngineRibbonMode | undefined {
+  return m === "pencil" || m === "ink" || m === "calligraphy" ? m : undefined;
+}
+
 const ribbonAdapter: BackendAdapter = {
   id: "ribbon",
   name: "ribbon",
@@ -45,6 +54,7 @@ const ribbonAdapter: BackendAdapter = {
       baseSizePx: extraBase,
       sizePx,
       streamline,
+      mode, // keep local, we’ll narrow below
       ...restOverrides
     } = rawExtra;
 
@@ -52,7 +62,7 @@ const ribbonAdapter: BackendAdapter = {
       restOverrides as Partial<RenderOverrides>
     );
 
-    const baseSizePx = isFiniteNumber(opts.baseSizePx)
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
       : isFiniteNumber(extraBase)
         ? extraBase
@@ -69,14 +79,17 @@ const ribbonAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+    const engineCfgBase: EngineConfig = { overrides };
+    if (Object.keys(strokePath).length > 0)
+      engineCfgBase.strokePath = strokePath;
 
-    const engineCfg2: EngineConfigWithRibbon = { ...engineCfg };
-    if (typeof rawExtra.mode === "string") {
-      engineCfg2.backendOverrides ??= {};
-      engineCfg2.backendOverrides.ribbon ??= {};
-      engineCfg2.backendOverrides.ribbon.mode = rawExtra.mode;
+    // Attach backendOverrides.ribbon.mode only if it matches engine’s accepted union
+    const engineCfg: EngineConfigWithRibbon = { ...engineCfgBase };
+    const engineMode = toEngineRibbonMode(mode);
+    if (engineMode) {
+      engineCfg.backendOverrides ??= {};
+      engineCfg.backendOverrides.ribbon ??= {};
+      engineCfg.backendOverrides.ribbon.mode = engineMode;
     }
 
     // Compute pixel ratio candidate once
@@ -86,7 +99,7 @@ const ribbonAdapter: BackendAdapter = {
         ? opts.dpr
         : pickPixelRatio(opts);
 
-    // Build RenderOptions in one go (no undefined writes)
+    // Build RenderOptions (use engineCfg that includes ribbon override)
     const renderOpts: RenderOptions = {
       engine: engineCfg,
       baseSizePx,
@@ -95,7 +108,6 @@ const ribbonAdapter: BackendAdapter = {
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
 
-      // conditionally include optionals
       ...(hasColor(opts) ? { color: opts.color } : {}),
       ...(isFiniteNumber(prCandidate) ? { pixelRatio: prCandidate } : {}),
       ...(hasInput(opts) ? { input: opts.input } : {}),

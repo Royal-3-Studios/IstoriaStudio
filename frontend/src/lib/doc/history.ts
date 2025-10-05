@@ -48,6 +48,13 @@ let _uidCounter = 0;
  * Snapshot hashing / equality (cheap, downscaled)
  * -------------------------------------------------------------------------- */
 
+/** Safe getter for typed arrays under `noUncheckedIndexedAccess`. */
+function u8(a: Uint8ClampedArray, i: number): number {
+  // Bounds are verified by length checks prior to loops.
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return a[i]!;
+}
+
 /**
  * Draw any LayerSnapshot into a tiny canvas, then return a fast rolling hash.
  * We intentionally downscale (default 64×64) to keep it cheap and robust to
@@ -67,29 +74,35 @@ async function hashSnapshot(
     srcW = snap.width;
     srcH = snap.height;
     srcCanvas = createLayer(srcW, srcH);
-    const x = get2D(srcCanvas);
-    x.drawImage(snap, 0, 0);
+    const srcCtx = get2D(srcCanvas);
+    srcCtx.drawImage(snap, 0, 0);
   } else {
     // ImageData path
     const s = snap as ImageData;
     srcW = s.width;
     srcH = s.height;
     srcCanvas = createLayer(srcW, srcH);
-    const x = get2D(srcCanvas);
-    x.putImageData(s, 0, 0);
+    const srcCtx = get2D(srcCanvas);
+    srcCtx.putImageData(s, 0, 0);
   }
 
   // Stage 2: draw to tiny thumbnail
   const thumb = createLayer(thumbW, thumbH);
-  const tx: Ctx2D = get2D(thumb);
-  tx.drawImage(srcCanvas as unknown as CanvasImageSource, 0, 0, thumbW, thumbH);
+  const thumbCtx: Ctx2D = get2D(thumb);
+  thumbCtx.drawImage(
+    srcCanvas as unknown as CanvasImageSource,
+    0,
+    0,
+    thumbW,
+    thumbH
+  );
 
   // Stage 3: hash the pixels (xor/imul rolling hash over bytes)
-  const id = tx.getImageData(0, 0, thumbW, thumbH);
-  const d = id.data;
+  const img = thumbCtx.getImageData(0, 0, thumbW, thumbH);
+  const data = img.data;
   let h = 2166136261 >>> 0; // FNV-ish start
-  for (let i = 0; i < d.length; i++) {
-    h ^= d[i];
+  for (let i = 0; i < data.length; i++) {
+    h ^= u8(data, i);
     h = Math.imul(h, 16777619) >>> 0;
     // a touch of mixing every 16 bytes
     if ((i & 15) === 15) h ^= h >>> 13;
@@ -111,9 +124,10 @@ async function snapshotsEqual(
   if (a === b) return true; // same object or both null
   if (!a || !b) return false;
   // Quick dimension check when both are ImageData
+  const imageBitmapSupported = typeof ImageBitmap !== "undefined";
   if (
-    !(typeof ImageBitmap !== "undefined" && a instanceof ImageBitmap) &&
-    !(typeof ImageBitmap !== "undefined" && b instanceof ImageBitmap)
+    !(imageBitmapSupported && a instanceof ImageBitmap) &&
+    !(imageBitmapSupported && b instanceof ImageBitmap)
   ) {
     const ia = a as ImageData;
     const ib = b as ImageData;
@@ -129,6 +143,7 @@ async function snapshotsEqual(
 
 /**
  * Push a single entry, trimming redo tail and enforcing the limit.
+ * Optional fields must not be present as `undefined` (exactOptionalPropertyTypes).
  */
 async function pushEntry(
   hist: History,
@@ -144,7 +159,11 @@ async function pushEntry(
     hist.entries.splice(hist.index + 1);
   }
 
-  hist.entries.push({ ...entry, id: uuid() });
+  // Build without optional keys that are undefined
+  const entryClean: Omit<HistoryEntry, "id"> =
+    entry.meta === undefined ? { ...entry } : { ...entry, meta: entry.meta };
+
+  hist.entries.push({ ...entryClean, id: uuid() });
 
   // Enforce ring buffer limit
   if (hist.entries.length > hist.limit) {
@@ -171,19 +190,19 @@ export async function recordStroke(
   draw: (layer: Layer) => Promise<void> | void,
   meta?: Record<string, unknown>
 ): Promise<void> {
-  const layer = findLayer(hist.stack, layerId);
-  if (!layer) return;
+  const targetLayer = findLayer(hist.stack, layerId);
+  if (!targetLayer) return;
 
-  const before = await snapshotLayer(layer);
-  await draw(layer);
-  const after = await snapshotLayer(layer);
+  const before = await snapshotLayer(targetLayer);
+  await draw(targetLayer);
+  const after = await snapshotLayer(targetLayer);
 
   await pushEntry(hist, {
     kind: "stroke",
     layerId,
     before,
     after,
-    meta,
+    ...(meta !== undefined ? { meta } : {}),
   });
 }
 
@@ -194,19 +213,19 @@ export async function recordErase(
   erase: (layer: Layer) => Promise<void> | void,
   meta?: Record<string, unknown>
 ): Promise<void> {
-  const layer = findLayer(hist.stack, layerId);
-  if (!layer) return;
+  const targetLayer = findLayer(hist.stack, layerId);
+  if (!targetLayer) return;
 
-  const before = await snapshotLayer(layer);
-  await erase(layer);
-  const after = await snapshotLayer(layer);
+  const before = await snapshotLayer(targetLayer);
+  await erase(targetLayer);
+  const after = await snapshotLayer(targetLayer);
 
   await pushEntry(hist, {
     kind: "erase",
     layerId,
     before,
     after,
-    meta,
+    ...(meta !== undefined ? { meta } : {}),
   });
 }
 
@@ -222,19 +241,19 @@ export async function recordLayerOp(
   takeSnapshotOf: string = layerId,
   meta?: Record<string, unknown>
 ): Promise<void> {
-  const target = findLayer(hist.stack, takeSnapshotOf);
-  if (!target) return;
+  const snapshotLayerTarget = findLayer(hist.stack, takeSnapshotOf);
+  if (!snapshotLayerTarget) return;
 
-  const before = await snapshotLayer(target);
+  const before = await snapshotLayer(snapshotLayerTarget);
   await mutate(hist.stack);
-  const after = await snapshotLayer(target);
+  const after = await snapshotLayer(snapshotLayerTarget);
 
   await pushEntry(hist, {
     kind: "layerOp",
     layerId,
     before,
     after,
-    meta,
+    ...(meta !== undefined ? { meta } : {}),
   });
 }
 
@@ -252,6 +271,8 @@ export function canRedo(hist: History): boolean {
 export async function undo(hist: History): Promise<void> {
   if (!canUndo(hist)) return;
   const entry = hist.entries[hist.index];
+  if (!entry) return; // noUncheckedIndexedAccess guard
+
   const layer = findLayer(hist.stack, entry.layerId);
   if (layer && entry.before) {
     await restoreLayer(layer, entry.before);
@@ -262,6 +283,8 @@ export async function undo(hist: History): Promise<void> {
 export async function redo(hist: History): Promise<void> {
   if (!canRedo(hist)) return;
   const entry = hist.entries[hist.index + 1];
+  if (!entry) return; // noUncheckedIndexedAccess guard
+
   const layer = findLayer(hist.stack, entry.layerId);
   if (layer && entry.after) {
     await restoreLayer(layer, entry.after);
@@ -290,5 +313,6 @@ export function setHistoryLimit(hist: History, limit: number): void {
 /** Shallow describe the current entry for UI (safe to call anytime). */
 export function peek(hist: History): HistoryEntry | null {
   if (!canUndo(hist)) return null;
-  return hist.entries[hist.index] ?? null;
+  const entry = hist.entries[hist.index];
+  return entry ?? null; // guard for noUncheckedIndexedAccess
 }

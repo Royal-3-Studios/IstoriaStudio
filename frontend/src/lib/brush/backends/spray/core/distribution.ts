@@ -1,5 +1,5 @@
 // src/lib/brush/backends/spray/core/distribution.ts
-import type { Stamp } from "@/lib/brush/backends/utils/stroke";
+import type { Stamp } from "@backends/utils/stroke";
 
 export type DensityParams = {
   dotsPerStepBase: number;

@@ -12,6 +12,8 @@ import type {
   NormalizedRenderOptions,
   RenderOptions,
   RenderOverrides,
+  RenderingIntent,
+  BackendOverrides,
 } from "./engine.types";
 
 /* ============================== Canvas helpers ============================== */
@@ -110,12 +112,17 @@ export function normalizeGrain(grain?: EngineGrain): Required<EngineGrain> {
 export function normalizeRendering(
   r?: EngineRendering
 ): Required<EngineRendering> {
-  const ren = r ?? {};
+  const ren = r ?? ({} as EngineRendering);
+
+  // Choose a safe default RenderingIntent in your union (adjust if your union differs).
+  const DEFAULT_INTENT: RenderingIntent = "paint" as RenderingIntent;
+
   return {
     mode: ren.mode ?? "blended",
     wetEdges: ren.wetEdges ?? false,
     flow: ren.flow ?? 100,
     blendMode: ren.blendMode ?? "source-over",
+    intent: (ren.intent ?? DEFAULT_INTENT) as RenderingIntent,
   };
 }
 
@@ -345,7 +352,11 @@ export function mergeOverrides(
 export function normalizeEngineConfig(
   cfg: EngineConfig | undefined
 ): Required<EngineConfig> {
-  const engine = cfg ?? {};
+  const engine = cfg ?? ({} as EngineConfig);
+
+  // Provide a concrete, typed empty default for required backendOverrides
+  const DEFAULT_BACKEND_OVERRIDES: BackendOverrides = {} as BackendOverrides;
+
   return {
     version: engine.version ?? 1,
     backend: engine.backend ?? "auto",
@@ -355,30 +366,64 @@ export function normalizeEngineConfig(
     rendering: normalizeRendering(engine.rendering),
     overrides: mergeOverrides(engine.overrides, undefined),
     modulations: engine.modulations ?? null,
+    backendOverrides: engine.backendOverrides ?? DEFAULT_BACKEND_OVERRIDES,
   };
 }
 
 export function ensureInput(input?: BrushInputConfig): BrushInputConfig {
-  // Shallow, defensive merge against defaults
-  return {
-    pressure: {
-      clamp: {
-        min: input?.pressure?.clamp?.min ?? DEFAULT_INPUT.pressure.clamp.min,
-        max: input?.pressure?.clamp?.max ?? DEFAULT_INPUT.pressure.clamp.max,
-      },
-      curve: input?.pressure?.curve ?? DEFAULT_INPUT.pressure.curve,
-      smoothing: input?.pressure?.smoothing ?? DEFAULT_INPUT.pressure.smoothing,
-      velocityComp:
-        input?.pressure?.velocityComp ?? DEFAULT_INPUT.pressure.velocityComp,
-      synth: input?.pressure?.synth ?? DEFAULT_INPUT.pressure.synth,
-    },
-    quality: {
-      predictPx: input?.quality?.predictPx ?? DEFAULT_INPUT.quality.predictPx,
-      speedToSpacing:
-        input?.quality?.speedToSpacing ?? DEFAULT_INPUT.quality.speedToSpacing,
-      minStepPx: input?.quality?.minStepPx ?? DEFAULT_INPUT.quality.minStepPx,
-    },
+  // ---- pressure (no undefined keys inserted) ----
+  const clampMin =
+    input?.pressure?.clamp?.min ?? DEFAULT_INPUT.pressure.clamp.min;
+  const clampMax =
+    input?.pressure?.clamp?.max ?? DEFAULT_INPUT.pressure.clamp.max;
+
+  const curve = input?.pressure?.curve ?? DEFAULT_INPUT.pressure.curve;
+  const smoothing =
+    input?.pressure?.smoothing ?? DEFAULT_INPUT.pressure.smoothing;
+
+  // Ensure these are concrete (not undefined) via non-null assertion on defaults
+  const velocityComp =
+    input?.pressure?.velocityComp ?? DEFAULT_INPUT.pressure.velocityComp!;
+  const synth = input?.pressure?.synth ?? DEFAULT_INPUT.pressure.synth!;
+
+  const pressure = {
+    clamp: { min: clampMin, max: clampMax },
+    curve,
+    smoothing,
+    ...(velocityComp ? { velocityComp } : {}),
+    ...(synth ? { synth } : {}),
+    ...(typeof input?.pressure?.gain === "number"
+      ? { gain: input.pressure.gain }
+      : {}),
+    ...(typeof input?.pressure?.deadZone === "number"
+      ? { deadZone: input.pressure.deadZone }
+      : {}),
+  } satisfies BrushInputConfig["pressure"];
+
+  // ---- quality (concrete numbers; friendly to exactOptionalPropertyTypes) ----
+  type QualityConcrete = {
+    predictPx: number;
+    speedToSpacing: number;
+    minStepPx: number;
   };
+  const QUALITY_DEFAULTS: QualityConcrete = {
+    predictPx: DEFAULT_INPUT.quality?.predictPx ?? 0,
+    speedToSpacing: DEFAULT_INPUT.quality?.speedToSpacing ?? 0,
+    minStepPx: DEFAULT_INPUT.quality?.minStepPx ?? 0.5,
+  };
+
+  const iq = input?.quality;
+  const quality = {
+    predictPx: iq?.predictPx ?? QUALITY_DEFAULTS.predictPx,
+    speedToSpacing: iq?.speedToSpacing ?? QUALITY_DEFAULTS.speedToSpacing,
+    minStepPx: iq?.minStepPx ?? QUALITY_DEFAULTS.minStepPx,
+  } satisfies {
+    predictPx?: number;
+    speedToSpacing?: number;
+    minStepPx?: number;
+  };
+
+  return { pressure, quality };
 }
 
 export function normalizeOptions(opt: RenderOptions): NormalizedRenderOptions {
@@ -416,7 +461,9 @@ export function scoreBackends(
   opts: NormalizedRenderOptions
 ): Record<Exclude<BrushBackend, "auto">, number> {
   const { engine: cfg } = opts;
-  const ui = opts.overrides ?? {};
+
+  // Top-level overrides are optional; keep them narrow and safe
+  const ui = (opts as { overrides?: Partial<RenderOverrides> }).overrides ?? {};
   const ov = cfg.overrides;
 
   const mode = cfg.rendering.mode;

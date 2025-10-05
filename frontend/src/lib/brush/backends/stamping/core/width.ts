@@ -1,9 +1,6 @@
 // FILE: src/lib/brush/backends/stamping/core/width.ts
-import { clamp } from "@/lib/brush/backends/utils/math";
-import {
-  computeWidthScale,
-  type TaperProfile,
-} from "@/lib/brush/backends/utils/stroke";
+import { clamp } from "@backends/utils/math";
+import { computeWidthScale, type TaperProfile } from "@backends/utils/stroke";
 
 export type WidthOpts = {
   /** Brush diameter in CSS px (paired with baseRadius input). */

@@ -2,8 +2,8 @@
 import type { RenderOptions } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
-import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
-import { clamp01 } from "../utils/color";
+import { pathToStamps } from "@backends/utils/stroke";
+import { clamp01 } from "@backends/utils/color";
 
 export function drawStampScatter(ctx: Ctx2D, opt: RenderOptions): void {
   const pts = opt.path ?? [];

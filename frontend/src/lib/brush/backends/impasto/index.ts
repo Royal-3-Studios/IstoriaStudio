@@ -5,11 +5,7 @@ import { drawImpastoKnife } from "./variants/knife";
 import { drawImpastoGlaze } from "./variants/glaze";
 import { drawImpastoRake } from "./variants/rake";
 
-import {
-  type Ctx2D,
-  type CanvasLike,
-  get2D,
-} from "@/lib/brush/backends/utils/canvas";
+import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
 
 export type ImpastoMode = "bristle" | "knife" | "glaze" | "rake";
 

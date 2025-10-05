@@ -4,7 +4,7 @@ import type { BrushInputConfig } from "@/data/brushPresets";
 import {
   resamplePath as resampleBase,
   resolveSpacingFraction,
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
 export { resolveSpacingFraction };

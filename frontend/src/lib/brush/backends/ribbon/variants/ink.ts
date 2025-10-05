@@ -5,7 +5,7 @@ import { createLayer, get2D } from "@backends/utils/canvas";
 import {
   resamplePath, // resamples {x,y,t,p}
   resolveSpacingFraction, // UI spacing -> fraction of diameter
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 type Sample = { x: number; y: number; t: number; p: number };
 

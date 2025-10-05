@@ -1,7 +1,8 @@
 // ========================
 // FILE: src/lib/brush/backends/stamping/utils.ts
 // ========================
-import type { RenderOverrides } from "./types";
+
+import type { RenderOverrides } from "../../engine.types";
 
 export const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 export const lerp = (a: number, b: number, t: number): number =>

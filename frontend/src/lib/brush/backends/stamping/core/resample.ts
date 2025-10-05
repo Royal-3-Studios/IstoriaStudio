@@ -4,7 +4,7 @@ import {
   resamplePath,
   resolveSpacingFraction,
   type SamplePoint,
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 /** Convert engine spacing → pixel step (CSS px). */
 export function spacingToStepPx(
@@ -28,4 +28,4 @@ export function resampleWithAngle(
   return resamplePath(points, stepPx); // strictly typed upstream; SamplePoint matches
 }
 
-export type { SamplePoint } from "@/lib/brush/backends/utils/stroke";
+export type { SamplePoint } from "@backends/utils/stroke";

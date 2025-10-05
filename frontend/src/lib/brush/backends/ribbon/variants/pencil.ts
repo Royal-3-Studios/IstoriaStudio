@@ -7,7 +7,7 @@ import {
   resolveSpacingFraction, // UI spacing -> fraction of diameter
   computeWidthScale, // 0..1 taper/uniformity/endBias shaping
   type SamplePoint as StrokeSample,
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 type Sample = { x: number; y: number; t: number; p: number };
 

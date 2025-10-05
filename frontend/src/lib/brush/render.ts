@@ -8,7 +8,7 @@ import drawSmudge from "@/lib/brush/backends/smudge";
 import drawSpray from "@/lib/brush/backends/spray";
 import drawRibbon from "@/lib/brush/backends/ribbon";
 import drawParticle from "@/lib/brush/backends/particle";
-import drawPattern from "@/lib/brush/backends/pattern";
+import renderPattern from "@/lib/brush/backends/pattern";
 import drawImpasto from "@/lib/brush/backends/impasto";
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -35,7 +35,7 @@ export function renderStroke(ctx: Ctx2D, options: RenderOptions): void {
       drawParticle(ctx, opt);
       break;
     case "pattern":
-      drawPattern(ctx, opt);
+      renderPattern(ctx, opt);
       break;
     case "impasto":
       drawImpasto(ctx, opt);

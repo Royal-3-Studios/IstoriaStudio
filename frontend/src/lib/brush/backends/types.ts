@@ -1,52 +1,73 @@
 // FILE: src/lib/brush/backends/types.ts
+// Canonical, shared primitives for all backends/adapters.
+// exactOptionalPropertyTypes-safe: optional props are absent, not `undefined`.
+
 import type { BrushInputConfig } from "@/data/brushPresets";
 
-/** Surface a backend draws into (engine handles DPR; draw in CSS space). */
-export type CanvasSurface = HTMLCanvasElement | OffscreenCanvas;
+/** DOM or Offscreen canvas. Draw in CSS space; engine normalizes DPR. */
+export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
 
-/** Points given to adapters (accept both `p` and `pressure`). */
+/** 2D context across DOM and Offscreen implementations. */
+export type Ctx2D =
+  | CanvasRenderingContext2D
+  | OffscreenCanvasRenderingContext2D;
+
+/** Minimal render target abstraction (alias of CanvasLike; kept for clarity). */
+export type CanvasSurface = CanvasLike;
+
+/** Points supplied to adapters. Accept both `p` and `pressure` for convenience. */
 export type RenderStrokePoint = {
-  x: number;
-  y: number;
+  x: number; // CSS px
+  y: number; // CSS px
   p?: number; // preferred shorthand 0..1
   pressure?: number; // compatibility 0..1
-  angle?: number;
-  tilt?: number;
-  t?: number; // timestamp (optional)
+  angle?: number; // degrees [0..360)
+  tilt?: number; // 0..1 altitude
+  t?: number; // timestamp (ms)
 };
 
-/** Options passed to adapters from harness/engine. */
+/** Options passed to adapters from the engine/harness. */
 export type RenderStrokeOptions = {
   /** Target viewport size in CSS pixels. */
   width: number;
   height: number;
 
-  /** Stable seed for deterministic randomness (optional). */
+  /** Stable seed for deterministic randomness. */
   seed?: number;
 
-  /** Stroke path in CSS space (adapters should normalize before passing to engine). */
-  path?: RenderStrokePoint[];
+  /** Stroke path in CSS space. */
+  path?: ReadonlyArray<RenderStrokePoint>;
 
   /**
-   * Adapter-specific extras. Each adapter should narrow/cast this to its
-   * own typed surface (e.g., Partial<RenderOverrides> plus local keys).
+   * Adapter-specific extra knobs (narrow in adapter code).
+   * Keep generic here; adapters define their own specific shape locally.
    */
   extra?: Record<string, unknown>;
 
-  /** Optional pass-throughs to engine RenderOptions (adapters forward when present). */
+  /** Pass-throughs to engine RenderOptions. */
   color?: string; // e.g. "#353535"
   pixelRatio?: number; // preferred DPR key
-  dpr?: number; // legacy alias; adapters should map to pixelRatio
-  input?: BrushInputConfig; // pressure curve & input-quality
 
-  /** Optional convenience: some adapters want to accept this directly. */
-  baseSizePx?: number; // if absent, adapter may derive or use default
+  /**
+   * @deprecated Use `pixelRatio`. Kept for compatibility while refactoring.
+   * Do not write `undefined` — simply omit this key.
+   */
+  dpr?: number;
+
+  /** Input pipeline (pressure curve, smoothing, quality). */
+  input?: BrushInputConfig;
+
+  /** Optional convenience: base brush size in pixels. */
+  baseSizePx?: number;
 };
 
 /** Minimal contract every backend adapter implements. */
 export type BackendAdapter = {
+  /** Stable id (used in registry/selection). */
   id: string;
+  /** Human-readable name. */
   name: string;
+
   renderStroke(
     surface: CanvasSurface,
     opts: RenderStrokeOptions

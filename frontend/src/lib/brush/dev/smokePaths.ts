@@ -6,7 +6,7 @@ export type SmokePath = { name: string; seed: number; points: SmokePoint[] };
 
 function r(seed: number): () => number {
   let s = seed >>> 0;
-  return () => {
+  return (): number => {
     s ^= s << 13;
     s >>>= 0;
     s ^= s >>> 17;
@@ -70,15 +70,26 @@ export const SMOKE_PATHS: SmokePath[] = [
   { name: "arc-tight", seed: 7777, points: arc(7777, 300, 200, 80, 50, 140) },
 ];
 
-/** Convenience: pick the first as a “canned” default. */
-export const cannedPath: SmokePath = SMOKE_PATHS[0];
+/** Safe default if the array is ever empty (satisfies strict indexing rules). */
+function makeFallbackPath(): SmokePath {
+  return { name: "empty", seed: 0, points: [] };
+}
+
+/** Convenience: pick the first as a “canned” default (strict-safe). */
+export const cannedPath: SmokePath =
+  SMOKE_PATHS.length > 0 ? SMOKE_PATHS[0]! : makeFallbackPath();
 
 /** Helper: convert SmokePoint[] → RenderPathPoint[] for backends. */
 export function toRenderPath(points: readonly SmokePoint[]): RenderPathPoint[] {
-  return points.map((p) => ({
-    x: p.x,
-    y: p.y,
-    pressure: typeof p.p === "number" ? p.p : 0.7,
-    // if your RenderPathPoint has more fields, add them here
-  }));
+  return points.map((p) => {
+    const pressure = typeof p.p === "number" ? p.p : 0.7;
+    const out: RenderPathPoint = {
+      x: p.x,
+      y: p.y,
+      pressure,
+    };
+    // If your RenderPathPoint supports 'p' too, include it for compatibility:
+    (out as { p?: number }).p = pressure;
+    return out;
+  });
 }

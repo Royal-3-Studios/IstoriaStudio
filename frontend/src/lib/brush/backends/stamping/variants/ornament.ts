@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/stamping/variants/ornament.ts
 import type { RenderOptions } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 import { trackOffsets } from "../core/tracks";
 import {
   resampleWithAngle,

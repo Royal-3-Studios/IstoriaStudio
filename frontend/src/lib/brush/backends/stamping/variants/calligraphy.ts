@@ -7,7 +7,7 @@ import {
   resampleWithAngle,
   type SamplePoint,
 } from "../core/resample";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 
 /** Optional shape for backendOverrides.stamping we care about here. */
 type StampingBackendOverrides = {

@@ -53,6 +53,35 @@ function isCanvas2DContext(
   );
 }
 
+/* ============================== Small safe helpers ============================== */
+
+function clampTileSizePx(sz: number | undefined, min = 2, max = 512): number {
+  const n = Number.isFinite(sz as number) ? Math.floor(sz as number) : 0;
+  return Math.max(min, Math.min(max, n));
+}
+
+/** Safe read from Uint8ClampedArray with clamped index (never undefined). */
+function u8At(buf: Uint8ClampedArray, idx: number): number {
+  const n = buf.length;
+  if (n === 0) return 0;
+  let i = idx | 0;
+  if (i < 0) i = 0;
+  if (i > n - 1) i = n - 1;
+  return buf[i] as number;
+}
+
+/** Safe 3×3 kernel read with clamped indices (0..2). */
+function kAt(
+  k: ReadonlyArray<ReadonlyArray<number>>,
+  r: number,
+  c: number
+): number {
+  const rr = r < 0 ? 0 : r > 2 ? 2 : r | 0;
+  const row = k[rr] ?? k[0]!;
+  const cc = c < 0 ? 0 : c > 2 ? 2 : c | 0;
+  return (row[cc] ?? 0) as number;
+}
+
 /* ============================== Core types ============================== */
 
 export type TextureSource =
@@ -73,12 +102,7 @@ export type Texture = {
 export type SampleRGBA8 = { r: number; g: number; b: number; a: number }; // sRGB bytes (0..255 floats)
 export type SampleLinear = { r: number; g: number; b: number; a: number }; // linear 0..1
 
-/* ============================== Small utils ============================== */
-
-function clampTileSizePx(sz: number | undefined, min = 2, max = 512): number {
-  const n = Number.isFinite(sz as number) ? Math.floor(sz as number) : 0;
-  return Math.max(min, Math.min(max, n));
-}
+/* ============================== PixelBuf helpers ============================== */
 
 function createPixelBuf(
   width: number,
@@ -174,7 +198,6 @@ function textureIdForSource(src: TextureSource): string {
 
 /* ============================== Cache ============================== */
 
-// Cache object sources by identity; URLs by string.
 const cacheByObject = new WeakMap<object, Texture>();
 const cacheByURL = new Map<string, Texture>();
 
@@ -281,7 +304,6 @@ export function sampleTexUVLinear(
 
 /* ============================== Pattern tiles (used by backends) ============================== */
 
-/** Near-white speckle for multiply compositing (graphite sheen). */
 export function makeMultiplyTile(
   seed: number,
   size = 24,
@@ -316,7 +338,6 @@ export function makeMultiplyTile(
   return pat;
 }
 
-/** Soft alpha noise used to subtly vary hole density along stroke. */
 export function makeAlphaNoiseTile(
   seed: number,
   size = 28,
@@ -339,10 +360,8 @@ export function makeAlphaNoiseTile(
   const img = x.createImageData(c.width, c.height);
   for (let i = 0; i < img.data.length; i += 4) {
     let v = rnd();
-    // contrast exponent
-    v = Math.pow(v, Math.max(0.01, contrast));
-    // map to alpha around bias
-    const a = Math.max(0, Math.min(1, (v - (1 - bias)) / bias));
+    v = Math.pow(v, Math.max(0.01, contrast)); // contrast exponent
+    const a = Math.max(0, Math.min(1, (v - (1 - bias)) / bias)); // map to alpha around bias
     img.data[i + 0] = 0;
     img.data[i + 1] = 0;
     img.data[i + 2] = 0;
@@ -354,7 +373,6 @@ export function makeAlphaNoiseTile(
   return pat;
 }
 
-/** Opaque dot tile for hard paper-tooth cutouts (destination-out). */
 export function makeHoleDotTile(
   seed: number,
   sizePx: number,
@@ -417,13 +435,6 @@ export function fillPatternWithRandomPhase(
 
 /* ============================== Generators ============================== */
 
-/**
- * Generate a small FBM noise texture (value noise). Handy default paper.
- * @param size texture width/height (square)
- * @param octaves number of FBM octaves
- * @param gain amplitude falloff
- * @param lacunarity frequency growth
- */
 export function generateFbmNoiseTexture(
   size = 256,
   octaves = 4,
@@ -502,24 +513,29 @@ export function normalMapFromHeight(
 
   const luma = (r: number, g: number, b: number) =>
     (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
   const getGray = (x: number, y: number): number => {
     // wrap repeat
     const ix = ((x % w) + w) % w;
     const iy = ((y % h) + h) % h;
     const i = (iy * w + ix) * 4;
-    return luma(src[i], src[i + 1], src[i + 2]);
+    const r = u8At(src, i);
+    const g = u8At(src, i + 1);
+    const b = u8At(src, i + 2);
+    return luma(r, g, b);
   };
 
+  // 3×3 Sobel kernels
   const kx = [
     [-1, 0, 1],
     [-2, 0, 2],
     [-1, 0, 1],
-  ];
+  ] as const;
   const ky = [
     [-1, -2, -1],
     [0, 0, 0],
     [1, 2, 1],
-  ];
+  ] as const;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -528,8 +544,8 @@ export function normalMapFromHeight(
       for (let j = -1; j <= 1; j++) {
         for (let i = -1; i <= 1; i++) {
           const g = getGray(x + i, y + j);
-          gx += kx[j + 1][i + 1] * g;
-          gy += ky[j + 1][i + 1] * g;
+          gx += kAt(kx, j + 1, i + 1) * g;
+          gy += kAt(ky, j + 1, i + 1) * g;
         }
       }
       const nx = -gx * strength;
@@ -544,7 +560,7 @@ export function normalMapFromHeight(
       out[k] = r;
       out[k + 1] = g;
       out[k + 2] = b;
-      out[k + 3] = src[k + 3];
+      out[k + 3] = u8At(src, k + 3); // preserve source alpha safely
     }
   }
 

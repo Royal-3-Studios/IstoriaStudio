@@ -1,4 +1,4 @@
-// src/lib/brush/backends/utils/events.ts
+// FILE: src/lib/brush/backends/utils/events.ts
 //
 // Pointer aggregation for brush strokes.
 // Emits normalized points in CSS pixel space. Safe to use with a <canvas> that
@@ -26,7 +26,7 @@ export type InputPoint = {
 
 export type StrokeEvent = {
   phase: StrokePhase;
-  pointerType: "mouse" | "pen" | "touch" | "unknown";
+  pointerType: KnownPointer;
   points: InputPoint[]; // full stroke so far (append-only)
   point: InputPoint; // the newest point
   isCoalesced?: boolean;
@@ -72,6 +72,7 @@ function readStylusProps(e: PointerEvent) {
   // Pressure: 0..1; mouse often reports 0 or 0.5 when buttons are down.
   const pressure =
     typeof e.pressure === "number" ? clamp01(e.pressure) : e.buttons ? 1 : 0;
+
   // Altitude (tilt magnitude): prefer tiltX/Y if altitudeAngle not available.
   // W3C: tiltX/Y ∈ [-90,+90]. We map to 0..1 where 1 = upright (altitude=90°), 0 = flat.
   let tilt = 1;
@@ -177,7 +178,7 @@ export class PointerStrokeTracker {
 
     const ev: StrokeEvent = {
       phase: "start",
-      pointerType: toPointerType(e.pointerType) || "unknown",
+      pointerType: toPointerType(e.pointerType),
       points: this.points,
       point: p,
     };
@@ -195,8 +196,8 @@ export class PointerStrokeTracker {
     const { x, y } = getCanvasCssPoint(this.target, e.clientX, e.clientY);
     const t = performance.now();
     const dt = Math.max(0.0001, t - this.lastTime); // ms
-    const dx = x - this.lastX,
-      dy = y - this.lastY;
+    const dx = x - this.lastX;
+    const dy = y - this.lastY;
     const dist = hypot2(dx, dy); // CSS px
 
     if (!isCoalesced && dist < this.opts.minDistance && dt < 8) return; // tiny jitter
@@ -236,7 +237,7 @@ export class PointerStrokeTracker {
 
     const ev: StrokeEvent = {
       phase: "move",
-      pointerType: toPointerType(e.pointerType) || "unknown",
+      pointerType: toPointerType(e.pointerType),
       points: this.points,
       point: p,
       isCoalesced,
@@ -253,7 +254,7 @@ export class PointerStrokeTracker {
       e.preventDefault();
     }
 
-    // Use coalesced events for high-resolution input when available (e.g., Chrome/Windows Ink).
+    // Use coalesced events for high-resolution input when available.
     const coalesced =
       typeof e.getCoalescedEvents === "function"
         ? e.getCoalescedEvents()
@@ -284,17 +285,21 @@ export class PointerStrokeTracker {
       angle,
       speed: this.emaSpeed,
     };
+
     // Only append if it actually moved a bit since last
     const last = this.points[this.points.length - 1];
     if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 0.01) {
       this.points.push(p);
     }
 
+    // Guaranteed newest point: if indexing returns undefined, fall back to `p`
+    const newest: InputPoint = this.points[this.points.length - 1] ?? p;
+
     const ev: StrokeEvent = {
       phase,
-      pointerType: toPointerType(e.pointerType) || "unknown",
+      pointerType: toPointerType(e.pointerType),
       points: this.points,
-      point: this.points[this.points.length - 1],
+      point: newest,
     };
     if (phase === "end") this.cbs.onEnd?.(ev);
     else this.cbs.onCancel?.(ev);
@@ -332,7 +337,8 @@ export class PointerStrokeTracker {
 
   /** Retrieve the current stroke points (immutable copy). */
   getPoints(): ReadonlyArray<InputPoint> {
-    return this.points;
+    // Return a shallow copy so callers can't mutate our internal buffer.
+    return this.points.slice();
   }
 
   /** Whether a stroke is currently active. */

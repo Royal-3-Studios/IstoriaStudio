@@ -1,7 +1,7 @@
 // FILE: src/lib/painting/layers.ts
 // Minimal in-memory layer stack with composite, resize, and snapshot helpers.
 
-import type { CanvasLike, Ctx2D } from "@/lib/brush/backends/utils/canvas";
+import type { CanvasLike, Ctx2D } from "@backends/utils/canvas";
 
 export type BlendMode = GlobalCompositeOperation;
 

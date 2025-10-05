@@ -2,6 +2,8 @@
 // Pressure normalization, smoothing, and mouse/touch synthesis (from speed).
 // No React/DOM dependencies; safe for engine/core use.
 
+import { atOrThrow } from "@/lib/brush/core/guards";
+
 export type PointerKind = "mouse" | "pen" | "touch" | "unknown";
 
 export interface PressureSample {
@@ -197,22 +199,27 @@ class Ema {
 
 function applyCurve(x: number, spec?: CurveSpec): number {
   if (!spec) return x;
+
   if (spec.type === "gamma") {
     const g = Math.max(0.01, spec.gamma);
     return Math.pow(clamp01(x), g);
   }
-  // LUT: x in [0,1] -> interpolate
+
+  // LUT: x in [0,1] -> interpolate with bounds-safe indexing
   const lut = spec.lut;
-  if (!lut.length) return x;
-  if (lut.length === 1) return clamp01(lut[0]);
-  const pos = clamp01(x) * (lut.length - 1);
+  const n = lut.length | 0;
+  if (n === 0) return x;
+  if (n === 1) return clamp01(atOrThrow(lut, 0));
+
+  const pos = clamp01(x) * (n - 1);
   const i = Math.floor(pos);
+  const j = Math.min(n - 1, i + 1);
   const f = pos - i;
-  const a = lut[i];
-  const b = lut[Math.min(lut.length - 1, i + 1)];
+
+  const a = atOrThrow(lut, i);
+  const b = atOrThrow(lut, j);
   return lerp(a, b, f);
 }
-
 /* ------------------------------ Tracker class ---------------------------- */
 
 export class PressureTracker {

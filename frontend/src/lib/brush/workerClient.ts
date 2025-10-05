@@ -16,7 +16,7 @@ import {
   type RenderOverrides,
 } from "@/lib/brush/engine";
 
-import { type Ctx2D, get2DOrNull } from "@/lib/brush/backends/utils/canvas";
+import { type Ctx2D, get2DOrNull } from "@backends/utils/canvas";
 
 /* -------------------------- tiny runtime helpers -------------------------- */
 

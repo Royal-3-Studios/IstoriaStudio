@@ -2,9 +2,9 @@
 import type { RenderOptions } from "@/lib/brush/engine";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { Rand, Blend } from "@backends";
-import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
+import { pathToStamps } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
-import type { InputQualityOpts } from "@/lib/brush/backends/utils/stroke";
+import type { InputQualityOpts } from "@backends/utils/stroke";
 import { createLayer, get2D } from "@backends/utils/canvas";
 import { gaussianRadius, paintDot } from "../core/dots";
 

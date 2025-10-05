@@ -7,7 +7,7 @@ import type { BrushInputConfig } from "@/data/brushPresets";
 import { CanvasUtil, Blend } from "@backends";
 
 import type { Ctx2D } from "@backends/utils/canvas";
-import { clamp01 } from "../utils/color";
+import { clamp01 } from "@backends/utils/color";
 import {
   tipBlend,
   applyEndBias,
@@ -24,7 +24,7 @@ import {
   pathToStamps,
   type TaperProfile,
   type InputQualityOpts,
-} from "@/lib/brush/backends/utils/stroke";
+} from "@backends/utils/stroke";
 
 type ExtRenderOptions = RenderOptions & { input?: BrushInputConfig };
 type SamplePoint = { x: number; y: number; t: number; p: number };

@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/spray/variants/splatter.ts
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
 import { Rand, Blend } from "@backends";
-import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
+import { pathToStamps } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
 import type { Ctx2D } from "@backends/utils/canvas";

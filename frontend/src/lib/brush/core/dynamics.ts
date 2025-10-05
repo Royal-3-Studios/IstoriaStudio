@@ -1,14 +1,14 @@
 // src/lib/brush/core/dynamics.ts
 import type { ModRoute, ModTarget, CurvePoint } from "@/lib/brush/core/types";
 import { buildLUT, sampleLUT } from "../backends/utils/curves";
-import { clamp, clamp01 } from "../backends/utils/math";
+import { clamp, clamp01 } from "@backends/utils/math";
 import type { RNG } from "../backends/utils/random";
 
 /** Values that can drive modulation each stamp / sample. All normalized to 0..1 where applicable. */
 export type ModulationContext = {
   pressure?: number; // 0..1
-  speed?: number; // normalized 0..1 (you choose mapping)
-  tilt?: number; // 0..1 (0 = perpendicular, 1 = parallel). Or use altitude/azimuth below.
+  speed?: number; // 0..1 (you choose mapping)
+  tilt?: number; // 0..1 (0 = perpendicular, 1 = parallel)
   tiltAltitude?: number; // 0..1 (1 = stylus upright)
   tiltAzimuth?: number; // 0..1 (heading mapped to 0..1)
   random?: number; // 0..1 (if omitted and rng provided, we’ll generate)
@@ -23,9 +23,9 @@ type CompiledRoute = {
   target: ModTarget;
   amount: number;
   mode: "add" | "mul" | "replace";
+  input: keyof ModulationContext; // which ctx field
   min?: number;
   max?: number;
-  input: keyof ModulationContext; // which ctx field
   lut?: Float32Array; // optional remap LUT
 };
 
@@ -36,21 +36,29 @@ export function compileRoutes(
 ): CompiledRoute[] {
   if (!routes || routes.length === 0) return [];
   const out: CompiledRoute[] = [];
+
   for (const r of routes) {
     if (!r || !r.input || !r.target) continue;
-    let lut: Float32Array | undefined;
-    if (r.curve && r.curve.length >= 2) {
-      lut = buildLUT(r.curve as CurvePoint[], lutSize);
-    }
-    out.push({
+
+    const base: CompiledRoute = {
       target: r.target,
       amount: typeof r.amount === "number" ? r.amount : 1,
       mode: r.mode ?? "add",
-      min: typeof r.min === "number" ? r.min : undefined,
-      max: typeof r.max === "number" ? r.max : undefined,
       input: r.input as keyof ModulationContext,
-      lut,
-    });
+      // NOTE: optional fields added below only if defined
+    };
+
+    if (typeof r.min === "number") (base as { min: number }).min = r.min;
+    if (typeof r.max === "number") (base as { max: number }).max = r.max;
+
+    if (r.curve && r.curve.length >= 2) {
+      (base as { lut: Float32Array }).lut = buildLUT(
+        r.curve as CurvePoint[],
+        lutSize
+      );
+    }
+
+    out.push(base);
   }
   return out;
 }
@@ -82,8 +90,7 @@ function applyRoute(
       out = base + route.amount * mapped;
       break;
     case "mul":
-      // multiplicative modulation around 1:
-      // base * (1 + amount * mapped)
+      // multiplicative modulation around 1: base * (1 + amount * mapped)
       out = base * (1 + route.amount * mapped);
       break;
     case "replace":
@@ -92,7 +99,7 @@ function applyRoute(
       break;
   }
 
-  if (route.min != null || route.max != null) {
+  if (route.min !== undefined || route.max !== undefined) {
     out = clamp(out, route.min ?? -Infinity, route.max ?? Infinity);
   }
   return out;
@@ -121,7 +128,7 @@ export class Modulator {
 
   /**
    * Apply modulation to a set of base values at once.
-   * Only keys present in `baseByTarget` are returned (i.e., no implicit creation).
+   * Only keys present in `baseByTarget` are returned.
    */
   applyAll(
     baseByTarget: Partial<Record<ModTarget, number>>,
@@ -141,20 +148,3 @@ export class Modulator {
 export function buildModulator(routes?: ModRoute[], lutSize = 256): Modulator {
   return new Modulator(compileRoutes(routes, lutSize));
 }
-
-/* ===========================
-   EXAMPLE USAGE (in backends)
-   ---------------------------
-   // Build once per brush/preset (or per stroke if routes change)
-   const mod = buildModulator(engine.modulations?.routes);
-
-   // Per stamp/sample:
-   const ctx: ModulationContext = {
-     pressure, speed, strokePos, stampIndex, direction, rng,
-   };
-
-   const size    = mod.apply("size", baseSize, ctx);
-   const flow    = mod.apply("flow", baseFlow, ctx);
-   const spacing = mod.apply("spacing", baseSpacing, ctx);
-   // ...
-   =========================== */

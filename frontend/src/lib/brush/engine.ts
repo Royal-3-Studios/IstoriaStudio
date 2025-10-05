@@ -12,7 +12,7 @@ import {
   createLayer,
   type Ctx2D,
   type CanvasLike,
-} from "./backends/utils/canvas";
+} from "@backends/utils/canvas";
 import { ensureCanvasDprSize } from "./backends/utils/offscreen";
 import { createBrushContext } from "@/lib/brush/core/brushContext";
 import { mulberry32 } from "./backends/utils/random";

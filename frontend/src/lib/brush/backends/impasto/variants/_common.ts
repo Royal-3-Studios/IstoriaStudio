@@ -1,6 +1,7 @@
 // FILE: src/lib/brush/backends/impasto/variants/_common.ts
 import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine.types";
-import { Stroke as StrokeUtil, Rand } from "@backends";
+import { Stroke as StrokeUtil } from "@backends";
+import { mulberry32 } from "@backends/utils/random";
 import type { BrushInputConfig } from "@/data/brushPresets";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
@@ -130,5 +131,5 @@ export function resample(
 
 export function seededRng(opt: RenderOptions) {
   const seed = (opt.seed ?? 4242) >>> 0;
-  return Rand.mulberry32(seed);
+  return mulberry32(seed); // <- returns RNG
 }

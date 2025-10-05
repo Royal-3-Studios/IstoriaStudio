@@ -1,5 +1,5 @@
 import type { RenderPathPoint } from "@/lib/brush/engine";
-import { clamp } from "@/lib/brush/backends/utils/math";
+import { clamp } from "@backends/utils/math";
 
 export type Particle = {
   x: number;

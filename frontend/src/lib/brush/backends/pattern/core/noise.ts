@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/pattern/core/noise.ts
-import type { RNG } from "../utils/rng";
+import type { RNG } from "@backends/utils/random";
 
 function hash2iSeeded(x: number, y: number, salt: number): number {
   let v = ((x ^ salt) * 73856093) ^ ((y ^ (salt >>> 1)) * 19349663);

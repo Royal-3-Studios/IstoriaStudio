@@ -1,4 +1,4 @@
-import { deg2rad } from "./math";
+import { deg2rad } from "@backends/utils/math";
 
 export type Vec2 = { x: number; y: number };
 

@@ -35,11 +35,11 @@ export function resolveRendering(
 /**
  * Apply a RenderingIntent to an EngineConfig.
  * - Does NOT overwrite explicit backend choice if it's not "auto"
- * - Does NOT overwrite explicit stamping overrides.renderingMode
+ * - Does NOT overwrite an explicit backendOverrides.stamping.mode if present
  * Returns a shallow-cloned config (original untouched).
  *
- * IMPORTANT: With exactOptionalPropertyTypes, never assign `overrides: undefined`.
- * Omit the key when you don't want to change it.
+ * With exactOptionalPropertyTypes, we never assign properties to `undefined`;
+ * we only include keys when we have values.
  */
 export function applyRenderingIntent(config: EngineConfig): EngineConfig {
   const intent = config.rendering?.intent;
@@ -55,18 +55,32 @@ export function applyRenderingIntent(config: EngineConfig): EngineConfig {
       ? existingBackend
       : resolved.backend;
 
-  // Respect explicit stamping renderingMode if already set.
-  const hasStampingMode = typeof config.overrides?.renderingMode === "string";
+  // Respect explicit stamping mode if already set in backendOverrides
+  const existingStampingMode =
+    config.backendOverrides?.stamping?.mode ?? undefined;
 
-  const nextOverrides =
-    chosenBackend === "stamping" && resolved.stampingMode && !hasStampingMode
-      ? { ...(config.overrides ?? {}), renderingMode: resolved.stampingMode }
-      : config.overrides;
+  // Build next backendOverrides only if we actually need to set stamping.mode
+  let nextBackendOverrides = config.backendOverrides;
+  if (
+    chosenBackend === "stamping" &&
+    resolved.stampingMode &&
+    existingStampingMode === undefined
+  ) {
+    nextBackendOverrides = {
+      ...(config.backendOverrides ?? {}),
+      stamping: {
+        ...(config.backendOverrides?.stamping ?? {}),
+        mode: resolved.stampingMode, // typed and backend-scoped
+      },
+    };
+  }
 
-  // Build result WITHOUT ever setting overrides to `undefined`
+  // Return new config (omit keys rather than writing undefined)
   return {
     ...config,
     backend: chosenBackend,
-    ...(nextOverrides !== undefined ? { overrides: nextOverrides } : {}),
+    ...(nextBackendOverrides !== undefined
+      ? { backendOverrides: nextBackendOverrides }
+      : {}),
   };
 }
