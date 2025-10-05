@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/ribbon/variants/marker.ts
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
-import type { Ctx2D } from "../utils/canvas";
-import { createLayer, get2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import {
   resamplePath, // resamples {x,y,t,p}
   resolveSpacingFraction, // UI spacing -> fraction of diameter

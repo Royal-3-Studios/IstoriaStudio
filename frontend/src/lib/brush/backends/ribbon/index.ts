@@ -1,6 +1,10 @@
 // FILE: src/lib/brush/backends/ribbon/index.ts
-import type { RenderOptions } from "@/lib/brush/engine";
-import type { Ctx2D, CanvasLike } from "./utils/canvas";
+import type { RenderOptions } from "@/lib/brush/engine.types";
+import {
+  type Ctx2D,
+  type CanvasLike,
+  get2D,
+} from "@/lib/brush/backends/utils/canvas";
 
 import { drawRibbonPencil } from "./variants/pencil";
 import { drawRibbonInk } from "./variants/ink";
@@ -11,19 +15,15 @@ import { drawRibbonMarker } from "./variants/marker";
 export type RibbonMode = "pencil" | "ink" | "calligraphy" | "marker";
 
 /** Backend-local config attachable at engine.backendOverrides.ribbon */
-export type RibbonBackendConfig = {
-  mode?: RibbonMode;
-  nibAngleDeg?: number; // used by calligraphy (if you read it there)
-  tipMinPx?: number; // shared min tip width (if you read it there)
-};
-
-type EngineBackendOverridesWithRibbon = {
-  ribbon?: RibbonBackendConfig;
-};
+export type RibbonBackendConfig = Partial<{
+  mode: RibbonMode;
+  nibAngleDeg: number; // used by calligraphy variant
+  tipMinPx: number; // shared minimum tip width
+}>;
 
 function getRibbonConfig(opt: RenderOptions): RibbonBackendConfig | undefined {
   const bo = opt.engine.backendOverrides as
-    | EngineBackendOverridesWithRibbon
+    | { ribbon?: RibbonBackendConfig }
     | undefined;
   return bo?.ribbon;
 }
@@ -45,21 +45,15 @@ export default function drawRibbon(ctx: Ctx2D, opt: RenderOptions): void {
     case "marker":
       drawRibbonMarker(ctx, opt);
       break;
+    case "pencil":
     default:
       drawRibbonPencil(ctx, opt);
       break;
   }
 }
 
-/**
- * Convenience wrapper for adapters: accept a CanvasLike, get a 2D context,
- * and call the core draw function. (Draw only in CSS space; engine sets DPR.)
- */
-export async function drawRibbonToCanvas(
-  canvas: CanvasLike,
-  opt: RenderOptions
-): Promise<void> {
-  const ctx = canvas.getContext("2d", { alpha: true }) as Ctx2D | null;
-  if (!ctx) return;
+/** Standard convenience: accept a canvas surface, fetch 2D, then draw. */
+export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
+  const ctx = get2D(surface);
   drawRibbon(ctx, opt);
 }

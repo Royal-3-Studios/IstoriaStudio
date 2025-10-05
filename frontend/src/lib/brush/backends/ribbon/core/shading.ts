@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/ribbon/core/shading.ts
-import type { Ctx2D } from "../../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import type { RibbonSample } from "./resample";
 import type { RibbonTuning } from "./tuning";
 

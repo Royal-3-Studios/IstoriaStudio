@@ -6,7 +6,7 @@ import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
 import type { BrushInputConfig } from "@/data/brushPresets";
 import { Rand, Texture, CanvasUtil, Blend } from "@backends";
 
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import { clamp01 } from "../utils/color";
 import {
   toPressureMapFromInput,

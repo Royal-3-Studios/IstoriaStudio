@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/backends/pattern/core/fill.ts
 
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 /** Clip to a Path2D, run body, and always restore. */
 export function withClip(ctx: Ctx2D, path: Path2D, body: () => void): void {

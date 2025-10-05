@@ -1,6 +1,6 @@
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
-import type { Ctx2D, CanvasLike } from "../utils/canvas";
-import { createLayer, get2D } from "../utils/canvas";
+import type { Ctx2D, CanvasLike } from "@backends/utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import { makeStamps, clamp01 } from "./_common";
 import { dragStamp } from "../core/drag";
 import { applyDissolve } from "../core/dissolve";

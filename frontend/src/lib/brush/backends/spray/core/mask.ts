@@ -1,7 +1,7 @@
 // src/lib/brush/backends/spray/core/mask.ts
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import { Blend, CanvasUtil } from "@backends";
-import { createLayer, get2D } from "../utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 
 export function newMask(width: number, height: number) {
   const mask = createLayer(width, height);

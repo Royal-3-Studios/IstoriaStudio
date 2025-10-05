@@ -1,7 +1,10 @@
 // FILE: src/lib/brush/backends/pattern/index.ts
-
-import type { RenderOptions } from "@/lib/brush/engine";
-import { type Ctx2D, get2D } from "./utils/canvas";
+import type { RenderOptions } from "@/lib/brush/engine.types";
+import {
+  type Ctx2D,
+  type CanvasLike,
+  get2D,
+} from "@/lib/brush/backends/utils/canvas";
 
 import { drawPatternStroke } from "./variants/stroke";
 import { drawPatternFill } from "./variants/fill";
@@ -10,7 +13,7 @@ import { drawPatternScatter } from "./variants/scatter";
 /** Which *rendering style* to use. */
 export type PatternMode = "stroke" | "fill" | "scatter";
 
-/** Optional overrides passed via engine.overrides.* or backendOverrides.pattern */
+/** Optional overrides passed via engine.backendOverrides.pattern */
 export type PatternOverrides = Partial<{
   mode: PatternMode;
   patternKind: "paper" | "canvas" | "noise" | "checker";
@@ -27,31 +30,28 @@ function pickMode(opt: RenderOptions): PatternMode {
   const local = opt.engine.backendOverrides?.pattern as
     | PatternOverrides
     | undefined;
-  const m = local?.mode; // (don’t read non-existent opt.engine.overrides.patternMode)
+  const m = local?.mode;
   return m === "fill" || m === "scatter" ? m : "stroke";
 }
 
-/** Draw into an existing 2D context (engine has already sized/DPR’d the layer). */
+/** Core entry: draw using the selected variant. */
 export default function drawPattern(ctx: Ctx2D, opt: RenderOptions): void {
-  const mode = pickMode(opt);
-  switch (mode) {
+  switch (pickMode(opt)) {
     case "fill":
       drawPatternFill(ctx, opt);
       break;
     case "scatter":
       drawPatternScatter(ctx, opt);
       break;
+    case "stroke":
     default:
       drawPatternStroke(ctx, opt);
       break;
   }
 }
 
-/** Convenience wrapper: accept a canvas surface, fetch 2D, then draw. */
-export async function drawPatternToCanvas(
-  surface: HTMLCanvasElement | OffscreenCanvas,
-  opt: RenderOptions
-): Promise<void> {
+/** Convenience: accept a canvas surface, fetch 2D, then draw. */
+export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
   const ctx = get2D(surface);
   drawPattern(ctx, opt);
 }

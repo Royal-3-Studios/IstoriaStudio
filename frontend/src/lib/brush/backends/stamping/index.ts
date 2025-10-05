@@ -1,6 +1,10 @@
 // FILE: src/lib/brush/backends/stamping/index.ts
-import type { RenderOptions } from "@/lib/brush/engine";
-import type { Ctx2D } from "./utils/canvas";
+import type { RenderOptions } from "@/lib/brush/engine.types";
+import {
+  type Ctx2D,
+  type CanvasLike,
+  get2D,
+} from "@/lib/brush/backends/utils/canvas";
 
 import { drawStampGraphite } from "./variants/graphite";
 import { drawStampInk } from "./variants/ink";
@@ -20,9 +24,10 @@ export type StampingMode =
   | "stamp"
   | "ornament";
 
+/** Backend-local overrides (attach via engine.backendOverrides.stamping). */
 export type StampingOverrides = Partial<{
-  /** Selects which variant to draw (also settable via backendOverrides.stamping.mode). */
-  stampingMode: StampingMode;
+  /** Preferred selector: engine.backendOverrides.stamping.mode */
+  mode: StampingMode;
 
   /** Calligraphy-only: chisel nib angle in degrees. */
   nibAngleDeg: number;
@@ -31,28 +36,37 @@ export type StampingOverrides = Partial<{
   tipMinPx: number;
 }>;
 
-function pickMode(opt: RenderOptions): StampingMode {
-  const local = opt.engine.backendOverrides?.stamping as
-    | { mode?: StampingMode }
-    | undefined;
-
-  const m =
-    local?.mode ??
-    (opt.engine.overrides?.stampingMode as StampingMode | undefined);
-
-  switch (m) {
-    case "ink":
-    case "marker":
-    case "calligraphy":
-    case "scatter":
-    case "stamp":
-    case "ornament":
-      return m;
-    default:
-      return "graphite";
-  }
+function isStampingMode(x: unknown): x is StampingMode {
+  return (
+    x === "graphite" ||
+    x === "ink" ||
+    x === "marker" ||
+    x === "calligraphy" ||
+    x === "scatter" ||
+    x === "stamp" ||
+    x === "ornament"
+  );
 }
 
+/** Resolve the concrete stamping mode. Includes a temporary legacy shim. */
+function pickMode(opt: RenderOptions): StampingMode {
+  const local = opt.engine.backendOverrides?.stamping as
+    | StampingOverrides
+    | undefined;
+
+  // Preferred path
+  if (isStampingMode(local?.mode)) return local.mode;
+
+  // --- Legacy shim (read-only): engine.overrides.stampingMode ---
+  // Do NOT add this to RenderOverrides; keep it local until presets migrate.
+  const legacy = opt.engine.overrides as { stampingMode?: unknown } | undefined;
+  if (isStampingMode(legacy?.stampingMode)) return legacy.stampingMode;
+
+  // Default
+  return "graphite";
+}
+
+/** Core entry: draw using the selected variant. */
 export default function drawStamping(ctx: Ctx2D, opt: RenderOptions): void {
   switch (pickMode(opt)) {
     case "ink":
@@ -78,4 +92,10 @@ export default function drawStamping(ctx: Ctx2D, opt: RenderOptions): void {
       drawStampGraphite(ctx, opt);
       break;
   }
+}
+
+/** Convenience: accept a canvas surface, fetch a 2D context, then draw. */
+export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
+  const ctx = get2D(surface);
+  drawStamping(ctx, opt);
 }

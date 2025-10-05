@@ -1,6 +1,10 @@
+// FILE: src/lib/brush/backends/wet/index.ts
 import type { RenderOptions } from "@/lib/brush/engine.types";
-import type { Ctx2D, CanvasLike } from "@/lib/canvas/context";
-import { get2DContext } from "@/lib/canvas/context";
+import {
+  type Ctx2D,
+  type CanvasLike,
+  get2D,
+} from "@/lib/brush/backends/utils/canvas";
 
 import { drawWetWash } from "./variants/wash";
 import { drawWetGlaze } from "./variants/glaze";
@@ -10,33 +14,46 @@ import { drawWetLift } from "./variants/lift";
 
 export type WetMode = "wash" | "glaze" | "edge" | "bloom" | "lift";
 
+function isWetMode(x: unknown): x is WetMode {
+  return (
+    x === "wash" ||
+    x === "glaze" ||
+    x === "edge" ||
+    x === "bloom" ||
+    x === "lift"
+  );
+}
+
 function pickWetMode(opt: RenderOptions): WetMode {
   const m = (opt.engine.backendOverrides?.wet as { mode?: unknown } | undefined)
     ?.mode;
-  if (m === "glaze" || m === "edge" || m === "bloom" || m === "lift") return m;
-  return "wash";
+  return isWetMode(m) ? m : "wash";
 }
 
-export default function drawWet(ctx: Ctx2D, opt: RenderOptions): void {
+/** Core entry: draw using the selected wet variant. */
+export default function draw(ctx: Ctx2D, opt: RenderOptions): void {
   switch (pickWetMode(opt)) {
     case "glaze":
-      return void drawWetGlaze(ctx, opt);
+      drawWetGlaze(ctx, opt);
+      break;
     case "edge":
-      return void drawWetEdge(ctx, opt);
+      drawWetEdge(ctx, opt);
+      break;
     case "bloom":
-      return void drawWetBloom(ctx, opt);
+      drawWetBloom(ctx, opt);
+      break;
     case "lift":
-      return void drawWetLift(ctx, opt);
+      drawWetLift(ctx, opt);
+      break;
+    case "wash":
     default:
-      return void drawWetWash(ctx, opt);
+      drawWetWash(ctx, opt);
+      break;
   }
 }
 
-export async function drawWetToCanvas(
-  canvas: CanvasLike,
-  opt: RenderOptions
-): Promise<void> {
-  const ctx = get2DContext(canvas);
-  if (!ctx) throw new Error("2D context not available.");
-  drawWet(ctx, opt);
+/** Standard convenience: accept a canvas surface, fetch 2D, then draw. */
+export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
+  const ctx = get2D(surface);
+  draw(ctx, opt);
 }

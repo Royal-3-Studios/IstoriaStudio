@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/smudge/core/dissolve.ts
-import type { Ctx2D, CanvasLike } from "../utils/canvas";
+import type { Ctx2D, CanvasLike } from "@backends/utils/canvas";
 
 /** Cheap dissolve by thresholding alpha against a small tiled noise. */
 export function applyDissolve(

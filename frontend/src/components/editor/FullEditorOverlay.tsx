@@ -4,12 +4,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type Konva from "konva";
-import Transformer from "@/features/editor/canvas/konva//TransformerClient";
-import type {
-  TextLayer,
-  BoxLayer,
-  CanvasBg,
-} from "@/features/editor/types/layers";
+import Transformer from "@/features/editor/canvas/konva/TransformerClient";
+import type { TextLayer, BoxLayer } from "@/features/editor/types/layers";
 
 import {
   Sheet,
@@ -97,10 +93,6 @@ export type FullEditorOverlayProps = {
   activeAssetId?: string | null;
   onSelectAssetAction?: (id: string) => void;
 };
-
-function clamp(n: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, n));
-}
 
 export default function FullEditorOverlay(props: FullEditorOverlayProps) {
   const {
@@ -394,10 +386,10 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
           <div className="hidden lg:flex border-r bg-muted/20 relative overflow-visible transition-[width] duration-200 ease-in-out">
             <LeftPanel
               open={leftOpen}
-              onToggleAction={setLeftOpen}
+              onToggleAction={(next: boolean) => setLeftOpen(next)}
               assets={assets}
               activeAssetId={activeAssetId}
-              onSelectAssetAction={onSelectAssetAction}
+              {...(onSelectAssetAction ? { onSelectAssetAction } : {})}
               openWidth={LEFT_OPEN_WIDTH}
               railWidth={LEFT_RAIL_WIDTH}
             />
@@ -626,7 +618,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
           <div className="hidden lg:flex border-l bg-muted/10 relative overflow-visible transition-[width] duration-200 ease-in-out">
             <RightPanel
               open={rightOpen}
-              onToggleAction={setRightOpen}
+              onToggleAction={(next: boolean) => setRightOpen(next)}
               width={RIGHT_OPEN_WIDTH}
               railWidth={RIGHT_RAIL_WIDTH}
             >

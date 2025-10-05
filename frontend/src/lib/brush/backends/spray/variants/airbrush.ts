@@ -6,8 +6,8 @@ import {
 } from "@/lib/brush/backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
-import type { Ctx2D } from "../utils/canvas";
-import { get2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { get2D } from "@backends/utils/canvas";
 
 import { paintDroplet, gaussianRadius } from "../core/droplet";
 import {

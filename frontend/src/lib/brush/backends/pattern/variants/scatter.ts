@@ -1,8 +1,8 @@
 // FILE: src/lib/brush/backends/pattern/variants/scatter.ts
 
 import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
-import type { Ctx2D } from "../utils/canvas";
-import { createLayer, get2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
 import { withCompositeAndAlpha } from "../core/fill";
 import {

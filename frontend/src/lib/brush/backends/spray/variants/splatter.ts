@@ -4,7 +4,7 @@ import { Rand, Blend } from "@backends";
 import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import { gaussianRadius, paintDot } from "../core/dots";
 import { newMask, newColorLayer, clipColorByMask } from "../core/mask";
 

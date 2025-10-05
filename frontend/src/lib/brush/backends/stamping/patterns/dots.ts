@@ -1,5 +1,5 @@
-import type { Ctx2D } from "../utils/canvas";
-import { createLayer, get2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import { mulberry32 } from "../utils/rng";
 
 export type DotsPatternOpts = {

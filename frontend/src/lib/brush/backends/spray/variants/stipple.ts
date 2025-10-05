@@ -1,11 +1,11 @@
 // src/lib/brush/backends/spray/variants/stipple.ts
 import type { RenderOptions } from "@/lib/brush/engine";
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import { Rand, Blend } from "@backends";
 import { pathToStamps } from "@/lib/brush/backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 import type { InputQualityOpts } from "@/lib/brush/backends/utils/stroke";
-import { createLayer, get2D } from "../utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import { gaussianRadius, paintDot } from "../core/dots";
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);

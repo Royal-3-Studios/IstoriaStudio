@@ -221,19 +221,13 @@ export type RenderOverrides = {
   speedToSpacing?: number;
   /** Minimum absolute step in px after modulation. */
   minStepPx?: number;
-
-  /**
-   * Stamping-only mode selector. This does NOT switch backends—only the
-   * variant inside the stamping backend.
-   */
-  renderingMode?: StampingRenderingMode;
 };
 
 /* ============================== Backend-specific Overrides ============================== */
 
 /* ---- Stamping ---- */
 export type StampingOverrides = {
-  renderingMode?: StampingRenderingMode; // "ink" | "graphite"
+  mode?: StampingRenderingMode;
   innerGrainAlpha?: number;
   edgeCarveAlpha?: number;
 
@@ -252,7 +246,7 @@ export type StampingOverrides = {
 /* ---- Ribbon ---- */
 export type RibbonMode = "pencil" | "ink" | "calligraphy";
 export type RibbonOverrides = {
-  ribbonMode?: RibbonMode;
+  mode?: RibbonMode;
   coreStrength?: number;
 
   // glaze & grain
@@ -275,12 +269,13 @@ export type SmudgeOverrides = {
 };
 
 /* ---- Spray ---- */
+export type SprayMode = "airbrush" | "splatter" | "nozzle" | "stipple";
 export type SprayOverrides = {
+  mode?: SprayMode;
   dropletCount?: number;
   dropletJitter?: number;
   dropletSizeMin?: number;
   dropletSizeMax?: number;
-  airbrush?: boolean;
 };
 
 /* ---- Wet ---- */

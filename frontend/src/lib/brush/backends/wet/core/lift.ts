@@ -1,4 +1,4 @@
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 /** Lift pigment from `target` by subtracting (destination-out) a blurred water mask. */
 export function applyLift(

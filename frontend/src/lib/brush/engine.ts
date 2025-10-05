@@ -2,14 +2,10 @@
 /**
  * Brush Engine Orchestrator
  * ------------------------------------------------------------
- * Responsibilities:
- *  - Normalize inputs (DPR, canvas size, color, engine config, overrides).
- *  - Pick an appropriate backend (or respect explicit choice).
- *  - Render into an offscreen layer, then composite with global blend/opacity.
- *
- * Backends supported:
- *  - Canvas-based: ribbon, spray, wet, impasto
- *  - Ctx-based (wrapped with "...ToCanvas"): stamping, smudge, particle, pattern
+ * - Normalize opts, size to DPR
+ * - Pick backend
+ * - Render into an offscreen layer
+ * - Composite with global blend/opacity
  */
 
 import {
@@ -25,82 +21,65 @@ import {
   toCompositeOp,
 } from "./backends/utils/blending";
 
-// Canvas-based backends (expect a Canvas)
-import { drawRibbonToCanvas } from "./backends/ribbon";
-import { drawSprayToCanvas } from "./backends/spray";
-import { drawWetToCanvas } from "./backends/wet";
-import { drawImpastoToCanvas } from "./backends/impasto";
+// All backends expose a uniform API: default draw(ctx, opt) + named drawToCanvas(surface, opt)
+import { drawToCanvas as drawRibbonToCanvas } from "./backends/ribbon";
+import { drawToCanvas as drawSprayToCanvas } from "./backends/spray";
+import { drawToCanvas as drawWetToCanvas } from "./backends/wet";
+import { drawToCanvas as drawImpastoToCanvas } from "./backends/impasto";
+import { drawToCanvas as drawStampingToCanvas } from "./backends/stamping";
+import { drawToCanvas as drawSmudgeToCanvas } from "./backends/smudge";
+import { drawToCanvas as drawParticleToCanvas } from "./backends/particle";
+import { drawToCanvas as drawPatternToCanvas } from "./backends/pattern";
 
-// Ctx-based backends (provide ...ToCanvas wrappers)
-import drawStamping, { drawStampingToCanvas } from "./backends/stamping";
-import drawSmudge, { drawSmudgeToCanvas } from "./backends/smudge";
-import drawParticle, { drawParticleToCanvas } from "./backends/particle";
-import drawPattern, { drawPatternToCanvas } from "./backends/pattern";
-
-// Types
 import type { RenderOptions } from "./engine.types";
 import type { BrushContextInit } from "@/lib/brush/core/brushContext";
 
-// Utils (normalizers, backend selection, 2D guard)
 import {
   normalizeOptions,
   chooseBackend,
   isCanvas2DContext,
 } from "./engine.utils";
 
-/* ========================================================================== */
-/*                              Small helpers                                  */
-/* ========================================================================== */
+/* ------------------------------ helpers ------------------------------ */
 
-// Accept a sync return (void/T) or a Promise<T> and return a Promise<T>.
 function awaitMaybe<T>(v: T | Promise<T>): Promise<T> {
   return Promise.resolve(v);
 }
 
-/* ========================================================================== */
-/*                            Core internal implementation                     */
-/* ========================================================================== */
+/* ------------------------------ core draw ---------------------------- */
 
 async function drawStrokeToAny(
   surface: CanvasLike,
   opt: RenderOptions
 ): Promise<void> {
-  // Normalize & choose backend
   const nopt = normalizeOptions(opt);
   const dpr = nopt.pixelRatio;
 
-  // Build BrushContextInit without ever setting optional properties to `undefined`
+  // Build BrushContextInit without assigning undefined fields
   const initCtx: BrushContextInit = {
     width: nopt.width,
     height: nopt.height,
     dpr,
     seed: nopt.seed ?? 1,
-    colorHex: nopt.color ?? undefined, // null -> undefined
+    colorHex: nopt.color, // optional already
     rngFactory: (s) => mulberry32(s),
   };
 
-  const ssm = nopt.engine.overrides.speedSmoothingMs;
-  if (ssm !== undefined) {
-    initCtx.speedSmoothingMs = ssm;
+  if (nopt.engine.overrides.speedSmoothingMs !== undefined) {
+    initCtx.speedSmoothingMs = nopt.engine.overrides.speedSmoothingMs;
   }
 
-  // Build smudgeDefaults piecewise; assign only if any keys got set
+  // smudge defaults (only attach if any provided)
   const sd: NonNullable<BrushContextInit["smudgeDefaults"]> = {};
   const { smudgeStrength, smudgeAlpha, smudgeBlur, smudgeSpacing } =
     nopt.engine.overrides;
-
   if (smudgeStrength !== undefined) sd.strength = smudgeStrength;
   if (smudgeAlpha !== undefined) sd.alphaMul = smudgeAlpha;
   if (smudgeBlur !== undefined) sd.blurPx = smudgeBlur;
   if (smudgeSpacing !== undefined) sd.spacingOverride = smudgeSpacing;
-
-  if (Object.keys(sd).length > 0) {
-    initCtx.smudgeDefaults = sd;
-  }
+  if (Object.keys(sd).length > 0) initCtx.smudgeDefaults = sd;
 
   const brushCtx = createBrushContext(initCtx);
-
-  // Keep type compatible with backends expecting RenderOptions (+ brushCtx)
   const optWithCtx: RenderOptions & { brushCtx: typeof brushCtx } = {
     ...nopt,
     brushCtx,
@@ -108,16 +87,14 @@ async function drawStrokeToAny(
 
   const backend = chooseBackend(nopt);
 
-  // Target surface DPR sizing (works for OffscreenCanvas and HTMLCanvasElement)
+  // Size the destination surface (device pixels) and prep its 2D ctx in CSS space
   ensureCanvasDprSize(surface, nopt.width, nopt.height, dpr);
-
-  // Prepare target 2D context
   const ctx = surface.getContext?.("2d", { alpha: true }) as Ctx2D | null;
   if (!isCanvas2DContext(ctx)) throw new Error("2D context unavailable");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, nopt.width, nopt.height);
 
-  // Offscreen layer to composite at the end (pixel dimensions)
+  // Offscreen layer we render into, then composite
   const layer = createLayer(
     Math.max(1, Math.floor(nopt.width * dpr)),
     Math.max(1, Math.floor(nopt.height * dpr))
@@ -127,75 +104,39 @@ async function drawStrokeToAny(
   lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lctx.clearRect(0, 0, nopt.width, nopt.height);
 
-  // Dispatch — canvas-based draw directly to the offscreen layer
+  // Dispatch — every backend exposes drawToCanvas(CanvasLike, RenderOptions)
   switch (backend) {
     case "ribbon":
-      await awaitMaybe(
-        drawRibbonToCanvas(layer as HTMLCanvasElement, optWithCtx)
-      );
+      await awaitMaybe(drawRibbonToCanvas(layer, optWithCtx));
       break;
     case "spray":
-      await awaitMaybe(
-        drawSprayToCanvas(layer as HTMLCanvasElement, optWithCtx)
-      );
+      await awaitMaybe(drawSprayToCanvas(layer, optWithCtx));
       break;
     case "wet":
-      await awaitMaybe(drawWetToCanvas(layer as HTMLCanvasElement, optWithCtx));
+      await awaitMaybe(drawWetToCanvas(layer, optWithCtx));
       break;
     case "stamping":
-      if (typeof drawStampingToCanvas === "function") {
-        await awaitMaybe(
-          drawStampingToCanvas(layer as HTMLCanvasElement, optWithCtx)
-        );
-      } else {
-        await awaitMaybe(drawStamping(lctx, optWithCtx));
-      }
+      await awaitMaybe(drawStampingToCanvas(layer, optWithCtx));
       break;
     case "smudge":
-      if (typeof drawSmudgeToCanvas === "function") {
-        await awaitMaybe(
-          drawSmudgeToCanvas(layer as HTMLCanvasElement, optWithCtx)
-        );
-      } else {
-        await awaitMaybe(drawSmudge(lctx, optWithCtx));
-      }
+      await awaitMaybe(drawSmudgeToCanvas(layer, optWithCtx));
       break;
     case "particle":
-      if (typeof drawParticleToCanvas === "function") {
-        await awaitMaybe(
-          drawParticleToCanvas(layer as HTMLCanvasElement, optWithCtx)
-        );
-      } else {
-        await awaitMaybe(drawParticle(lctx, optWithCtx));
-      }
+      await awaitMaybe(drawParticleToCanvas(layer, optWithCtx));
       break;
     case "pattern":
-      if (typeof drawPatternToCanvas === "function") {
-        await awaitMaybe(
-          drawPatternToCanvas(layer as HTMLCanvasElement, optWithCtx)
-        );
-      } else {
-        await awaitMaybe(drawPattern(lctx, optWithCtx));
-      }
+      await awaitMaybe(drawPatternToCanvas(layer, optWithCtx));
       break;
     case "impasto":
-      await awaitMaybe(
-        drawImpastoToCanvas(layer as HTMLCanvasElement, optWithCtx)
-      );
+      await awaitMaybe(drawImpastoToCanvas(layer, optWithCtx));
       break;
     default:
-      // Fallback to stamping
-      if (typeof drawStampingToCanvas === "function") {
-        await awaitMaybe(
-          drawStampingToCanvas(layer as HTMLCanvasElement, optWithCtx)
-        );
-      } else {
-        await awaitMaybe(drawStamping(lctx, optWithCtx));
-      }
+      // Fallback (shouldn’t happen if chooseBackend handles "auto")
+      await awaitMaybe(drawStampingToCanvas(layer, optWithCtx));
       break;
   }
 
-  // Global composite: blendMode + opacity
+  // Composite with global blend + opacity
   const blend = nopt.engine.rendering.blendMode ?? "source-over";
   const opacity01 = Math.max(
     0,
@@ -203,16 +144,18 @@ async function drawStrokeToAny(
   );
 
   withCompositeAndAlpha(ctx, toCompositeOp(blend), opacity01, () => {
-    // ctx is already scaled to DPR; draw in CSS space
-    ctx.drawImage(layer as CanvasImageSource, 0, 0, nopt.width, nopt.height);
+    ctx.drawImage(
+      layer as unknown as CanvasImageSource,
+      0,
+      0,
+      nopt.width,
+      nopt.height
+    );
   });
 }
 
-/* ========================================================================== */
-/*                               Public API                                   */
-/* ========================================================================== */
+/* ------------------------------ public API --------------------------- */
 
-/** Main DOM entry (HTMLCanvasElement). */
 export async function drawStrokeToCanvas(
   canvas: HTMLCanvasElement,
   opt: RenderOptions
@@ -220,7 +163,6 @@ export async function drawStrokeToCanvas(
   return drawStrokeToAny(canvas, opt);
 }
 
-/** Surface-friendly entry (HTMLCanvasElement | OffscreenCanvas). */
 export async function drawStrokeToSurface(
   surface: CanvasLike,
   opt: RenderOptions
@@ -228,12 +170,10 @@ export async function drawStrokeToSurface(
   return drawStrokeToAny(surface, opt);
 }
 
-/** Backward-compatible alias */
 export const renderBrushPreview = drawStrokeToCanvas;
 export default drawStrokeToCanvas;
 
-/* ============================== Re-exports ============================== */
-/** Re-export types so existing imports from "@/lib/brush/engine" keep working. */
+/* ------------------------------ re-exports --------------------------- */
 export type {
   BrushBackend,
   RenderingMode,

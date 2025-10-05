@@ -4,7 +4,7 @@ import {
   withCanvas,
   type CanvasLike,
   type Ctx2D,
-} from "../utils/canvasPool";
+} from "@backends/utils/canvasPool";
 
 /** Draw in CSS space (0..width, 0..height). DPR is applied inside the hook. */
 export type DrawFn = (canvas: CanvasLike, ctx: Ctx2D) => void | Promise<void>;

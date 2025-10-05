@@ -1,18 +1,12 @@
 // FILE: src/lib/brush/workerClient.ts
-
 import type {
   WorkerRequest,
   WorkerResponse,
   BitmapResponse,
   WorkerRenderOptions,
   WorkerPathPoint,
-} from "@/lib/brush/workerTypes";
-import {
-  isBitmapResponse,
-  isAck,
-  isError,
-  isPong,
-} from "@/lib/brush/workerTypes";
+} from "@/lib/brush/messages";
+import { isBitmapResponse, isAck, isError, isPong } from "@/lib/brush/messages";
 
 import {
   drawStrokeToCanvas,
@@ -22,28 +16,29 @@ import {
   type RenderOverrides,
 } from "@/lib/brush/engine";
 
-// Use shared 2D utils from the canvas helper (barrel-friendly)
 import { type Ctx2D, get2DOrNull } from "@/lib/brush/backends/utils/canvas";
 
-/* ----------------------------- runtime guards ----------------------------- */
+/* -------------------------- tiny runtime helpers -------------------------- */
 
 function isObject(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
 }
 function isEngineConfigLike(x: unknown): x is EngineConfig {
-  return isObject(x);
+  return isObject(x); // keep narrow; real validation belongs elsewhere
 }
 function isOverridesLike(x: unknown): x is Partial<RenderOverrides> {
   return isObject(x);
 }
+
+/** Map WorkerPathPoint[] → RenderPathPoint[] without ever assigning `undefined`. */
 function toRenderPath(
   points: ReadonlyArray<WorkerPathPoint>
 ): RenderPathPoint[] {
-  return points.map((p) => ({
+  return points.map<RenderPathPoint>((p) => ({
     x: p.x,
     y: p.y,
-    pressure: typeof p.pressure === "number" ? p.pressure : undefined,
-    angle: typeof p.angle === "number" ? p.angle : undefined,
+    ...(typeof p.pressure === "number" ? { pressure: p.pressure } : {}),
+    ...(typeof p.angle === "number" ? { angle: p.angle } : {}),
   }));
 }
 
@@ -150,7 +145,7 @@ export async function initBrushSurface(
   handle.worker.postMessage(msg);
   await waitFor(
     handle.worker,
-    (m): m is WorkerResponse & { kind: "ack"; for: "init" } =>
+    (m): m is WorkerResponse & { kind: "ack"; for: "init"; version?: number } =>
       isAck(m) && m.for === "init"
   );
 }
@@ -171,6 +166,10 @@ export async function resizeBrushSurface(
   );
 }
 
+/**
+ * Render a stroke into a layer canvas.
+ * Falls back to main-thread rendering if workers/offscreens aren’t available.
+ */
 export async function renderStrokeToLayer(
   handle: WorkerHandle,
   layerCanvas: HTMLCanvasElement | OffscreenCanvas,
@@ -180,36 +179,44 @@ export async function renderStrokeToLayer(
 ): Promise<void> {
   /* Fallback: main-thread engine */
   if (!handle.useWorker || !handle.worker) {
+    // opts.engine is already EngineConfig per your messages.ts
     const engineConfig: EngineConfig = isEngineConfigLike(opts.engine)
       ? opts.engine
-      : {};
+      : (() => {
+          throw new Error("Invalid engine config");
+        })();
+
     const overrides: Partial<RenderOverrides> | undefined = isOverridesLike(
       opts.overrides
     )
       ? opts.overrides
       : undefined;
 
-    const ropts: RenderOptions = {
+    // Build RenderOptions without assigning `undefined` to optional fields
+    const base: RenderOptions = {
       engine: engineConfig,
       baseSizePx: opts.baseSizePx,
       color: typeof opts.color === "string" ? opts.color : "#000000",
       width: opts.width,
       height: opts.height,
-      seed,
-      pixelRatio:
-        typeof opts.pixelRatio === "number" ? opts.pixelRatio : undefined,
+      // If your RenderOptions requires `seed` (not optional), provide a default:
+      // Replace `?? 0` with your preferred default if you want deterministic runs.
+      seed: seed ?? 0,
       path: toRenderPath(path),
-      overrides,
+      ...(typeof opts.pixelRatio === "number"
+        ? { pixelRatio: opts.pixelRatio }
+        : {}),
+      ...(overrides ? { overrides } : {}),
     };
 
     if (layerCanvas instanceof HTMLCanvasElement) {
-      await drawStrokeToCanvas(layerCanvas, ropts);
+      await drawStrokeToCanvas(layerCanvas, base);
     } else {
       // OffscreenCanvas on main thread: render into a temp HTMLCanvas and blit
       const temp = document.createElement("canvas");
       temp.width = layerCanvas.width;
       temp.height = layerCanvas.height;
-      await drawStrokeToCanvas(temp, ropts);
+      await drawStrokeToCanvas(temp, base);
       const bmp = await createImageBitmap(temp);
       const ctx = get2D(layerCanvas);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -220,13 +227,14 @@ export async function renderStrokeToLayer(
     return;
   }
 
-  /* Worker path */
+  /* Worker path: never include undefined fields (exactOptionalPropertyTypes) */
   const req: WorkerRequest = {
     kind: "renderStroke",
-    layerId: undefined,
+    // layerId intentionally omitted; add it if/when you support multiple layers:
+    // ...(layerId ? { layerId } : {}),
     opts,
     path,
-    seed,
+    ...(typeof seed === "number" ? { seed } : {}),
   };
   handle.worker.postMessage(req);
 

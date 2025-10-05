@@ -5,8 +5,11 @@ import { drawImpastoKnife } from "./variants/knife";
 import { drawImpastoGlaze } from "./variants/glaze";
 import { drawImpastoRake } from "./variants/rake";
 
-import type { Ctx2D, CanvasLike } from "@/lib/canvas/context";
-import { get2DContext } from "@/lib/canvas/context";
+import {
+  type Ctx2D,
+  type CanvasLike,
+  get2D,
+} from "@/lib/brush/backends/utils/canvas";
 
 export type ImpastoMode = "bristle" | "knife" | "glaze" | "rake";
 
@@ -15,13 +18,14 @@ function pickImpastoMode(opt: RenderOptions): ImpastoMode {
     | { mode?: unknown }
     | undefined;
   const mode = m?.mode;
-  if (mode === "knife" || mode === "glaze" || mode === "rake") return mode;
-  return "bristle";
+  return mode === "knife" || mode === "glaze" || mode === "rake"
+    ? mode
+    : "bristle";
 }
 
+/** Core entry: draw using the selected impasto variant. */
 export default function drawImpasto(ctx: Ctx2D, opt: RenderOptions): void {
-  const mode = pickImpastoMode(opt);
-  switch (mode) {
+  switch (pickImpastoMode(opt)) {
     case "knife":
       drawImpastoKnife(ctx, opt);
       break;
@@ -31,17 +35,15 @@ export default function drawImpasto(ctx: Ctx2D, opt: RenderOptions): void {
     case "rake":
       drawImpastoRake(ctx, opt);
       break;
+    case "bristle":
     default:
       drawImpastoBristle(ctx, opt);
       break;
   }
 }
 
-/** Convenience: accept a canvas and grab a 2D context for you. */
-export function drawImpastoToCanvas(
-  canvas: CanvasLike,
-  opt: RenderOptions
-): void {
-  const ctx = get2DContext(canvas);
+/** Convenience: accept a canvas and get a 2D context for you. */
+export function drawToCanvas(canvas: CanvasLike, opt: RenderOptions): void {
+  const ctx = get2D(canvas);
   drawImpasto(ctx, opt);
 }

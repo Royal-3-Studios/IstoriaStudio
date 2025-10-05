@@ -6,7 +6,7 @@ import {
   withCanvas,
   type CanvasLike,
   type Ctx2D,
-} from "../utils/canvasPool";
+} from "@backends/utils/canvasPool";
 // FILE: src/lib/konva/utils/useKonvaImage.ts
 export {
   useBitmapCanvas as useKonvaImage,

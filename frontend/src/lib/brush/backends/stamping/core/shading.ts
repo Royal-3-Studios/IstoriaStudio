@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/stamping/core/shading.ts
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 export type BandOpts = {
   lineWidth: number;

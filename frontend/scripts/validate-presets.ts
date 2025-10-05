@@ -7,7 +7,7 @@
  * - Basic shape (id, name, params[], engine.backend)
  * - Param bounds (spacing 1–30, angle 0–360, hardness/flow/opacity/smoothing 0–100)
  * - Backend-specific required params
- * - Common override bounds (tipRoundness 0–1, softness 0–1, angleDeg 0–360 when present)
+ * - Common override bounds (tipRoundness 0–1, softness 0–100, angleDeg 0–360 when present)
  */
 
 import type { BrushPreset } from "../src/data/brushPresets";
@@ -26,7 +26,12 @@ type CategoryShape = {
 };
 
 type FlatExport = { allBrushPresets: BrushPreset[] };
-type CategorizedExport = { categories: CategoryShape[] };
+
+// Two possible shapes for categorized exports:
+// 1) { categories: CategoryShape[] }
+// 2) { BRUSH_CATEGORIES: CategoryShape[] } (your generated module)
+type CategorizedExportStd = { categories: CategoryShape[] };
+type CategorizedExportGen = { BRUSH_CATEGORIES: CategoryShape[] };
 
 type PresetSource =
   | { type: "flat"; presets: BrushPreset[] }
@@ -43,13 +48,27 @@ function isFlatExport(mod: unknown): mod is FlatExport {
   );
 }
 
-function isCategorizedExport(mod: unknown): mod is CategorizedExport {
+function isCategorizedExportStd(mod: unknown): mod is CategorizedExportStd {
   if (!(typeof mod === "object" && mod !== null && "categories" in mod)) {
     return false;
   }
   const cats = (mod as Record<string, unknown>).categories;
   if (!Array.isArray(cats)) return false;
-  // minimal shape check for each category
+  return cats.every(
+    (c) =>
+      typeof c === "object" &&
+      c !== null &&
+      "brushes" in (c as Record<string, unknown>) &&
+      Array.isArray((c as Record<string, unknown>).brushes)
+  );
+}
+
+function isCategorizedExportGen(mod: unknown): mod is CategorizedExportGen {
+  if (!(typeof mod === "object" && mod !== null && "BRUSH_CATEGORIES" in mod)) {
+    return false;
+  }
+  const cats = (mod as Record<string, unknown>).BRUSH_CATEGORIES;
+  if (!Array.isArray(cats)) return false;
   return cats.every(
     (c) =>
       typeof c === "object" &&
@@ -65,22 +84,32 @@ async function loadPresets(): Promise<PresetSource> {
   // Prefer generated; fall back to hand-authored
   try {
     const mod = await import("../src/data/brushPresets.generated");
-    if (isFlatExport(mod))
+    if (isFlatExport(mod)) {
       return { type: "flat", presets: mod.allBrushPresets };
-    if (isCategorizedExport(mod))
+    }
+    if (isCategorizedExportStd(mod)) {
       return { type: "categorized", categories: mod.categories };
+    }
+    if (isCategorizedExportGen(mod)) {
+      return { type: "categorized", categories: mod.BRUSH_CATEGORIES };
+    }
   } catch {
     // ignore and try the next source
   }
 
   const mod2 = await import("../src/data/brushPresets");
-  if (isFlatExport(mod2))
+  if (isFlatExport(mod2)) {
     return { type: "flat", presets: mod2.allBrushPresets };
-  if (isCategorizedExport(mod2))
+  }
+  if (isCategorizedExportStd(mod2)) {
     return { type: "categorized", categories: mod2.categories };
+  }
+  if (isCategorizedExportGen(mod2)) {
+    return { type: "categorized", categories: mod2.BRUSH_CATEGORIES };
+  }
 
   throw new Error(
-    "Could not find presets. Export either `allBrushPresets` (flat) or `categories` from src/data/brushPresets.generated(.ts) or src/data/brushPresets(.ts)."
+    "Could not find presets. Export either `allBrushPresets` (flat), `categories`, or `BRUSH_CATEGORIES` from src/data/brushPresets.generated(.ts) or src/data/brushPresets(.ts)."
   );
 }
 
@@ -205,14 +234,17 @@ function validatePreset(p: BrushPreset, idx: number): string[] {
       );
     }
   }
+
+  // NOTE: In your engine types, `overrides.softness` is 0..100 (not 0..1).
   if (Object.prototype.hasOwnProperty.call(ov, "softness")) {
     const v = Number(ov["softness"]);
-    if (!Number.isFinite(v) || !inRange(v, 0, 1)) {
+    if (!Number.isFinite(v) || !inRange(v, 0, 100)) {
       errs.push(
-        `overrides.softness ${String(ov["softness"])} out of range (0–1)`
+        `overrides.softness ${String(ov["softness"])} out of range (0–100)`
       );
     }
   }
+
   if (Object.prototype.hasOwnProperty.call(ov, "angleDeg")) {
     const v = Number(ov["angleDeg"]);
     if (!Number.isFinite(v) || !inRange(v, 0, 360)) {

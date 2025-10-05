@@ -1,6 +1,6 @@
 // src/lib/brush/core/types.ts
-// Shared, engine-agnostic types. No imports from engine here.
 
+// Backend & rendering unions stay as-is — but freeze them for better literals.
 export type BrushBackend =
   | "ribbon"
   | "stamping"
@@ -14,6 +14,7 @@ export type BrushBackend =
 
 export type RenderingMode = "blended" | "glazed" | "marker" | "spray" | "wet";
 
+// Keep BlendMode — make it line up with Canvas 2D ops you use elsewhere.
 export type BlendMode =
   | "normal"
   | "multiply"
@@ -44,7 +45,7 @@ export type BlendMode =
   | "behind"
   | "clear";
 
-// Advanced modulation (keep here so backends/utils can use them without engine).
+// Modulation plumbing (unchanged unions)
 export type ModInput =
   | "pressure"
   | "speed"
@@ -73,17 +74,24 @@ export type ModTarget =
   | "uniformity";
 
 export type CurvePoint = { x: number; y: number }; // 0..1 -> 0..1
+
+/**
+ * With exactOptionalPropertyTypes enabled, optional fields are "absent" rather than undefined.
+ * Keep them optional here, but ALWAYS read them via helpers that supply defaults (see below).
+ */
 export type ModRoute = {
   input: ModInput;
   target: ModTarget;
   amount?: number; // -1..+1 after curve
   mode?: "add" | "mul" | "replace";
-  curve?: CurvePoint[]; // optional LUT
+  curve?: ReadonlyArray<CurvePoint>;
   min?: number;
   max?: number;
 };
-export type EngineModulations = { routes: ModRoute[] };
 
+export type EngineModulations = { routes: ReadonlyArray<ModRoute> };
+
+// Grain/taper unions unchanged
 export type GrainMotion = "paperLocked" | "tipLocked" | "smudgeLocked";
 export type TaperProfile =
   | "linear"
@@ -93,10 +101,10 @@ export type TaperProfile =
   | "expo"
   | "custom";
 
-// Lightweight pixel container many utils use.
-export type RGBA = { r: number; g: number; b: number; a: number }; // 0..1 linear or sRGB (see docs)
+/** Lightweight pixel container — keep as typed array to avoid number|undefined on indexing. */
+export type RGBA = { r: number; g: number; b: number; a: number }; // 0..1
 export type PixelBuf = {
-  data: Uint8ClampedArray;
-  width: number;
-  height: number;
+  readonly data: Uint8ClampedArray;
+  readonly width: number;
+  readonly height: number;
 };

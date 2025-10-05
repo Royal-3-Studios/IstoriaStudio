@@ -1,5 +1,5 @@
 // src/lib/brush/backends/spray/core/dots.ts
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 /** standard gaussian radius jitter (Box–Muller) */
 export function gaussianRadius(baseR: number, rnd: () => number): number {

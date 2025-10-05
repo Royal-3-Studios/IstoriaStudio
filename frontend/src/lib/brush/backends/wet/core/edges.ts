@@ -1,5 +1,5 @@
-import type { Ctx2D } from "../utils/canvas";
-import { createLayer } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { createLayer } from "@backends/utils/canvas";
 import type { PaperModel } from "./paper";
 
 /** Darken edges using blurred-minus-core trick, blended back in multiply. */

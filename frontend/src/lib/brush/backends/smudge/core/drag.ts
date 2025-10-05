@@ -1,5 +1,5 @@
-import type { Ctx2D, CanvasLike } from "../utils/canvas";
-import { createLayer, get2D } from "../utils/canvas";
+import type { Ctx2D, CanvasLike } from "@backends/utils/canvas";
+import { createLayer, get2D } from "@backends/utils/canvas";
 import { falloffGaussian, falloffCosine } from "./kernel";
 
 /**

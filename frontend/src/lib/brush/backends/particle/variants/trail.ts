@@ -1,5 +1,5 @@
 import type { RenderOptions } from "@/lib/brush/engine";
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 import { emitAlongPath, ageToAlpha, type Particle } from "../core/emitters";
 import { eulerStep } from "../core/integrators";
 import { applyFields } from "../core/fields";

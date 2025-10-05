@@ -1,4 +1,4 @@
-import type { Ctx2D } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 export function drawDisc(
   ctx: Ctx2D,

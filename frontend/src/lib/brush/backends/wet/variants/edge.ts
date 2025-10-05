@@ -1,6 +1,6 @@
 import type { RenderOptions, WetOverrides } from "@/lib/brush/engine.types";
-import type { Ctx2D } from "../utils/canvas";
-import { createLayer } from "../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
+import { createLayer } from "@backends/utils/canvas";
 import { resample, resolveSpacingFraction } from "../utils/sampling";
 import { diffusePass } from "../core/fluid";
 import { applyEdgeDarkening } from "../core/edges";

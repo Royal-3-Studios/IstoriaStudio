@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/ribbon/core/outline.ts
-import type { Ctx2D } from "../../utils/canvas";
+import type { Ctx2D } from "@backends/utils/canvas";
 
 /** Minimal sample type the outline builder expects. */
 export type RibbonSample = {
