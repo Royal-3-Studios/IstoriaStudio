@@ -11,48 +11,65 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
+import { BACKEND } from "@/lib/config";
+import { useState } from "react";
 
 export function LoginMenu() {
   const user = useAuthStore((s) => s.user);
-  const loading = useAuthStore((s) => s.loading);
+  const setUser = useAuthStore((s) => s.setUser);
+  const setLoading = useAuthStore((s) => s.setLoading);
   const router = useRouter();
-  const { theme } = useTheme();
+  const { theme, setTheme } = useTheme();
+  const [open, setOpen] = useState(false);
 
   const login = () => {
-    const themeSuffix = theme === "dark" ? "dark" : "light";
-    const loginUrl = new URL(`http://localhost:8000/api/auth/login`);
-    loginUrl.searchParams.append("theme", `${themeSuffix}`);
-
-    window.location.href = loginUrl.toString();
+    const returnTo = typeof window !== "undefined" ? window.location.href : "/";
+    window.location.href = `${BACKEND}/api/auth/login?return_to=${encodeURIComponent(returnTo)}`;
   };
 
   const logout = async () => {
-    const res = await fetch("http://localhost:8000/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+    // Optimistic UI: clear user immediately
+    setLoading(true);
+    setUser(null);
+    setOpen(false); // close dropdown so the menu re-renders cleanly
 
-    const { redirectUrl } = await res.json();
-    window.location.href = redirectUrl;
+    try {
+      await fetch(`${BACKEND}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore network issues; user already cleared
+    } finally {
+      setLoading(false);
+      // If you have any Server Components that depend on auth,
+      // this helps re-render them; harmless otherwise.
+      router.refresh();
+    }
   };
 
-  if (loading) return null;
-
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="rounded-full">
-          <CircleUser
-            className="h-[1.2rem] w-[1.2rem] animated-icon"
-            strokeWidth={2.5}
-          />
-          <span className="sr-only">User menu</span>
+        <Button variant="ghost" size="icon" className="rounded-full">
+          <CircleUser className="h-6 w-6" />
+          <span className="sr-only">Open user menu</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          Toggle theme
+        </DropdownMenuItem>
         {user ? (
           <>
-            <DropdownMenuItem onClick={() => router.push("/settings")}>
+            <DropdownMenuItem
+              onClick={() => {
+                setOpen(false);
+                router.push("/settings");
+              }}
+            >
               Settings
             </DropdownMenuItem>
             <DropdownMenuItem onClick={logout}>Logout</DropdownMenuItem>

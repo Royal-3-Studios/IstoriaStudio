@@ -4,7 +4,8 @@
 // - Hex parsing (#RGB/#RGBA/#RRGGBB/#RRGGBBAA)
 // - sRGB ↔ linear conversions, luminance
 // - Legacy stamping API: rgbaFromHex(hex?: string, alpha=1) -> css rgba(...)
-// - Color jitter in HSLA space with RNG, supports legacy/new jitter shapes
+// - Color jitter in HSLA space with RNG (uniform/gaussian), legacy/new shapes
+// - Extra: premultiply/unpremultiply helpers
 
 import type { RGBA } from "@/lib/brush/core/types";
 import { clamp01, lerp } from "@backends/utils/math";
@@ -25,7 +26,9 @@ function toByte01(x: number): number {
 }
 
 export function toCss(c: RGBA): string {
-  return `rgba(${toByte01(c.r)},${toByte01(c.g)},${toByte01(c.b)},${clamp01(c.a)})`;
+  return `rgba(${toByte01(c.r)},${toByte01(c.g)},${toByte01(c.b)},${clamp01(
+    c.a
+  )})`;
 }
 
 export function clampColor(c: RGBA): RGBA {
@@ -171,7 +174,7 @@ export function luminance(c: RGBA): number {
 
 /* =========================== HSL ↔ RGB helpers =========================== */
 
-function rgb01_to_hsl({ r, g, b, a }: RGBA): {
+export function rgb01_to_hsl({ r, g, b, a }: RGBA): {
   h: number;
   s: number;
   l: number;
@@ -210,7 +213,7 @@ function hue2rgb(p: number, q: number, t: number): number {
   return p;
 }
 
-function hsl_to_rgb01(h: number, s: number, l: number, a: number): RGBA {
+export function hsl_to_rgb01(h: number, s: number, l: number, a: number): RGBA {
   const hh = ((h % 360) + 360) % 360; // normalize hue to [0,360)
   const H = hh / 360;
   if (s === 0) {
@@ -318,6 +321,19 @@ export function jitterColorHSLA(
 
   const out = hsl_to_rgb01(h, s, l, a);
   return toCss(out);
+}
+
+/* ============================ Premultiply helpers ============================ */
+
+export function premultiply(c: RGBA): RGBA {
+  const a = clamp01(c.a);
+  return { r: c.r * a, g: c.g * a, b: c.b * a, a };
+}
+
+export function unpremultiply(c: RGBA): RGBA {
+  const a = clamp01(c.a);
+  if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
+  return { r: c.r / a, g: c.g / a, b: c.b / a, a };
 }
 
 /* ========================== Input coercion ========================== */

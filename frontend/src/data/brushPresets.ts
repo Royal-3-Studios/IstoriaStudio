@@ -1,10 +1,9 @@
 // FILE: src/data/brushPresets.ts
 // Types-only shim. The actual data now lives in brushPresets.generated.ts.
 
-import type { EngineConfig } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine.types";
 
 /* ================= UI Param Types ================= */
-
 export type BrushParamType =
   | "size"
   | "hardness"
@@ -25,8 +24,16 @@ export type BrushParam = {
   max?: number;
   step?: number;
   defaultValue: number;
-  /** Hide from UI without removing from schema. */
   show?: boolean;
+};
+
+/* =============== Small “nice-to-have” meta hints =============== */
+/** Optional UI/runtime hints for certain categories (Luminance / Touch-ups). */
+export type BrushPresetMeta = {
+  /** Luminance: hint UI to treat as “emissive” (glow badges, dark preview bg, etc.). */
+  emissive?: boolean;
+  /** Touch-ups/Vintage: default blend you want the preview/UI to favor. */
+  defaultBlendMode?: GlobalCompositeOperation;
 };
 
 /* ================= Catalog Types ================= */
@@ -40,11 +47,12 @@ export type BrushPreset = {
   /** Optional discovery/organization tags (e.g., "textured", "thin", "pencil"). */
   tags?: string[];
   /**
-   * Optional input pipeline metadata. If present, your pointer/pen samples can be
-   * routed through a filter (pressure curve, smoothing, mouse synth, etc.)
-   * before reaching the brush engine.
+   * Optional input pipeline metadata…
    */
   input?: BrushInputConfig;
+
+  /** Optional category-specific hints (nice-to-have). */
+  meta?: BrushPresetMeta;
 };
 
 export type BrushCategory = {
@@ -53,12 +61,9 @@ export type BrushCategory = {
   brushes: BrushPreset[];
 };
 
-/** Handy id alias for components/selectors. */
 export type BrushId = BrushPreset["id"];
 
-/* ================= Input Pipeline Types =================
-   These are intentionally lightweight and UI-focused. Your engine/runtime can
-   accept the same shapes or a superset without coupling the types here. */
+/* ================= Input Pipeline Types (unchanged) ================= */
 
 export type PressureCurve =
   | { type: "gamma"; gamma: number }
@@ -75,54 +80,28 @@ export type PressureSynth =
   | { enabled: false }
   | {
       enabled: true;
-      /** range of pointer speed in px/s to map into pressure */
       speedRange: [number, number];
-      /** clamp range of synthesized pressure */
-      minPressure: number; // 0..1
-      maxPressure: number; // 0..1
+      minPressure: number;
+      maxPressure: number;
       curve: "linear" | "easeIn" | "easeOut" | "easeInOut";
     };
 
-/**
- * UI-facing input config, extended to include optional `gain` and `deadZone`
- * so adapters (e.g., to PressureMapOpts) can build a complete mapping without casts.
- */
 export type BrushInputConfig = {
-  /** clamp & shape the incoming pressure signal */
   pressure: {
     clamp: { min: number; max: number };
     curve: PressureCurve;
     smoothing: PressureSmoothing;
-    /** optional velocity→pressure compensation; higher speeds reduce pressure */
     velocityComp?: { k: number; refSpeed: number };
-    /** optional pressure synthesis for devices without pressure */
     synth?: PressureSynth;
-
-    /**
-     * Optional post-map multiplier (default 1).
-     * Useful to globally strengthen/soften pressure after curve/clamp.
-     */
     gain?: number;
-
-    /**
-     * Optional small dead-zone near 0 in [0..0.5] (default 0).
-     * Convenience in addition to clamp.min; many engines support this directly.
-     */
     deadZone?: number;
   };
-  /** event → stroke sampling quality hints */
   quality?: {
-    /** look-ahead / prediction distance in px (default 0) */
     predictPx?: number;
-    /** factor to increase spacing as speed increases (0..~0.5 typical; default 0) */
     speedToSpacing?: number;
-    /** minimum resampling step in px (default ~0.5–1) */
     minStepPx?: number;
   };
 };
 
-/* ================= Re-exports =================
-   The generated file should export BRUSH_CATEGORIES and BRUSH_BY_ID.
-   Keep all data in the generated module; this file only defines the types. */
-
+/* ================= Re-exports ================= */
 export * from "./brushPresets.generated";

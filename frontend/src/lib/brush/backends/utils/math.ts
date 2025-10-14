@@ -1,6 +1,8 @@
 // FILE: src/lib/brush/backends/utils/math.ts
 // Strict-safe scalar math helpers (no `any`). Superset of your previous helpers.
 
+export const EPS = 1e-12;
+
 /** Clamp v to [min,max] */
 export function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -9,6 +11,9 @@ export function clamp(v: number, min: number, max: number): number {
 export function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
+/** Alias commonly used in shaders/graphics code */
+export const saturate = clamp01;
+
 /** Linear interpolation */
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -71,11 +76,7 @@ export function hypot2(x: number, y: number): number {
   return Math.hypot(x, y);
 }
 /** Nearly-equal within epsilon */
-export function nearlyEqual(
-  a: number,
-  b: number,
-  eps = 1e-6
-): number | boolean {
+export function nearlyEqual(a: number, b: number, eps = 1e-6): boolean {
   return Math.abs(a - b) <= eps;
 }
 
@@ -96,23 +97,31 @@ export function lerpAngleDeg(a: number, b: number, t: number): number {
 /** Bias curve (k in (0,1) skews toward 0; k>1 toward 1) */
 export function bias(t: number, k: number): number {
   if (k === 0.5) return t;
-  const p = Math.log(k) / Math.log(0.5);
-  return Math.pow(t, p);
+  const kk = k <= 0 ? EPS : k; // avoid log(0)
+  const p = Math.log(kk) / Math.log(0.5);
+  return Math.pow(clamp01(t), p);
 }
 /** Gain curve via mirrored bias */
 export function gain(t: number, g: number): number {
-  return t < 0.5 ? 0.5 * bias(t * 2, g) : 1 - 0.5 * bias((1 - t) * 2, g);
+  const x = clamp01(t);
+  return x < 0.5 ? 0.5 * bias(x * 2, g) : 1 - 0.5 * bias((1 - x) * 2, g);
+}
+
+/** Safe divide (returns 0 if denom≈0) */
+export function safeDiv(n: number, d: number, fallback = 0): number {
+  return Math.abs(d) <= EPS ? fallback : n / d;
 }
 
 /** Radial falloffs (distance d, radius r) -> [0,1] */
 export function falloffLinear(d: number, r: number): number {
-  return clamp01(1 - d / Math.max(1e-12, r));
+  return clamp01(1 - d / Math.max(EPS, r));
 }
 export function falloffSmooth(d: number, r: number): number {
+  // 1 at center (d=0), 0 at edge (d>=r)
   return smoothstep(r, 0, d);
 }
 export function falloffGaussian(d: number, sigma: number): number {
-  const s2 = Math.max(1e-12, sigma * sigma);
+  const s2 = Math.max(EPS, sigma * sigma);
   return Math.exp(-(d * d) / (2 * s2));
 }
 

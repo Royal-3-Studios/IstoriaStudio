@@ -1,10 +1,10 @@
 // FILE: src/lib/brush/backends/utils/canvas.ts
 // Canonical canvas helpers (single source of truth)
 // - Strict TypeScript (no `any`), null-safe, worker-safe.
-// - Superset of your old file: DPR helpers, PixelBuf I/O, blend re-exports,
-//   premultiply/unpremultiply, withLayer, blit, and DPR-aware createLayer2D.
+// - DPR helpers, PixelBuf I/O, blend re-exports,
+//   premultiply/unpremultiply, withLayer/blit, and DPR-aware createLayer2D.
 
-import type { BlendMode, PixelBuf } from "@/lib/brush/core/types";
+import type { PixelBuf } from "@/lib/brush/core/types";
 import {
   toCompositeOp,
   isCompositeSupported,
@@ -100,7 +100,6 @@ export function ensureCanvas2D(
   } else if (isHtmlCanvas(canvas)) {
     if (canvas.width !== deviceW) canvas.width = deviceW;
     if (canvas.height !== deviceH) canvas.height = deviceH;
-    // only set if different to avoid layout churn
     if (canvas.style.width !== `${cssWidth}px`)
       canvas.style.width = `${cssWidth}px`;
     if (canvas.style.height !== `${cssHeight}px`)
@@ -147,6 +146,40 @@ export function clearCanvas(
   cssHeight: number
 ): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
+}
+
+/* ============================== Offscreen draw helper ====================== */
+
+/**
+ * Draw into a same-size offscreen buffer in CSS coordinates, then blit to `target`.
+ * Use this when a backend wants a scratch layer but you need consistent DPR handling.
+ *
+ * @param target - destination canvas (DOM or Offscreen)
+ * @param cssW   - CSS width you intend to draw in
+ * @param cssH   - CSS height you intend to draw in
+ * @param dpr    - device pixel ratio to scale the offscreen by
+ * @param draw   - callback that receives the offscreen ctx & canvas (CSS space)
+ */
+export function drawIntoOffscreen<T>(
+  target: CanvasLike,
+  cssW: number,
+  cssH: number,
+  dpr: number,
+  draw: (ctx: Ctx2D, layer: CanvasLike) => T
+): T {
+  const layer = createLayer(
+    Math.max(1, Math.floor(cssW * dpr)),
+    Math.max(1, Math.floor(cssH * dpr))
+  );
+  const lctx = get2D(layer);
+  // Work in CSS space on the offscreen
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const result = draw(lctx, layer);
+
+  // Blit back to target using CSS coordinates
+  const dctx = get2D(target);
+  dctx.drawImage(layer as unknown as CanvasImageSource, 0, 0, cssW, cssH);
+  return result;
 }
 
 /* ============================== PixelBuf I/O =============================== */
@@ -214,13 +247,10 @@ export function writePixels(
 
 /* ============================== Composite / Blend ========================== */
 
-/**
- * Permanently set composite (blend) mode on the context with graceful fallback to "source-over".
- * If you prefer scoped state, use the exported push/with helpers from blending.ts.
- */
+/** Permanently set composite mode on the context with graceful fallback. */
 export function setCompositeMode(
   ctx: Ctx2D,
-  mode: BlendMode | GlobalCompositeOperation
+  mode: GlobalCompositeOperation
 ): void {
   const desired = toCompositeOp(mode);
   try {
@@ -231,7 +261,7 @@ export function setCompositeMode(
   }
 }
 
-/* Re-export optional helpers so backends can import from one place if they like. */
+/* Re-export scoped helpers so backends can import from one place. */
 export {
   toCompositeOp,
   isCompositeSupported,
@@ -259,9 +289,7 @@ export function createLayer(width: number, height: number): CanvasLike {
   return c;
 }
 
-/**
- * Create a DPR-aware layer with ctx scaled to CSS px.
- */
+/** Create a DPR-aware layer with ctx scaled to CSS px. */
 export function createLayer2D(
   cssW: number,
   cssH: number,
@@ -287,7 +315,7 @@ export function withLayer<T>(
   const layer = createLayer(width, height);
   const ctx = layer.getContext("2d");
   if (!isCanvas2DContext(ctx)) throw new Error("2D context unavailable");
-  const result = draw(ctx, layer);
+  const result = draw(ctx as Ctx2D, layer);
   return { layer, result };
 }
 
@@ -295,7 +323,6 @@ export function withLayer<T>(
 
 /** Treat CanvasLike as a CanvasImageSource without loosening types to `any`. */
 function asCanvasImageSource(src: CanvasLike): CanvasImageSource {
-  // Both HTMLCanvasElement and OffscreenCanvas are valid CanvasImageSource in lib.dom.
   return src as unknown as CanvasImageSource;
 }
 
@@ -318,7 +345,6 @@ export function blit(
 }
 
 /* ============================== Premultiply helpers ======================= */
-// Replace your existing in-place functions with these:
 
 function assertRgbaStride(buf: PixelBuf): void {
   if (buf.data.length !== buf.width * buf.height * 4) {
@@ -328,34 +354,29 @@ function assertRgbaStride(buf: PixelBuf): void {
   }
 }
 
-/** Premultiply RGB by A (in place). Uses DataView to avoid indexer typing issues. */
+/** Premultiply RGB by A (in place). */
 export function premultiplyInPlace(buf: PixelBuf): void {
   assertRgbaStride(buf);
-  const data = buf.data; // Uint8ClampedArray (or anything with same buffer)
+  const data = buf.data;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const n = data.byteLength; // multiple of 4 by assert
+  const n = data.byteLength;
 
   for (let i = 0; i < n; i += 4) {
-    const a = view.getUint8(i + 3); // 0..255
+    const a = view.getUint8(i + 3);
     if (a === 0) {
-      // rgb := 0
       view.setUint8(i, 0);
       view.setUint8(i + 1, 0);
       view.setUint8(i + 2, 0);
     } else if (a !== 255) {
       const f = a / 255;
-      const r = Math.round(view.getUint8(i) * f);
-      const g = Math.round(view.getUint8(i + 1) * f);
-      const b = Math.round(view.getUint8(i + 2) * f);
-      view.setUint8(i, r);
-      view.setUint8(i + 1, g);
-      view.setUint8(i + 2, b);
+      view.setUint8(i, Math.round(view.getUint8(i) * f));
+      view.setUint8(i + 1, Math.round(view.getUint8(i + 1) * f));
+      view.setUint8(i + 2, Math.round(view.getUint8(i + 2) * f));
     }
-    // a==255: rgb unchanged
   }
 }
 
-/** Un-premultiply RGB by A (in place). Uses DataView to avoid indexer typing issues. */
+/** Un-premultiply RGB by A (in place). */
 export function unpremultiplyInPlace(buf: PixelBuf): void {
   assertRgbaStride(buf);
   const data = buf.data;
@@ -363,19 +384,16 @@ export function unpremultiplyInPlace(buf: PixelBuf): void {
   const n = data.byteLength;
 
   for (let i = 0; i < n; i += 4) {
-    const a = view.getUint8(i + 3); // 0..255
+    const a = view.getUint8(i + 3);
     if (a === 0) {
       view.setUint8(i, 0);
       view.setUint8(i + 1, 0);
       view.setUint8(i + 2, 0);
     } else if (a !== 255) {
       const inv = 255 / a;
-      const r = Math.round(view.getUint8(i) * inv);
-      const g = Math.round(view.getUint8(i + 1) * inv);
-      const b = Math.round(view.getUint8(i + 2) * inv);
-      view.setUint8(i, r);
-      view.setUint8(i + 1, g);
-      view.setUint8(i + 2, b);
+      view.setUint8(i, Math.round(view.getUint8(i) * inv));
+      view.setUint8(i + 1, Math.round(view.getUint8(i + 1) * inv));
+      view.setUint8(i + 2, Math.round(view.getUint8(i + 2) * inv));
     }
   }
 }

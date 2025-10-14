@@ -1,0 +1,36 @@
+{
+  "id": "luminance/glow-marker",
+  "name": "Glow Marker",
+  "category": "Luminance",
+
+  "backend": "ribbon",
+  "variant": "ink",
+
+  "baseSizePx": 20,
+  "color": "#FFFFFF",
+
+  "engine": {
+    "rendering": {
+      "blendMode": "add"
+    },
+
+    "strokePath": {
+      "spacing": 4,
+      "jitter": 0.1,
+      "scatter": 0,
+      "count": 1,
+      "streamline": 0.25
+    },
+
+    "overrides": {
+      "flow": 40,
+      "opacity": 100,
+
+      "tiltToSize": 0.15
+    },
+
+    "grain": {
+      "kind": "none"
+    }
+  }
+}

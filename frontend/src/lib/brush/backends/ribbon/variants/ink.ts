@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/ribbon/variants/ink.ts
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
 import {
@@ -10,11 +10,21 @@ import {
 type Sample = { x: number; y: number; t: number; p: number };
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const isNum = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
 
-/** Build a ribbon Path2D from resampled points + radius function. */
+/** Rotate a 2D vector (x,y) by angle radians. */
+function rot2(x: number, y: number, angle: number): { x: number; y: number } {
+  const c = Math.cos(angle),
+    s = Math.sin(angle);
+  return { x: x * c - y * s, y: x * s + y * c };
+}
+
+/** Build a ribbon Path2D from resampled points + radius function + optional normal rot. */
 function buildRibbonOutline(
   samples: ReadonlyArray<Sample>,
-  radiusAt: (u: number) => number
+  radiusAt: (u: number) => number,
+  normalRotateRad: (i: number) => number
 ): Path2D {
   const n = samples.length;
   const left: Array<{ x: number; y: number }> = [];
@@ -26,8 +36,18 @@ function buildRibbonOutline(
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const L = Math.hypot(dx, dy) || 1;
-    const nx = -dy / L;
-    const ny = dx / L;
+
+    // base normal
+    let nx = -dy / L;
+    let ny = dx / L;
+
+    // subtle rotation of the silhouette normal (tilt-driven)
+    const theta = normalRotateRad(i);
+    if (theta !== 0) {
+      const r = rot2(nx, ny, theta);
+      nx = r.x;
+      ny = r.y;
+    }
 
     const r = Math.max(0, radiusAt(samples[i]!.t));
     left.push({ x: samples[i]!.x - nx * r, y: samples[i]!.y - ny * r });
@@ -42,7 +62,7 @@ function buildRibbonOutline(
   return path;
 }
 
-/** Ink variant: solid, pressure-shaped ribbon with soft taper handling. */
+/** Ink variant: solid, pressure-shaped ribbon with tilt→size & subtle rotation. */
 export function drawRibbonInk(ctx: Ctx2D, opt: RenderOptions): void {
   const path = opt.path ?? [];
   if (path.length < 2) return;
@@ -69,20 +89,31 @@ export function drawRibbonInk(ctx: Ctx2D, opt: RenderOptions): void {
   const samples = resamplePath(path, stepPx);
   if (samples.length < 2) return;
 
-  // Taper knobs (defaults match a fairly “ink-like” ribbon)
-  const tipScaleStart =
-    typeof ov.tipScaleStart === "number" ? ov.tipScaleStart : 0.85;
-  const tipScaleEnd =
-    typeof ov.tipScaleEnd === "number" ? ov.tipScaleEnd : 0.85;
-  const tipMinPx =
-    typeof ov.tipMinPx === "number" ? Math.max(0, ov.tipMinPx) : 0;
-  const endBias = typeof ov.endBias === "number" ? ov.endBias : 0;
-  const uniformity = typeof ov.uniformity === "number" ? ov.uniformity : 0;
+  // --- Tilt routing ---------------------------------------------------------
+  const tiltToSize = ov.tiltToSize ?? 0; // 0..1
+  const tiltToFan = ov.tiltToFan ?? 0; // reused as a subtle rotation strength
 
-  // Radius profile from pressure + simple tapering:
-  // - base thickness grows with pressure (p^0.85)
-  // - start/end taper scales modulate width near tips
-  // - optional min tip width clamp
+  // Average tilt across original points (cheap & stable)
+  const tiltVals: number[] = [];
+  for (let i = 0; i < path.length; i++) {
+    const t = (path[i] as { tilt?: number }).tilt;
+    if (isNum(t)) tiltVals.push(clamp01(t));
+  }
+  const avgTilt01 = tiltVals.length
+    ? tiltVals.reduce((a, b) => a + b, 0) / tiltVals.length
+    : 0;
+
+  // Subtle rotation cap (radians). ~12° feels nice without wobble.
+  const ROT_MAX = Math.PI / 15;
+
+  // Taper knobs
+  const tipScaleStart = isNum(ov.tipScaleStart) ? ov.tipScaleStart : 0.85;
+  const tipScaleEnd = isNum(ov.tipScaleEnd) ? ov.tipScaleEnd : 0.85;
+  const tipMinPx = isNum(ov.tipMinPx) ? Math.max(0, ov.tipMinPx) : 0;
+  const endBias = isNum(ov.endBias) ? ov.endBias : 0;
+  const uniformity = isNum(ov.uniformity) ? ov.uniformity : 0;
+
+  // Radius profile from pressure + taper + tilt→size
   const radiusAt = (u: number): number => {
     const idx = Math.max(
       0,
@@ -93,11 +124,11 @@ export function drawRibbonInk(ctx: Ctx2D, opt: RenderOptions): void {
 
     // Base width from pressure (ink slightly fuller than pencil)
     const base = baseRadius * (0.72 + 0.62 * Math.pow(p, 0.85));
-    let scale = 1.0;
 
-    // Start taper (u -> 1 at start), End taper (u -> 1 at end)
-    const sCurve = 1 - u; // linear ease-in toward the middle
-    const eCurve = u; // linear ease-in toward the middle
+    // Start/end taper
+    const sCurve = 1 - u; // toward start
+    const eCurve = u; // toward end
+    let scale = 1.0;
     scale *= 1 + (tipScaleStart - 1) * sCurve;
     scale *= 1 + (tipScaleEnd - 1) * eCurve;
 
@@ -107,18 +138,25 @@ export function drawRibbonInk(ctx: Ctx2D, opt: RenderOptions): void {
       scale *= 1 + 0.25 * Math.abs(endBias) * bias;
     }
 
-    // Uniformity pushes toward a flat marker look
+    // Uniformity pushes toward flat marker look
     if (uniformity > 0) {
       scale = (1 - uniformity) * scale + uniformity * 1.0;
     }
 
-    const widthPx = Math.max(0, base * scale * 2);
+    // --- Tilt → size --------------------------------------------------------
+    const tiltSizeMul = 1 + clamp01(tiltToSize) * avgTilt01;
+
+    const widthPx = Math.max(0, base * scale * 2 * tiltSizeMul);
     const r = Math.max(tipMinPx * 0.5, widthPx * 0.5);
     return r;
   };
 
-  // Build polygonal ribbon outline from samples + radius profile
-  const outline = buildRibbonOutline(samples, radiusAt);
+  // Per-sample normal rotation function (constant subtle bias here).
+  const normalRotateRad = (_i: number): number =>
+    ROT_MAX * clamp01(tiltToFan) * avgTilt01;
+
+  // Build polygonal outline
+  const outline = buildRibbonOutline(samples, radiusAt, normalRotateRad);
 
   // Draw into a temp layer to apply flow, then composite with opacity
   const layer = createLayer(viewW, viewH);

@@ -8,6 +8,9 @@ import { drawWetEdge } from "./variants/edge";
 import { drawWetBloom } from "./variants/bloom";
 import { drawWetLift } from "./variants/lift";
 
+// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend:
+import { getTiltOverrides } from "@backends/stamping/utils/scalars";
+
 export type WetMode = "wash" | "glaze" | "edge" | "bloom" | "lift";
 
 function isWetMode(x: unknown): x is WetMode {
@@ -20,7 +23,7 @@ function isWetMode(x: unknown): x is WetMode {
   );
 }
 
-function pickWetMode(opt: RenderOptions): WetMode {
+export function pickWetMode(opt: RenderOptions): WetMode {
   const m = (opt.engine.backendOverrides?.wet as { mode?: unknown } | undefined)
     ?.mode;
   return isWetMode(m) ? m : "wash";
@@ -28,22 +31,37 @@ function pickWetMode(opt: RenderOptions): WetMode {
 
 /** Core entry: draw using the selected wet variant. */
 export default function draw(ctx: Ctx2D, opt: RenderOptions): void {
-  switch (pickWetMode(opt)) {
+  // --- Normalize tilt knobs ONCE here, then pass to all variants -------------
+  const tilt = getTiltOverrides(opt.engine.overrides);
+
+  // Merge into engine.overrides so variants can read `ov.tiltToFan`, etc.
+  const optWithTilt: RenderOptions = {
+    ...opt,
+    engine: {
+      ...opt.engine,
+      overrides: {
+        ...(opt.engine.overrides ?? {}),
+        ...tilt,
+      },
+    },
+  };
+
+  switch (pickWetMode(optWithTilt)) {
     case "glaze":
-      drawWetGlaze(ctx, opt);
+      drawWetGlaze(ctx, optWithTilt);
       break;
     case "edge":
-      drawWetEdge(ctx, opt);
+      drawWetEdge(ctx, optWithTilt);
       break;
     case "bloom":
-      drawWetBloom(ctx, opt);
+      drawWetBloom(ctx, optWithTilt);
       break;
     case "lift":
-      drawWetLift(ctx, opt);
+      drawWetLift(ctx, optWithTilt);
       break;
     case "wash":
     default:
-      drawWetWash(ctx, opt);
+      drawWetWash(ctx, optWithTilt);
       break;
   }
 }

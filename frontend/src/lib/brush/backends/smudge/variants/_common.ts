@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/utils/spray-helpers.ts
-import type { RenderOptions } from "@/lib/brush/engine";
+import type { RenderOptions } from "@/lib/brush/engine.types";
 import type {
   InputQualityOpts,
   StrokePlacementOptions,
@@ -39,21 +39,25 @@ export function makeStamps(
     const v =
       spacingOverridePct ??
       opt.engine.strokePath?.spacing ??
-      opt.engine.overrides?.spacing ??
+      (opt.engine.overrides?.spacing as number | undefined) ??
       6;
     return typeof v === "number" ? v : 6;
   })();
 
   const jitterPercent = ((): number => {
     const v =
-      opt.engine.strokePath?.jitter ?? opt.engine.overrides?.jitter ?? 0.5;
+      opt.engine.strokePath?.jitter ??
+      (opt.engine.overrides?.jitter as number | undefined) ??
+      0.5;
     // pathToStamps expects % (0..100)
     return (typeof v === "number" ? v : 0.5) * 100;
   })();
 
   const scatterPx = ((): number => {
     const v =
-      opt.engine.strokePath?.scatter ?? opt.engine.overrides?.scatter ?? 0;
+      opt.engine.strokePath?.scatter ??
+      (opt.engine.overrides?.scatter as number | undefined) ??
+      0;
     return typeof v === "number" ? v : 0;
   })();
 
@@ -62,7 +66,7 @@ export function makeStamps(
     | PressureMapOpts
     | undefined => {
     const input = opt.input;
-    if (!input) return undefined;
+    if (!input || !input.pressure) return undefined;
 
     const gamma =
       input.pressure.curve?.type === "gamma"

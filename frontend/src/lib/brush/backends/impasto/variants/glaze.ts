@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/backends/impasto/variants/glaze.ts
 import type { RenderOptions, ImpastoOverrides } from "@/lib/brush/engine.types";
-import { Blend } from "@backends";
+import * as Blend from "@backends/utils/blending";
 import type { Ctx2D } from "@/lib/canvas/context";
 import { createLayer, get2DContext } from "@/lib/canvas/context";
 

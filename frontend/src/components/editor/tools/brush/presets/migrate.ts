@@ -5,7 +5,7 @@
 
 import type { AnyBrushPreset, BrushPresetV1 } from "./schema";
 import { PRESET_VERSION, isValidPreset } from "./schema";
-import type { EngineConfig } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine.types";
 
 /** Public migration entry point. */
 export function migratePreset(input: unknown): AnyBrushPreset {

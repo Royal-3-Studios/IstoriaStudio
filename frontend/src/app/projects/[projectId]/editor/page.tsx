@@ -1,9 +1,11 @@
 // src/app/projects/[projectId]/editor/page.tsx
-// server by default (no "use client" here)
-import ClientShell from "./ClientShell";
+import EditorScreen from "@/features/editor/EditorScreen";
 
-export const dynamic = "force-dynamic";
-
-export default function Page({ params }: { params: { projectId: string } }) {
-  return <ClientShell projectId={params.projectId} />;
+export default async function ProjectEditorPage({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}) {
+  const { projectId } = await params; // ✅ await the async params (Next 15 dynamic API)
+  return <EditorScreen projectId={projectId} />;
 }

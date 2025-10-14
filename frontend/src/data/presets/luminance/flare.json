@@ -1,0 +1,56 @@
+{
+  "id": "luminance/flare",
+  "name": "Flare",
+  "category": "Luminance",
+
+  "backend": "spray",
+  "variant": "airbrush",
+
+  "baseSizePx": 16,
+  "color": "#FFFFFF",
+
+  "engine": {
+    "rendering": {
+      "blendMode": "add"
+    },
+
+    "strokePath": {
+      "spacing": 5,
+      "jitter": 0.15,
+      "scatter": 5,
+      "count": 1,
+      "streamline": 0.15
+    },
+
+    "overrides": {
+      "flow": 85,
+      "opacity": 100,
+
+      "tiltToFan": 0.35,
+      "tiltToSize": 0.25
+    },
+
+    "grain": {
+      "kind": "none"
+    },
+
+    "backendOverrides": {
+      "spray": {
+        "dropletCount": 14,
+        "dropletJitter": 0.25,
+        "dropletSizeMin": 0.3,
+        "dropletSizeMax": 6.5,
+        "sizeJitter": 0.35,
+
+        "alphaMin": 0.15,
+        "alphaMax": 0.85,
+
+        "speedToDensity": 0.2,
+
+        "coneAngleDeg": 25,
+
+        "colorJitter": { "h": 2, "s": 0.04, "l": 0.03, "perDroplet": true }
+      }
+    }
+  }
+}

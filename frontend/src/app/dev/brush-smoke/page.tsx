@@ -1,7 +1,7 @@
 // FILE: src/app/dev/brush-smoke/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   SMOKE_PATHS,
   SMOKE_CANVAS_W,
@@ -10,12 +10,7 @@ import {
   toRenderPath,
 } from "@/lib/brush/dev/smokePaths";
 
-import {
-  BACKEND_ADAPTERS,
-  type BackendAdapter, // ✅ works because we re-exported the type
-} from "@/lib/brush/backends/adapters";
-// If you skipped the re-export, use:
-
+import { BACKENDS, type BackendAdapter } from "@backends";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
@@ -24,110 +19,147 @@ type Shot = {
   pathName: string;
   blobUrl: string;
   fileName: string;
+  ok: boolean;
+  error?: string;
+};
+
+const BASE_EXTRA: Readonly<Record<string, unknown>> = {
+  baseSizePx: 16, // common baseline size
+  smudgeStrength: 0.7,
+  smudgeAlpha: 0.9,
+  smudgeBlur: 0.5,
+  smudgeSpacing: 8,
+  softness: 60,
+  flow: 85,
+};
+
+// Optional: per-backend extras (keyed by adapter.id)
+const EXTRAS_BY_BACKEND: Readonly<
+  Record<string, Readonly<Record<string, unknown>>>
+> = {
+  ribbon: { mode: "marker", predictPx: 12, coreStrength: 260 },
+  // particle: { ... },
+  // pattern:  { ... },
+  // impasto:  { ... },
 };
 
 export default function BrushSmokePage(): React.ReactElement {
   const [shots, setShots] = useState<Shot[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
 
-  // Keep adapters stable for the run
-  const adapters = useMemo(() => BACKEND_ADAPTERS, []);
+  // pull adapters from registry
+  const adapters = useMemo<BackendAdapter[]>(() => Object.values(BACKENDS), []);
 
-  // Optional: per-backend extras (only used if an adapter consumes them)
-  const extrasForBackend: Readonly<
-    Record<string, Readonly<Record<string, unknown>>>
-  > = {
-    ribbon: { mode: "marker", predictPx: 12, coreStrength: 260 },
-    // particle: { ... },
-    // pattern:  { ... },
-    // impasto:  { ... },
-  };
+  const clearShots = useCallback(() => {
+    setShots((prev) => {
+      for (const s of prev) URL.revokeObjectURL(s.blobUrl);
+      return [];
+    });
+  }, []);
 
-  const baseExtra: Readonly<Record<string, unknown>> = {
-    baseSizePx: 16, // common baseline
-    smudgeStrength: 0.7, // ignored unless smudge backend reads it
-    smudgeAlpha: 0.9,
-    smudgeBlur: 0.5,
-    smudgeSpacing: 8,
-    softness: 60,
-    flow: 85,
-  };
+  const renderOne = useCallback(
+    async (adapter: BackendAdapter, p: SmokePath): Promise<Shot> => {
+      // Prefer real device DPR so the test reflects production strokes
+      const pixelRatio =
+        typeof window !== "undefined"
+          ? Math.max(1, Math.floor(window.devicePixelRatio || 1))
+          : 1;
 
-  async function renderOne(
-    adapter: BackendAdapter,
-    p: SmokePath
-  ): Promise<Shot> {
-    const dpr = 1;
-    const mergedExtra: Record<string, unknown> = {
-      ...baseExtra,
-      ...(extrasForBackend[adapter.name] ?? {}),
-    };
+      const mergedExtra: Record<string, unknown> = {
+        ...BASE_EXTRA,
+        ...(EXTRAS_BY_BACKEND[adapter.id] ?? {}),
+      };
 
-    // Create a canvas (offscreen if available)
-    const useOffscreen = typeof OffscreenCanvas !== "undefined";
-    let blob: Blob;
+      try {
+        const useOffscreen = typeof OffscreenCanvas !== "undefined";
+        let blob: Blob;
 
-    if (useOffscreen) {
-      const off = new OffscreenCanvas(SMOKE_CANVAS_W, SMOKE_CANVAS_H);
+        if (useOffscreen) {
+          const off = new OffscreenCanvas(SMOKE_CANVAS_W, SMOKE_CANVAS_H);
+          await adapter.renderStroke(off, {
+            width: SMOKE_CANVAS_W,
+            height: SMOKE_CANVAS_H,
+            pixelRatio, // ✅ standardized key (not dpr)
+            seed: p.seed,
+            path: toRenderPath(p.points),
+            color: "#353535",
+            baseSizePx: 16,
+            extra: mergedExtra,
+          });
+          blob = await off.convertToBlob({ type: "image/png" });
+        } else {
+          const canvas = document.createElement("canvas");
+          canvas.width = SMOKE_CANVAS_W;
+          canvas.height = SMOKE_CANVAS_H;
 
-      await adapter.renderStroke(off, {
-        width: SMOKE_CANVAS_W,
-        height: SMOKE_CANVAS_H,
-        dpr,
-        seed: p.seed,
-        path: toRenderPath(p.points),
-        color: "#353535",
-        baseSizePx: 16,
-        extra: mergedExtra, // ✅ now used
-      });
+          await adapter.renderStroke(canvas, {
+            width: SMOKE_CANVAS_W,
+            height: SMOKE_CANVAS_H,
+            pixelRatio, // ✅ standardized key (not dpr)
+            seed: p.seed,
+            path: toRenderPath(p.points),
+            color: "#353535",
+            baseSizePx: 16,
+            extra: mergedExtra,
+          });
 
-      blob = await off.convertToBlob({ type: "image/png" });
-    } else {
-      const canvas = document.createElement("canvas");
-      canvas.width = SMOKE_CANVAS_W;
-      canvas.height = SMOKE_CANVAS_H;
+          blob = await new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob(
+              (b) => (b ? resolve(b) : reject(new Error("PNG toBlob failed"))),
+              "image/png"
+            )
+          );
+        }
 
-      await adapter.renderStroke(canvas, {
-        width: SMOKE_CANVAS_W,
-        height: SMOKE_CANVAS_H,
-        dpr,
-        seed: p.seed,
-        path: toRenderPath(p.points),
-        color: "#353535",
-        baseSizePx: 16,
-        extra: mergedExtra, // ✅ now used
-      });
+        const backendId = adapter.id;
+        const fileName = `${backendId}_${p.name}.png`;
+        return {
+          backendId,
+          pathName: p.name,
+          blobUrl: URL.createObjectURL(blob),
+          fileName,
+          ok: true,
+        };
+      } catch (err) {
+        const backendId = adapter.id;
+        const fileName = `${backendId}_${p.name}.png`;
+        return {
+          backendId,
+          pathName: p.name,
+          blobUrl: "", // none
+          fileName,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+    []
+  );
 
-      blob = await new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("PNG toBlob failed"))),
-          "image/png"
-        )
-      );
+  const runAll = useCallback(async (): Promise<void> => {
+    if (!adapters.length) {
+      setShots([
+        {
+          backendId: "none",
+          pathName: "—",
+          blobUrl: "",
+          fileName: "no_backends.png",
+          ok: false,
+          error: "No backends registered in BACKENDS.",
+        },
+      ]);
+      return;
     }
 
-    const backendId = adapter.id ?? "backend";
-    const fileName = `${backendId}_${p.name}.png`;
-    return {
-      backendId,
-      pathName: p.name,
-      blobUrl: URL.createObjectURL(blob),
-      fileName,
-    };
-  }
-
-  async function runAll(): Promise<void> {
     setBusy(true);
     try {
-      // Revoke previous blobs
-      setShots((prev) => {
-        prev.forEach((s) => URL.revokeObjectURL(s.blobUrl));
-        return [];
-      });
+      clearShots();
 
       const all: Shot[] = [];
       for (const adapter of adapters) {
         for (const p of SMOKE_PATHS) {
+          // Render sequentially to keep UI predictable;
+          // you can parallelize per path if your adapters are re-entrant.
           const shot = await renderOne(adapter, p);
           all.push(shot);
         }
@@ -136,23 +168,31 @@ export default function BrushSmokePage(): React.ReactElement {
     } finally {
       setBusy(false);
     }
-  }
+  }, [adapters, clearShots, renderOne]);
 
   useEffect(() => {
     void runAll();
+    return () => {
+      // Cleanup created blob URLs on unmount
+      setShots((prev) => {
+        for (const s of prev) URL.revokeObjectURL(s.blobUrl);
+        return prev;
+      });
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function download(shot: Shot): void {
+  const download = (shot: Shot): void => {
+    if (!shot.ok || !shot.blobUrl) return;
     const a = document.createElement("a");
     a.href = shot.blobUrl;
     a.download = shot.fileName;
     a.click();
-  }
+  };
 
-  function downloadAll(): void {
+  const downloadAll = (): void => {
     shots.forEach(download);
-  }
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -183,16 +223,29 @@ export default function BrushSmokePage(): React.ReactElement {
                 <span className="font-medium">Path:</span> {s.pathName}
               </div>
             </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={s.blobUrl}
-              width={SMOKE_CANVAS_W}
-              height={SMOKE_CANVAS_H}
-              alt={`${s.backendId} - ${s.pathName}`}
-              className="w-full h-auto rounded border bg-neutral-900"
-            />
+
+            {!s.ok ? (
+              <div className="text-red-500 text-xs">
+                Failed: {s.error ?? "Unknown error"}
+              </div>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={s.blobUrl}
+                width={SMOKE_CANVAS_W}
+                height={SMOKE_CANVAS_H}
+                alt={`${s.backendId} - ${s.pathName}`}
+                className="w-full h-auto rounded border bg-neutral-900"
+              />
+            )}
+
             <div className="mt-2">
-              <Button size="sm" variant="outline" onClick={() => download(s)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => download(s)}
+                disabled={!s.ok}
+              >
                 Download PNG
               </Button>
             </div>

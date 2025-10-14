@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/utils/perf.ts
 
 // Safe "now" across browser/SSR/Node
-const now =
+export const now: () => number =
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? () => performance.now()
     : () => Date.now();
@@ -69,6 +69,7 @@ export function withMeasure<T>(name: string, fn: () => T): T {
   }
 }
 
+/** Async variant of withMeasure */
 export async function withMeasureAsync<T>(
   name: string,
   fn: () => Promise<T>

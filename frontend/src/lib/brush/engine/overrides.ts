@@ -7,15 +7,19 @@ import type {
 
 /**
  * Merge view of overrides for a specific backend:
- * - namespaced backendOverrides[key] (backend-local knobs)
+ * - backendOverrides[key] (backend-local knobs)
  * - plus generic engine.overrides (global knobs)
  * Generic wins only where fields intentionally overlap.
+ *
+ * We return a merged shape that includes all backend-local fields (concrete)
+ * plus any global RenderOverrides fields that may apply to the backend.
+ * This is safe with exactOptionalPropertyTypes: we never assign `undefined`.
  */
 export function getBackendOverrides<T extends keyof BackendOverrides>(
   engine: EngineConfig,
   key: T
 ): NonNullable<BackendOverrides[T]> & Partial<RenderOverrides> {
-  const generic = engine.overrides ?? {};
+  const generic: Partial<RenderOverrides> = engine.overrides ?? {};
   const namespaced = (engine.backendOverrides?.[key] ?? {}) as NonNullable<
     BackendOverrides[T]
   >;
@@ -23,7 +27,7 @@ export function getBackendOverrides<T extends keyof BackendOverrides>(
 }
 
 /* ---------- Narrowed convenience wrappers for ALL backends ---------- */
-/* These stay fully type-safe without importing individual types. */
+/* These stay fully type-safe without importing individual backend types. */
 
 export const getStampingOverrides = (engine: EngineConfig) =>
   getBackendOverrides(engine, "stamping");

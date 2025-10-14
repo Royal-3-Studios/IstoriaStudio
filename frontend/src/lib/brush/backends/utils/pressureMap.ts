@@ -1,6 +1,6 @@
 // Build a PressureMapOpts from RenderOptions.input (type-safe, no `any`).
 
-import type { RenderOptions } from "@/lib/brush/engine";
+import type { RenderOptions } from "@/lib/brush/engine.types";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
 
 function isObj(v: unknown): v is Record<string, unknown> {

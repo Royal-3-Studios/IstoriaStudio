@@ -4,8 +4,7 @@
 
 import type { LayerStack, Layer, LayerSnapshot } from "./layers";
 import { snapshotLayer, restoreLayer, findLayer } from "./layers";
-
-import { createLayer, get2D, type Ctx2D } from "@backends";
+import { createLayer, get2D, type Ctx2D } from "@backends/utils/canvas";
 
 export type HistoryKind = "stroke" | "erase" | "layerOp" | "other";
 

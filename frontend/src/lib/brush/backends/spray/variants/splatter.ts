@@ -1,9 +1,9 @@
 // FILE: src/lib/brush/backends/spray/variants/splatter.ts
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
-import { Rand, Blend } from "@backends";
-import { pathToStamps } from "@backends/utils/stroke";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
+import { Rand } from "@backends/utils/random";
+import * as Blend from "@backends/utils/blending";
+import { pathToStamps, type InputQualityOpts } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
-
 import type { Ctx2D } from "@backends/utils/canvas";
 import { gaussianRadius, paintDot } from "../core/dots";
 import { newMask, newColorLayer, clipColorByMask } from "../core/mask";
@@ -29,7 +29,7 @@ function toPressureMapFromInput(
   opt: RenderOptions
 ): PressureMapOpts | undefined {
   const input = opt.input;
-  if (!input) return undefined;
+  if (!input || !input.pressure) return undefined;
 
   const gamma =
     input.pressure.curve?.type === "gamma"
@@ -79,23 +79,19 @@ export function drawSpraySplatter(ctx: Ctx2D, opt: RenderOptions): void {
     0) as number;
 
   const seed = (opt.seed ?? 999) >>> 0;
-  const rng = Rand.mulberry32(seed);
+  const rng = new Rand(seed);
   const rand = (): number => rng.nextFloat();
 
-  // Optional pressure mapping + inputQuality (omit when empty)
+  // Optional pressure mapping + input quality (omit when empty)
   const pmap = toPressureMapFromInput(opt);
-  const iq = {
-    ...(opt.input?.quality?.predictPx !== undefined
-      ? { predictPx: opt.input.quality.predictPx }
-      : {}),
-    ...(opt.input?.quality?.speedToSpacing !== undefined
-      ? { speedToSpacing: opt.input.quality.speedToSpacing }
-      : {}),
-    ...(opt.input?.quality?.minStepPx !== undefined
-      ? { minStepPx: opt.input.quality.minStepPx }
-      : {}),
-  } as const;
-  const includeIQ = Object.keys(iq).length > 0;
+  const iqPartial: Partial<InputQualityOpts> = {};
+  if (typeof opt.input?.quality?.predictPx === "number")
+    iqPartial.predictPx = opt.input.quality.predictPx;
+  if (typeof opt.input?.quality?.speedToSpacing === "number")
+    iqPartial.speedToSpacing = opt.input.quality.speedToSpacing;
+  if (typeof opt.input?.quality?.minStepPx === "number")
+    iqPartial.minStepPx = opt.input.quality.minStepPx;
+  const includeIQ = Object.keys(iqPartial).length > 0;
 
   const baseOpts = {
     baseSizePx: opt.baseSizePx,
@@ -119,7 +115,7 @@ export function drawSpraySplatter(ctx: Ctx2D, opt: RenderOptions): void {
   const stamps = pathToStamps(path, {
     ...baseOpts,
     ...(pmap ? { pressureMap: pmap } : {}),
-    ...(includeIQ ? { inputQuality: iq } : {}),
+    ...(includeIQ ? { inputQuality: iqPartial as InputQualityOpts } : {}),
   });
   if (!stamps.length) return;
 
@@ -139,10 +135,10 @@ export function drawSpraySplatter(ctx: Ctx2D, opt: RenderOptions): void {
   const { colorLayer, cx } = newColorLayer(viewW, viewH);
 
   for (let i = 0; i < stamps.length; i++) {
-    const s = stamps[i]!; // we already checked length; assert defined
+    const s = stamps[i]!;
+    const dots = 2 + Math.floor(3 * s.pressure);
 
     // Normal dots (few per stamp)
-    const dots = 2 + Math.floor(3 * s.pressure);
     for (let k = 0; k < dots; k++) {
       const rr = Math.pow(rand(), 1.35);
       const ang = rand() * Math.PI * 2;
@@ -185,7 +181,7 @@ export function drawSpraySplatter(ctx: Ctx2D, opt: RenderOptions): void {
   clipColorByMask(cx, mask);
 
   // Final composite
-  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, () => {
+  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, (): void => {
     ctx.drawImage(colorLayer, 0, 0);
   });
 }

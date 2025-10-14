@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/backends/stamping/core/resample.ts
-import type { RenderOptions } from "@/lib/brush/engine";
+import type { RenderOptions } from "@/lib/brush/engine.types";
 import {
   resamplePath,
   resolveSpacingFraction,

@@ -2,12 +2,12 @@
 /**
  * Brush Engine Orchestrator
  * ------------------------------------------------------------
- * - Normalize opts, size to DPR
- * - Pick backend
+ * - Normalize opts, size to pixelRatio
+ * - Pick backend via registry
  * - Render into an offscreen layer
  * - Composite with global blend/opacity
  */
-
+import { getAdapterForBackend } from "@/lib/brush/backends/registry";
 import {
   createLayer,
   type Ctx2D,
@@ -21,17 +21,7 @@ import {
   toCompositeOp,
 } from "./backends/utils/blending";
 
-// All backends expose a uniform API: default draw(ctx, opt) + named drawToCanvas(surface, opt)
-import { drawToCanvas as drawRibbonToCanvas } from "./backends/ribbon";
-import { drawToCanvas as drawSprayToCanvas } from "./backends/spray";
-import { drawToCanvas as drawWetToCanvas } from "./backends/wet";
-import { drawToCanvas as drawImpastoToCanvas } from "./backends/impasto";
-import { drawToCanvas as drawStampingToCanvas } from "./backends/stamping";
-import { drawToCanvas as drawSmudgeToCanvas } from "./backends/smudge";
-import { drawToCanvas as drawParticleToCanvas } from "./backends/particle";
-import { drawToCanvas as drawPatternToCanvas } from "./backends/pattern";
-
-import type { RenderOptions } from "./engine.types";
+import type { NormalizedRenderOptions, RenderOptions } from "./engine.types";
 import type { BrushContextInit } from "@/lib/brush/core/brushContext";
 
 import {
@@ -61,15 +51,16 @@ async function drawStrokeToAny(
     height: nopt.height,
     dpr,
     seed: nopt.seed ?? 1,
-    colorHex: nopt.color, // optional already
+    colorHex: nopt.color,
     rngFactory: (s) => mulberry32(s),
   };
 
+  // Optional engine overrides
   if (nopt.engine.overrides.speedSmoothingMs !== undefined) {
     initCtx.speedSmoothingMs = nopt.engine.overrides.speedSmoothingMs;
   }
 
-  // smudge defaults (only attach if any provided)
+  // Smudge defaults (attach only if something provided)
   const sd: NonNullable<BrushContextInit["smudgeDefaults"]> = {};
   const { smudgeStrength, smudgeAlpha, smudgeBlur, smudgeSpacing } =
     nopt.engine.overrides;
@@ -80,12 +71,10 @@ async function drawStrokeToAny(
   if (Object.keys(sd).length > 0) initCtx.smudgeDefaults = sd;
 
   const brushCtx = createBrushContext(initCtx);
-  const optWithCtx: RenderOptions & { brushCtx: typeof brushCtx } = {
+  const optWithCtx: NormalizedRenderOptions & { brushCtx: typeof brushCtx } = {
     ...nopt,
     brushCtx,
   };
-
-  const backend = chooseBackend(nopt);
 
   // Size the destination surface (device pixels) and prep its 2D ctx in CSS space
   ensureCanvasDprSize(surface, nopt.width, nopt.height, dpr);
@@ -94,47 +83,22 @@ async function drawStrokeToAny(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, nopt.width, nopt.height);
 
-  // Offscreen layer we render into, then composite
+  // Offscreen layer we render into, then composite back
   const layer = createLayer(
     Math.max(1, Math.floor(nopt.width * dpr)),
     Math.max(1, Math.floor(nopt.height * dpr))
   );
-  const lctx = layer.getContext("2d", { alpha: true }) as Ctx2D | null;
+  const lctx = (layer as CanvasLike).getContext?.("2d", {
+    alpha: true,
+  }) as Ctx2D | null;
   if (!isCanvas2DContext(lctx)) throw new Error("2D layer context unavailable");
   lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lctx.clearRect(0, 0, nopt.width, nopt.height);
 
-  // Dispatch — every backend exposes drawToCanvas(CanvasLike, RenderOptions)
-  switch (backend) {
-    case "ribbon":
-      await awaitMaybe(drawRibbonToCanvas(layer, optWithCtx));
-      break;
-    case "spray":
-      await awaitMaybe(drawSprayToCanvas(layer, optWithCtx));
-      break;
-    case "wet":
-      await awaitMaybe(drawWetToCanvas(layer, optWithCtx));
-      break;
-    case "stamping":
-      await awaitMaybe(drawStampingToCanvas(layer, optWithCtx));
-      break;
-    case "smudge":
-      await awaitMaybe(drawSmudgeToCanvas(layer, optWithCtx));
-      break;
-    case "particle":
-      await awaitMaybe(drawParticleToCanvas(layer, optWithCtx));
-      break;
-    case "pattern":
-      await awaitMaybe(drawPatternToCanvas(layer, optWithCtx));
-      break;
-    case "impasto":
-      await awaitMaybe(drawImpastoToCanvas(layer, optWithCtx));
-      break;
-    default:
-      // Fallback (shouldn’t happen if chooseBackend handles "auto")
-      await awaitMaybe(drawStampingToCanvas(layer, optWithCtx));
-      break;
-  }
+  // Dispatch via registry
+  const backend = chooseBackend(nopt);
+  const adapter = getAdapterForBackend(backend);
+  await awaitMaybe(adapter.drawToCanvas(layer, optWithCtx));
 
   // Composite with global blend + opacity
   const blend = nopt.engine.rendering.blendMode ?? "source-over";
@@ -157,10 +121,11 @@ async function drawStrokeToAny(
 /* ------------------------------ public API --------------------------- */
 
 export async function drawStrokeToCanvas(
-  canvas: HTMLCanvasElement,
-  opt: RenderOptions
+  targetCanvas: HTMLCanvasElement | OffscreenCanvas,
+  normalized: NormalizedRenderOptions
 ): Promise<void> {
-  return drawStrokeToAny(canvas, opt);
+  // Reuse the same pipeline; normalized is already in final form
+  await drawStrokeToAny(targetCanvas, normalized);
 }
 
 export async function drawStrokeToSurface(

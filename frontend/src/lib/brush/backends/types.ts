@@ -3,6 +3,7 @@
 // exactOptionalPropertyTypes-safe: optional props are absent, not `undefined`.
 
 import type { BrushInputConfig } from "@/data/brushPresets";
+import type { BackendCaps } from "@/lib/brush/backends/caps";
 
 /** DOM or Offscreen canvas. Draw in CSS space; engine normalizes DPR. */
 export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
@@ -15,15 +16,29 @@ export type Ctx2D =
 /** Minimal render target abstraction (alias of CanvasLike; kept for clarity). */
 export type CanvasSurface = CanvasLike;
 
-/** Points supplied to adapters. Accept both `p` and `pressure` for convenience. */
+/** Stroke point supplied to adapters (CSS-space coordinates). */
 export type RenderStrokePoint = {
   x: number; // CSS px
   y: number; // CSS px
-  p?: number; // preferred shorthand 0..1
-  pressure?: number; // compatibility 0..1
-  angle?: number; // degrees [0..360)
-  tilt?: number; // 0..1 altitude
+  p?: number; // preferred shorthand for pressure, normalized [0..1]
+  pressure?: number; // compatibility alias, normalized [0..1]
+  angle?: number; // stroke tangent angle (radians)
+  tilt?: number; // stylus tilt altitude in radians (optional)
   t?: number; // timestamp (ms)
+};
+
+/** Narrow type for adapter extras passed through from the engine. */
+export type AdapterExtra = {
+  /** Global/local overrides — e.g., flow (0..100). Extend as needed. */
+  overrides?: { flow?: number } & Record<string, unknown>;
+  /** Stroke path controls — e.g., distance-based spacing in CSS px. */
+  strokePath?: { spacing?: number } & Record<string, unknown>;
+  /** Brush shape/tip information (backend-defined fields allowed). */
+  shape?: Record<string, unknown>;
+  /** Rendering intent/mode flags. */
+  rendering?: Record<string, unknown>;
+  /** Paper/tip grain controls. */
+  grain?: Record<string, unknown>;
 };
 
 /** Options passed to adapters from the engine/harness. */
@@ -32,27 +47,23 @@ export type RenderStrokeOptions = {
   width: number;
   height: number;
 
+  /** Device pixel ratio for rasterization. */
+  pixelRatio: number;
+
   /** Stable seed for deterministic randomness. */
   seed?: number;
 
   /** Stroke path in CSS space. */
-  path?: ReadonlyArray<RenderStrokePoint>;
+  path: ReadonlyArray<RenderStrokePoint>;
 
   /**
-   * Adapter-specific extra knobs (narrow in adapter code).
+   * Adapter-specific extra knobs (typed as a shared bag; adapters can narrow).
    * Keep generic here; adapters define their own specific shape locally.
    */
-  extra?: Record<string, unknown>;
+  extra?: AdapterExtra;
 
   /** Pass-throughs to engine RenderOptions. */
   color?: string; // e.g. "#353535"
-  pixelRatio?: number; // preferred DPR key
-
-  /**
-   * @deprecated Use `pixelRatio`. Kept for compatibility while refactoring.
-   * Do not write `undefined` — simply omit this key.
-   */
-  dpr?: number;
 
   /** Input pipeline (pressure curve, smoothing, quality). */
   input?: BrushInputConfig;
@@ -67,6 +78,9 @@ export type BackendAdapter = {
   id: string;
   /** Human-readable name. */
   name: string;
+
+  /** Capability flags (optional; lets UI enable/disable knobs). */
+  caps?: BackendCaps;
 
   renderStroke(
     surface: CanvasSurface,

@@ -1,18 +1,6 @@
 // src/lib/brush/core/types.ts
 
-// Backend & rendering unions stay as-is — but freeze them for better literals.
-export type BrushBackend =
-  | "ribbon"
-  | "stamping"
-  | "spray"
-  | "wet"
-  | "smudge"
-  | "particle"
-  | "pattern"
-  | "impasto"
-  | "auto";
-
-export type RenderingMode = "blended" | "glazed" | "marker" | "spray" | "wet";
+export type { BrushBackend, RenderingMode } from "@/lib/brush/engine.types";
 
 // Keep BlendMode — make it line up with Canvas 2D ops you use elsewhere.
 export type BlendMode =

@@ -1,21 +1,27 @@
+// next.config.ts
 import type { NextConfig } from "next";
-import type { Configuration as WebpackConfig } from "webpack";
+import webpack from "webpack";
 
 const nextConfig: NextConfig = {
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
-      },
-    ];
-  },
-  webpack: (config: WebpackConfig) => {
-    config.resolve = config.resolve || {};
+  webpack: (config, { isServer }) => {
     config.resolve.alias = {
-      ...(config.resolve.alias || {}),
-      canvas: false,
+      ...(config.resolve.alias ?? {}),
+      konva: require.resolve("konva/lib/index.js"),
     };
+    config.plugins.push(
+      new webpack.NormalModuleReplacementPlugin(
+        /^konva\/lib\/.*$/,
+        require.resolve("konva/lib/index.js")
+      )
+    );
+
+    if (isServer) {
+      (config.resolve.alias as Record<string, any>)["react-konva"] = false;
+      config.resolve.fallback = {
+        ...(config.resolve.fallback ?? {}),
+        canvas: false,
+      };
+    }
     return config;
   },
 };

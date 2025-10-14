@@ -1,36 +1,12 @@
 // ========================
 // FILE: src/lib/canvas/context.ts
 // ========================
-import { CanvasUtil } from "@backends";
 
 /** Unified 2D context & canvas types you can import from app code. */
 export type Ctx2D =
   | CanvasRenderingContext2D
   | OffscreenCanvasRenderingContext2D;
 export type CanvasLike = HTMLCanvasElement | OffscreenCanvas;
-
-/* ---------- Narrowers for optional helpers on CanvasUtil ---------- */
-
-type CreateLayerFn = (
-  w: number,
-  h: number
-) => HTMLCanvasElement | OffscreenCanvas;
-type Get2DContextFn = (
-  canvas: CanvasLike,
-  opts?: CanvasRenderingContext2DSettings
-) => Ctx2D;
-
-function hasCreateLayer(obj: unknown): obj is { createLayer: CreateLayerFn } {
-  const o = obj as { createLayer?: unknown };
-  return typeof o?.createLayer === "function";
-}
-
-function hasGet2DContext(
-  obj: unknown
-): obj is { get2DContext: Get2DContextFn } {
-  const o = obj as { get2DContext?: unknown };
-  return typeof o?.get2DContext === "function";
-}
 
 /* ---------- Basic type guards ---------- */
 
@@ -46,38 +22,38 @@ export function isCanvas2DContext(v: unknown): v is Ctx2D {
 
 /* ---------- Layer creation ---------- */
 
-/** Create an offscreen/onscreen layer in CSS pixels. */
+/**
+ * Create an offscreen/onscreen canvas layer in CSS pixels.
+ * SSR-safe: throws if neither OffscreenCanvas nor DOM is available.
+ */
 export function createLayer(w: number, h: number): CanvasLike {
-  // Prefer the backend’s canonical helper if available.
-  if (hasCreateLayer(CanvasUtil)) {
-    return CanvasUtil.createLayer(w, h);
-  }
-
-  // Fallback: try OffscreenCanvas first, then DOM canvas
+  // Prefer OffscreenCanvas when available (no DOM required)
   if (typeof OffscreenCanvas !== "undefined") {
     return new OffscreenCanvas(w, h);
   }
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  return c;
+
+  // Fallback to DOM Canvas if we're in the browser
+  if (typeof document !== "undefined") {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  // No canvas available (likely SSR)
+  throw new Error("Canvas is not available in this environment.");
 }
 
 /* ---------- Context acquisition ---------- */
 
-/** One place to get a 2D ctx (and throw if unavailable). */
-export function get2DContext(
+/**
+ * Get a 2D context from either HTMLCanvasElement or OffscreenCanvas.
+ * Throws if unavailable. Defaults to { alpha: true }.
+ */
+export function get2D(
   canvas: CanvasLike,
   opts: CanvasRenderingContext2DSettings = { alpha: true }
 ): Ctx2D {
-  // Prefer the backend’s canonical helper if available.
-  if (hasGet2DContext(CanvasUtil)) {
-    const ctx = CanvasUtil.get2DContext(canvas, opts);
-    if (!isCanvas2DContext(ctx)) throw new Error("2D context not available.");
-    return ctx;
-  }
-
-  // Fallback: use the native getContext on either canvas type
   const ctx =
     (canvas as HTMLCanvasElement | OffscreenCanvas).getContext?.("2d", opts) ??
     null;
@@ -86,4 +62,14 @@ export function get2DContext(
     throw new Error("2D context not available.");
   }
   return ctx;
+}
+
+/**
+ * Backward-compat alias. Use `get2D` in new code.
+ */
+export function get2DContext(
+  canvas: CanvasLike,
+  opts: CanvasRenderingContext2DSettings = { alpha: true }
+): Ctx2D {
+  return get2D(canvas, opts);
 }

@@ -4,7 +4,7 @@
  * Works with both HTMLCanvasElement and OffscreenCanvas.
  */
 
-import { type Ctx2D, isHtmlCanvas } from "./canvas";
+import { type Ctx2D, isHtmlCanvas } from "@backends/utils/canvas";
 
 /* ----------------------------- Small type bridge ----------------------------- */
 

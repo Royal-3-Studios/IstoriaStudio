@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/impasto/core/paint-merge.ts
 import type { Ctx2D, CanvasLike } from "@/lib/canvas/context";
 import { createLayer, get2DContext } from "@/lib/canvas/context";
-import { Blend } from "@backends";
+import * as Blend from "@backends/utils/blending";
 
 /**
  * Create a pigment layer (filled with `color`) clipped by the height alpha.

@@ -1,4 +1,4 @@
-import type { RenderPathPoint } from "@/lib/brush/engine";
+import type { RenderPathPoint } from "@/lib/brush/engine.types";
 import { clamp } from "@backends/utils/math";
 
 export type Particle = {

@@ -1,0 +1,61 @@
+{
+  "id": "touchups_dust_scratches",
+  "name": "Dust & Scratches",
+  "subtitle": "Bright specks and hairlines",
+  "baseSizePx": 8,
+  "color": "#FFFFFF",
+
+  "engine": {
+    "version": 1,
+    "backend": "particle",
+    "shape": { "type": "round", "softness": 90, "sizeScale": 1 },
+    "strokePath": {
+      "spacing": 8,
+      "jitter": 0.4,
+      "scatter": 2.0,
+      "count": 1,
+      "streamline": 15
+    },
+    "grain": { "kind": "none" },
+    "rendering": {
+      "intent": "ink",
+      "flow": 45,
+      "blendMode": "screen"
+    },
+    "overrides": {
+      "opacity": 100,
+      "sizeJitter": 0.6,
+      "angleJitter": 25,
+      "tiltToFan": 0.15
+    },
+    "backendOverrides": {
+      "particle": {
+        "mode": "trail",
+        "emitterRate": 0.6,
+        "particleSize": 0.7,
+        "turbulence": 0.15,
+        "drag": 0.35
+      }
+    }
+  },
+
+  "input": {
+    "pressure": {
+      "clamp": { "min": 0, "max": 1 },
+      "curve": { "type": "gamma", "gamma": 1.0 },
+      "smoothing": {
+        "mode": "oneEuro",
+        "oneEuro": { "minCutoff": 1.5, "beta": 0.25, "dCutoff": 1.2 }
+      },
+      "gain": 1,
+      "deadZone": 0.02
+    },
+    "quality": {
+      "predictPx": 3,
+      "speedToSpacing": 0.1,
+      "minStepPx": 0.7
+    }
+  },
+
+  "tags": ["Touch-ups", "Screen", "Specks", "Scratches"]
+}

@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/backends/normalize.ts
 import type { RenderStrokePoint } from "./types";
-import type { RenderPathPoint } from "@/lib/brush/engine";
+import type { RenderPathPoint } from "@/lib/brush/engine.types";
 
 export function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);

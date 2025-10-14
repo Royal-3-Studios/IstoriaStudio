@@ -110,15 +110,25 @@ export const TUNING_INK: RibbonTuning = {
 
 export type RibbonVariant = "pencil" | "ink" | "calligraphy" | "marker";
 
+/** Map for quick lookups (calligraphy & marker currently alias pencil/ink). */
+const TUNING_BY_VARIANT: Readonly<Record<RibbonVariant, RibbonTuning>> = {
+  pencil: TUNING_PENCIL,
+  calligraphy: TUNING_PENCIL,
+  ink: TUNING_INK,
+  marker: TUNING_INK,
+};
+
+/** Safe narrowing from arbitrary string to a RibbonVariant with default. */
+export function coerceVariant(
+  v: string | undefined,
+  fallback: RibbonVariant = "pencil"
+): RibbonVariant {
+  if (v === "pencil" || v === "ink" || v === "calligraphy" || v === "marker")
+    return v;
+  return fallback;
+}
+
 /** Choose a preset; calligraphy & marker currently map to pencil/ink defaults. */
 export function pickTuning(variant: RibbonVariant): RibbonTuning {
-  switch (variant) {
-    case "ink":
-    case "marker":
-      return TUNING_INK;
-    case "calligraphy":
-    case "pencil":
-    default:
-      return TUNING_PENCIL;
-  }
+  return TUNING_BY_VARIANT[variant];
 }

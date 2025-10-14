@@ -14,11 +14,13 @@ type BaseProps = {
 
 // Controlled (legacy) API
 type ControlledProps = BaseProps & {
-  zoomPercent: number; // 1 = 100%
+  /** Zoom scale (1 = 100%). */
+  zoomPercent: number;
   onZoomInAction: () => void;
   onZoomOutAction: () => void;
   onResetAction: () => void;
-  onZoomToAction?: (nextPercent: number) => void; // e.g., 1.25 for 125%
+  /** Optional: jump to a specific zoom scale (e.g., 1.25 for 125%). */
+  onZoomToAction?: (nextPercent: number) => void;
 };
 
 // Store-driven (new) API
@@ -34,54 +36,68 @@ const MAX_PCT = 500;
 export default function ZoomControls(props: Props): React.ReactElement {
   const { className, attach = "container" } = props;
 
-  // Decide mode (no hooks; just a boolean)
-  const isControlled: boolean = "onZoomInAction" in props;
+  // Decide mode by feature detection (safe discriminant for union)
+  const isControlled = "onZoomInAction" in props;
 
-  // Store hooks are always called (no conditional hooks)
+  // Store hooks (always safe to call unconditionally)
   const storeZoom = useEditorStore((s) => s.viewport.zoom);
   const storeSetZoom = useEditorStore((s) => s.setZoom);
   const storeZoomIn = useEditorStore((s) => s.zoomIn);
   const storeZoomOut = useEditorStore((s) => s.zoomOut);
   const storeResetZoom = useEditorStore((s) => s.resetZoom);
 
-  // Pluck controlled handlers once so they can be dependencies
+  // Narrow to controlled if applicable
   const controlled = isControlled ? (props as ControlledProps) : null;
 
-  // Current zoom (percent as number for display)
+  // Effective zoom scale (1 = 100%)
   const effectiveZoom: number = controlled ? controlled.zoomPercent : storeZoom;
-  const pctNumber: number = Math.round(effectiveZoom * 100);
+
+  // Derived % for the input (clamped for display)
+  const pctNumber: number = Math.max(
+    MIN_PCT,
+    Math.min(MAX_PCT, Math.round(effectiveZoom * 100))
+  );
 
   // UI state
   const [open, setOpen] = React.useState<boolean>(false);
   const [inputPct, setInputPct] = React.useState<string>(String(pctNumber));
 
-  // Sync input whenever external zoom changes
-  React.useEffect((): void => {
+  // Keep input in sync with external zoom updates
+  React.useEffect(() => {
     setInputPct(String(pctNumber));
   }, [pctNumber]);
 
-  // Button actions (pick controlled or store versions)
-  const doZoomIn: () => void = controlled
-    ? controlled.onZoomInAction
-    : (): void => storeZoomIn();
-  const doZoomOut: () => void = controlled
-    ? controlled.onZoomOutAction
-    : (): void => storeZoomOut();
-  const doReset: () => void = controlled
-    ? controlled.onResetAction
-    : (): void => storeResetZoom();
-
+  // Button actions (controlled vs store)
+  const doZoomIn = controlled ? controlled.onZoomInAction : storeZoomIn;
+  const doZoomOut = controlled ? controlled.onZoomOutAction : storeZoomOut;
+  const doReset = controlled ? controlled.onResetAction : storeResetZoom;
   const onZoomToAction = controlled?.onZoomToAction;
 
+  const handleZoomIn = React.useCallback(() => {
+    // cast away the optional numeric param in store mode
+    (doZoomIn as (step?: number) => void)();
+  }, [doZoomIn]);
+
+  const handleZoomOut = React.useCallback(() => {
+    (doZoomOut as (step?: number) => void)();
+  }, [doZoomOut]);
+
+  const handleReset = React.useCallback(() => {
+    doReset();
+  }, [doReset]);
+
   const commitInput = React.useCallback((): void => {
+    // Accept "" as “revert to external value”
+    if (inputPct.trim() === "") {
+      setInputPct(String(pctNumber));
+      return;
+    }
     const n = Number(inputPct);
     if (Number.isFinite(n)) {
       const clamped = Math.max(MIN_PCT, Math.min(MAX_PCT, n));
-      if (onZoomToAction) {
-        onZoomToAction(clamped / 100);
-      } else {
-        storeSetZoom(clamped / 100);
-      }
+      const asScale = clamped / 100;
+      if (onZoomToAction) onZoomToAction(asScale);
+      else storeSetZoom(asScale);
       setInputPct(String(Math.round(clamped)));
     } else {
       setInputPct(String(pctNumber));
@@ -112,7 +128,7 @@ export default function ZoomControls(props: Props): React.ReactElement {
                 variant="outline"
                 className="rounded-full cursor-pointer h-7 w-7 sm:h-8 sm:w-8"
                 size="icon"
-                onClick={doZoomIn}
+                onClick={handleZoomIn}
                 aria-label="Zoom in"
                 title="Zoom in"
               >
@@ -122,7 +138,7 @@ export default function ZoomControls(props: Props): React.ReactElement {
                 variant="outline"
                 className="rounded-full cursor-pointer h-7 w-7 sm:h-8 sm:w-8"
                 size="icon"
-                onClick={doZoomOut}
+                onClick={handleZoomOut}
                 aria-label="Zoom out"
                 title="Zoom out"
               >
@@ -135,14 +151,11 @@ export default function ZoomControls(props: Props): React.ReactElement {
               <div className="relative">
                 <Input
                   inputMode="numeric"
-                  type="number"
-                  min={MIN_PCT}
-                  max={MAX_PCT}
-                  step={1}
+                  type="text"
                   value={inputPct}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>): void => {
+                    // Allow digits only (and empty while editing)
                     const v = e.target.value;
-                    // keep digits only; optional blank (let user type)
                     if (/^\d*$/.test(v)) setInputPct(v);
                   }}
                   onBlur={commitInput}
@@ -151,10 +164,15 @@ export default function ZoomControls(props: Props): React.ReactElement {
                   ): void => {
                     if (e.key === "Enter")
                       (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") {
+                      setInputPct(String(pctNumber));
+                      (e.target as HTMLInputElement).blur();
+                    }
                   }}
                   className="w-20 pr-8"
                   aria-label="Zoom percentage"
                   title="Enter zoom percentage"
+                  placeholder={`${pctNumber}`}
                 />
                 <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                   %

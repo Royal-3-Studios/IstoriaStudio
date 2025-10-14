@@ -98,8 +98,8 @@ export function mulberry32(seed = 123456789): RNG {
         haveSpare = false;
         return mean + spare * sigma;
       }
-      let u = 0,
-        v = 0;
+      let u = 0;
+      let v = 0;
       // Avoid log(0). nextFloat() never returns 1, but may be ~0.
       do {
         u = nextFloat();
@@ -171,7 +171,7 @@ export function rngFrom(src: RNGLike): RNG {
     typeof src === "object" &&
     src !== null &&
     "nextFloat" in src &&
-    typeof src.nextFloat === "function"
+    typeof (src as { nextFloat: () => number }).nextFloat === "function"
   ) {
     const base = (src as { nextFloat: () => number }).nextFloat;
     return rngFacade(base);
@@ -183,13 +183,14 @@ export function rngFrom(src: RNGLike): RNG {
   // Should not happen, but fallback to deterministic mulberry
   return mulberry32(0xdeadbeef);
 }
+
 function rngFacade(next: () => number): RNG {
   // Box–Muller cache for normal()
   let haveSpare = false;
   let spare = 0;
 
   // Normalize arbitrary generator output to [0,1) robustly
-  const u01 = () => {
+  const u01 = (): number => {
     let v = next();
     if (!Number.isFinite(v)) return 0;
     // Map to fractional part
@@ -225,8 +226,8 @@ function rngFacade(next: () => number): RNG {
         haveSpare = false;
         return mean + spare * sigma;
       }
-      let u = 0,
-        v = 0;
+      let u = 0;
+      let v = 0;
       do {
         u = u01();
       } while (u <= 1e-12);
@@ -319,3 +320,5 @@ export class Rand implements RNG {
   seed = (v: number) => this.r.seed(v);
   fork = (label?: string | number) => this.r.fork(label);
 }
+
+export const rand = (seed: number): RNG => new Rand(seed);

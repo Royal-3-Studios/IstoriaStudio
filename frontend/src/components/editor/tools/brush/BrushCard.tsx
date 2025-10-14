@@ -1,21 +1,61 @@
-// src/components/editor/tools/BrushCard.tsx
+// FILE: src/components/editor/tools/BrushCard.tsx
 "use client";
 
 import * as React from "react";
-import type { BrushPreset } from "@/data/brushPresets";
 import { Sun, Moon, Star } from "lucide-react";
-import { drawStrokeToCanvas } from "@/lib/brush/engine";
+import { drawStrokeToSurface } from "@/lib/brush/engine"; // ✅ accepts RenderOptions
+import type {
+  BrushBackend,
+  BrushPreset,
+  EngineConfig,
+} from "@/lib/brush/engine.types";
+import { CapsBadges } from "@/ui/brush/caps-badges";
 
 const PREVIEW_CSS_W = 352;
 const PREVIEW_CSS_H = 127;
+const PREVIEW_PIXEL_RATIO = 2; // deterministic, crisp previews
+
+const BRUSH_BACKENDS: readonly BrushBackend[] = [
+  "auto",
+  "ribbon",
+  "stamping",
+  "spray",
+  "wet",
+  "smudge",
+  "particle",
+  "pattern",
+  "impasto",
+] as const;
+
+function isBrushBackend(v: unknown): v is BrushBackend {
+  return (
+    typeof v === "string" && (BRUSH_BACKENDS as readonly string[]).includes(v)
+  );
+}
+
+/** Coerce a JSON-ish engine into a typed EngineConfig (no `any`, no explicit `undefined`). */
+function coerceEngineConfig(e: unknown): EngineConfig {
+  const src = (e ?? {}) as Partial<EngineConfig> & { backend?: unknown };
+
+  // Only include backend if it’s one of the allowed literals
+  const backendPart = isBrushBackend(src.backend)
+    ? { backend: src.backend }
+    : {};
+
+  // Spread other sub-objects as-is; they’re already optional in EngineConfig
+  return {
+    ...src,
+    ...backendPart,
+  };
+}
 
 /** Local fallback so we never crash if a preset is half-baked. */
-const FALLBACK_ENGINE = {
-  backend: "stamping" as const,
+const FALLBACK_ENGINE: EngineConfig = {
+  backend: "stamping",
   strokePath: { spacing: 4, jitter: 0, scatter: 0, streamline: 20, count: 1 },
-  shape: { type: "round" as const, softness: 50, sizeScale: 1 },
-  grain: { kind: "none" as const, depth: 0, scale: 1 },
-  rendering: { mode: "marker" as const, wetEdges: false, flow: 100 },
+  shape: { type: "round", softness: 50, sizeScale: 1 },
+  grain: { kind: "none", depth: 0, scale: 1 },
+  rendering: { mode: "marker", wetEdges: false, flow: 100 },
 };
 
 type BrushPresetWithTags = BrushPreset & { readonly tags?: readonly string[] };
@@ -42,7 +82,10 @@ export const BrushCard = React.memo(function BrushCard({
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
 
   // --- Resolve a safe engine & base size ---
-  const engine = preset.engine ?? FALLBACK_ENGINE;
+  const engine: EngineConfig = React.useMemo(
+    () => coerceEngineConfig(preset.engine ?? FALLBACK_ENGINE),
+    [preset.engine]
+  );
 
   const sizeParam = React.useMemo(
     () => preset.params.find((p) => p.type === "size"),
@@ -51,28 +94,29 @@ export const BrushCard = React.memo(function BrushCard({
 
   const baseSizePx = React.useMemo(() => {
     const ui = Number(sizeParam?.defaultValue ?? 12);
-    const scale = engine.shape?.sizeScale ?? 1;
+    const scale = Number(engine.shape?.sizeScale ?? 1);
     const px = Math.round(ui * scale);
     return Math.max(2, Math.min(28, px)); // small for perf
   }, [sizeParam, engine.shape?.sizeScale]);
 
-  // --- Backing store sizing for crispness ---
-  const pixelRatio = 2; // keep deterministic previews
+  // We let the engine size the backing store via DPR. We only set CSS size here.
+  // (engine.draw will call ensureCanvasDprSize internally.)
   React.useLayoutEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
-    c.width = Math.max(1, Math.round(PREVIEW_CSS_W * pixelRatio));
-    c.height = Math.max(1, Math.round(PREVIEW_CSS_H * pixelRatio));
-  }, [pixelRatio]);
+    // CSS size only (backing-store sized by engine)
+    c.style.width = `${PREVIEW_CSS_W}px`;
+    c.style.height = `${PREVIEW_CSS_H}px`;
+  }, []);
 
   // --- Deterministic S-curve path (within bounds) ---
   const path = React.useMemo(() => {
     const w = PREVIEW_CSS_W;
     const h = PREVIEW_CSS_H;
 
-    const scatterPct = (engine.strokePath?.scatter ?? 0) / 100;
+    const scatterPx = Number(engine.strokePath?.scatter ?? 0);
     const radius = baseSizePx * 0.5;
-    const worstScatter = baseSizePx * 0.5 * scatterPct;
+    const worstScatter = scatterPx * 0.5;
 
     const INSET_X = Math.ceil(
       Math.max(8, radius * 0.8 + worstScatter * 0.6 + 4)
@@ -109,42 +153,34 @@ export const BrushCard = React.memo(function BrushCard({
     [preset.id]
   );
 
-  // --- Keep strokes compact for preview row (spacing as fraction of diameter) ---
-  // We'll convert to PERCENT when installing onto the engine (recommended).
-  const spacingFrac = React.useMemo(() => {
-    const uiSpacing = engine.strokePath?.spacing ?? 6;
-    const raw =
-      typeof uiSpacing === "number"
-        ? uiSpacing > 1
-          ? uiSpacing / 100
-          : uiSpacing
-        : 0.06;
-    return Math.max(0.01, Math.min(0.35, raw));
-  }, [engine.strokePath?.spacing]);
+  // Keep spacing compact for preview row; convert to percent (what backends expect)
+  const previewEngine: EngineConfig = React.useMemo(() => {
+    const uiSpacing = Number(engine.strokePath?.spacing ?? 6);
+    // If a preset already sets % (value > 1), keep it; otherwise convert fraction→percent
+    const spacingPercent =
+      uiSpacing > 1 ? uiSpacing : Math.round(uiSpacing * 100);
 
-  // Build a preview-specific engine that uses percent spacing (what backends expect)
-  const previewEngine = React.useMemo(() => {
     return {
       ...engine,
       strokePath: {
         ...engine.strokePath,
-        spacing: Math.round(spacingFrac * 100), // percent, e.g. 6 = 6%
+        spacing: spacingPercent, // percent, e.g. 6 = 6%
       },
     };
-  }, [engine, spacingFrac]);
+  }, [engine]);
 
   // --- Render preview ---
   React.useEffect(() => {
     const el = canvasRef.current;
     if (!el || path.length === 0) return;
 
-    void drawStrokeToCanvas(el, {
+    void drawStrokeToSurface(el, {
       engine: previewEngine,
       baseSizePx,
       color: "#000000",
       width: PREVIEW_CSS_W,
       height: PREVIEW_CSS_H,
-      pixelRatio,
+      pixelRatio: PREVIEW_PIXEL_RATIO, // DPR (backing-store handled inside)
       seed,
       path,
       overrides: {
@@ -153,7 +189,7 @@ export const BrushCard = React.memo(function BrushCard({
         // NOTE: do NOT pass spacing here; we set it on engine.strokePath (percent)
       },
     });
-  }, [previewEngine, baseSizePx, seed, path, pixelRatio]);
+  }, [previewEngine, baseSizePx, seed, path]);
 
   // --- UI bits ---
   const title = preset.name;
@@ -203,6 +239,7 @@ export const BrushCard = React.memo(function BrushCard({
         <canvas
           ref={canvasRef}
           className="block"
+          // Only CSS size here; backing store is sized by engine using pixelRatio
           style={{ width: PREVIEW_CSS_W, height: PREVIEW_CSS_H }}
         />
       </div>
@@ -215,6 +252,10 @@ export const BrushCard = React.memo(function BrushCard({
             {subtitle && (
               <div className="truncate text-[10px] opacity-80">{subtitle}</div>
             )}
+            {/* capability badges (optional, but nice) */}
+            <div className="mt-1">
+              <CapsBadges engine={engine} compact />
+            </div>
             {showTags && tags.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">
                 {tags.slice(0, 4).map((t) => (

@@ -12,9 +12,9 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
-/** GET /api/projects */
+/** GET /api/project */
 export async function listProjects(): Promise<Project[]> {
-  const res = await fetch("/api/projects", {
+  const res = await fetch("/api/project", {
     cache: "no-store",
     credentials: "include",
   });
@@ -32,13 +32,13 @@ export async function getProject(projectId: string): Promise<Project> {
   return res.json() as Promise<Project>;
 }
 
-/** POST /api/projects */
+/** POST /api/project */
 export async function createProject(input: {
   type: Project["type"];
   title?: string;
   description?: string;
 }): Promise<Project> {
-  const res = await fetch("/api/projects", {
+  const res = await fetch("/api/project", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -54,15 +54,17 @@ export async function deleteProject(
   cascade: DeleteCascade
 ): Promise<void> {
   const res = await fetch(
-    `/api/project/${encodeURIComponent(projectId)}?cascade=${cascade}`,
+    `/api/project/${encodeURIComponent(projectId)}?cascade=${encodeURIComponent(
+      cascade
+    )}`,
     { method: "DELETE", credentials: "include" }
   );
   if (!res.ok) throw new Error(await safeText(res));
 }
 
-/* Optional cover helpers — only include if you have matching route handlers:
+/* Optional cover helpers — wire up only if you have route handlers for these:
    POST /api/project/:id/cover/reset
-   POST /api/project/:id/cover { assetId } 
+   POST /api/project/:id/cover { assetId }
 */
 export async function resetProjectCover(projectId: string): Promise<void> {
   const res = await fetch(

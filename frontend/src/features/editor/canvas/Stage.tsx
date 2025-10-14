@@ -1,4 +1,4 @@
-// src/features/editor/canvas/Stage.tsx
+// FILE: src/features/editor/canvas/Stage.tsx
 "use client";
 
 import * as React from "react";
@@ -14,6 +14,21 @@ type Props = {
   /** 1 = 100% zoom; if omitted, uses store zoom */
   zoom?: number;
   className?: string;
+  /**
+   * Content nodes (images, text, boxes, etc.) go here.
+   * Example usage:
+   *   <Stage ...>
+   *     <ImageClient ... />
+   *     <TextClient ... />
+   *     <RectClient ... />
+   *   </Stage>
+   */
+  children?: React.ReactNode;
+  /**
+   * Optional overlay nodes that should NOT scale with zoom
+   * (e.g., selection boxes, cursors, guides that live in screen space).
+   */
+  overlay?: React.ReactNode;
 };
 
 export default function Stage({
@@ -22,6 +37,8 @@ export default function Stage({
   bg = "white",
   zoom,
   className,
+  children,
+  overlay,
 }: Props): React.ReactElement {
   // Always call the store; prefer the prop if provided.
   const storeZoom = useEditorStore((s) => s.viewport.zoom);
@@ -34,6 +51,7 @@ export default function Stage({
   return (
     <div className={className ?? ""}>
       <StageClient width={width} height={height}>
+        {/* Background layer (scaled to document space) */}
         <LayerClient scaleX={safeZoom} scaleY={safeZoom}>
           <RectClient
             x={0}
@@ -43,7 +61,16 @@ export default function Stage({
             fill={bg === "white" ? "#fff" : "#000"}
             listening={false}
           />
-          {/* TODO: add your image/text/box layers here */}
+        </LayerClient>
+
+        {/* Content layer (scaled): put your image/text/box nodes here */}
+        <LayerClient name="content" scaleX={safeZoom} scaleY={safeZoom}>
+          {children /* ✅ replaces the old TODO */}
+        </LayerClient>
+
+        {/* Overlay layer (unscaled screen-space): selection, cursors, guides */}
+        <LayerClient name="overlay">
+          {overlay /* stays crisp regardless of zoom */}
         </LayerClient>
       </StageClient>
     </div>

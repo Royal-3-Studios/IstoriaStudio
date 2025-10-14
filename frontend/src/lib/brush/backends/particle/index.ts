@@ -6,6 +6,9 @@ import { drawTrail } from "./variants/trail";
 import { drawSmoke } from "./variants/smoke";
 import { drawSparkle } from "./variants/sparkle";
 
+// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend.
+import { getTiltOverrides } from "@backends/stamping/utils/scalars";
+
 export type ParticleMode = "trail" | "smoke" | "sparkle";
 
 /** Optional, local backend overrides carried under engine.backendOverrides.particle */
@@ -13,7 +16,7 @@ export type ParticleOverrides = Partial<{
   mode: ParticleMode;
 }>;
 
-function pickMode(opt: RenderOptions): ParticleMode {
+export function pickMode(opt: RenderOptions): ParticleMode {
   const local = opt.engine.backendOverrides?.particle as
     | ParticleOverrides
     | undefined;
@@ -23,16 +26,29 @@ function pickMode(opt: RenderOptions): ParticleMode {
 
 /** Core entry: draw using the selected particle variant. */
 export default function drawParticle(ctx: Ctx2D, opt: RenderOptions): void {
-  switch (pickMode(opt)) {
+  // Merge normalized tilt knobs into overrides so variants can just read them.
+  const tilt = getTiltOverrides(opt.engine.overrides);
+  const optWithTilt: RenderOptions = {
+    ...opt,
+    engine: {
+      ...opt.engine,
+      overrides: {
+        ...(opt.engine.overrides ?? {}),
+        ...tilt,
+      },
+    },
+  };
+
+  switch (pickMode(optWithTilt)) {
     case "smoke":
-      drawSmoke(ctx, opt);
+      drawSmoke(ctx, optWithTilt);
       break;
     case "sparkle":
-      drawSparkle(ctx, opt);
+      drawSparkle(ctx, optWithTilt);
       break;
     case "trail":
     default:
-      drawTrail(ctx, opt);
+      drawTrail(ctx, optWithTilt);
       break;
   }
 }

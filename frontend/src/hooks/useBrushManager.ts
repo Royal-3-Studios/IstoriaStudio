@@ -10,8 +10,8 @@ export type BrushSettingsState = {
 function defaultsFromPreset(
   preset: BrushPreset | undefined
 ): Record<string, number> {
+  if (!preset) return {};
   const out: Record<string, number> = {};
-  if (!preset) return out;
   for (const p of preset.params) out[p.key] = p.defaultValue;
   return out;
 }
@@ -67,17 +67,17 @@ const LOCAL_FALLBACK_PRESET: BrushPreset = {
   },
 };
 
-export function useBrushManager(initialBrushId: string) {
-  // Resolve a stable “first catalog” preset once
+export function useBrushManager(initialBrushId?: string) {
+  // Snapshot the first catalog preset once for stable fallback
   const firstCatalogPreset = useMemo<BrushPreset | undefined>(() => {
     const all = Object.values(BRUSH_BY_ID);
-    return all.length ? all[0] : undefined;
+    return all.length > 0 ? all[0] : undefined;
   }, []);
 
-  // Choose a safe initial preset
+  // Resolve a safe initial preset
   const initialPreset = useMemo<BrushPreset>(() => {
-    const byId = BRUSH_BY_ID[initialBrushId];
-    return byId ?? firstCatalogPreset ?? LOCAL_FALLBACK_PRESET;
+    const fromId = initialBrushId ? BRUSH_BY_ID[initialBrushId] : undefined;
+    return fromId ?? firstCatalogPreset ?? LOCAL_FALLBACK_PRESET;
   }, [initialBrushId, firstCatalogPreset]);
 
   const [state, setState] = useState<BrushSettingsState>(() => ({
@@ -85,7 +85,7 @@ export function useBrushManager(initialBrushId: string) {
     params: defaultsFromPreset(initialPreset),
   }));
 
-  // Always resolve the current preset from the catalog (with a local fallback)
+  // Always resolve the *current* preset from the catalog (with safe fallbacks)
   const preset = useMemo<BrushPreset>(() => {
     return (
       BRUSH_BY_ID[state.brushId] ?? firstCatalogPreset ?? LOCAL_FALLBACK_PRESET
@@ -113,10 +113,10 @@ export function useBrushManager(initialBrushId: string) {
   }, [firstCatalogPreset]);
 
   return {
-    state,
-    preset,
-    setBrushById,
-    setParam,
-    resetParams,
+    state, // { brushId, params }
+    preset, // resolved BrushPreset (never undefined)
+    setBrushById, // switch brush & reset params to that preset defaults
+    setParam, // set a single param
+    resetParams, // reset all params for current brush to defaults
   };
 }

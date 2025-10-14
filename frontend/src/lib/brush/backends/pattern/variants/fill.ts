@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/backends/pattern/variants/fill.ts
 
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
 import { withCompositeAndAlpha } from "../core/fill";

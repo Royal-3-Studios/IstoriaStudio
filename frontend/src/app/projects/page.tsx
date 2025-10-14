@@ -30,6 +30,7 @@ export default function ProjectsPage() {
         credentials: "include",
         cache: "no-store",
       });
+      console.log("PROJECTSSSSSS: ", res);
       if (res.status === 401) {
         setNotAuthed(true);
         setProjectList([]);

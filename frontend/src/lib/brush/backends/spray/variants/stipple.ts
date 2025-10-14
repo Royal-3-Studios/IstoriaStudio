@@ -1,10 +1,10 @@
-// src/lib/brush/backends/spray/variants/stipple.ts
-import type { RenderOptions } from "@/lib/brush/engine";
+// FILE: src/lib/brush/backends/spray/variants/stipple.ts
+import type { RenderOptions } from "@/lib/brush/engine.types";
 import type { Ctx2D } from "@backends/utils/canvas";
-import { Rand, Blend } from "@backends";
-import { pathToStamps } from "@backends/utils/stroke";
+import * as Blend from "@backends/utils/blending";
+import { Rand } from "@backends/utils/random"; // ← ensure this path matches your re-exports
+import { pathToStamps, type InputQualityOpts } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
-import type { InputQualityOpts } from "@backends/utils/stroke";
 import { createLayer, get2D } from "@backends/utils/canvas";
 import { gaussianRadius, paintDot } from "../core/dots";
 
@@ -17,7 +17,7 @@ function toPressureMapFromInput(
   opt: RenderOptions
 ): PressureMapOpts | undefined {
   const input = opt.input;
-  if (!input) return undefined;
+  if (!input || !input.pressure) return undefined;
 
   const gamma =
     input.pressure.curve?.type === "gamma"
@@ -71,7 +71,7 @@ export function drawSprayStipple(ctx: Ctx2D, opt: RenderOptions): void {
     2) as number;
 
   const seed = (opt.seed ?? 4242) >>> 0;
-  const rng = Rand.mulberry32(seed);
+  const rng = new Rand(seed);
   const rand = (): number => rng.nextFloat();
 
   const pmap = toPressureMapFromInput(opt);
@@ -89,8 +89,8 @@ export function drawSprayStipple(ctx: Ctx2D, opt: RenderOptions): void {
     tipMinPx: 0,
     tipScaleStart: 0.9,
     tipScaleEnd: 0.9,
-    taperProfileStart: "linear",
-    taperProfileEnd: "linear",
+    taperProfileStart: "linear" as const,
+    taperProfileEnd: "linear" as const,
     endBias: 0,
     uniformity: 1, // flat, marker-like weighting for dot size
     rng,
@@ -106,7 +106,6 @@ export function drawSprayStipple(ctx: Ctx2D, opt: RenderOptions): void {
   const lx = get2D(layer);
   lx.clearRect(0, 0, viewW, viewH);
 
-  // Use for..of, or non-null assertion on index access to keep TS happy.
   for (const s of stamps) {
     // sparse: ~1–2 dots per stamp
     const dots = 1 + (rand() < s.pressure ? 1 : 0);
@@ -122,7 +121,7 @@ export function drawSprayStipple(ctx: Ctx2D, opt: RenderOptions): void {
     }
   }
 
-  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, () => {
+  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, (): void => {
     ctx.drawImage(layer, 0, 0);
   });
 }

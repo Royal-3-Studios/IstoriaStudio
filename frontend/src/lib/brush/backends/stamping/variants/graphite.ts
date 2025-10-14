@@ -2,10 +2,12 @@
 // Graphite/Charcoal stamping — paper tooth + inner grain + optional rim
 // Strict TS: no `any`, compatible with exactOptionalPropertyTypes.
 
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
 import type { BrushInputConfig } from "@/data/brushPresets";
-import { Rand, Texture, CanvasUtil, Blend } from "@backends";
-
+import * as Texture from "@backends/utils/texture";
+import * as CanvasUtil from "@backends/utils/canvas";
+import * as Blend from "@backends/utils/blending";
+import { mulberry32 } from "@/lib/brush/backends/utils/random";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { clamp01 } from "@backends/utils/color";
 import {
@@ -76,6 +78,12 @@ function highPressureDamp(p01: number): number {
   return 1 - 0.22 * Math.pow(q, 1.55);
 }
 
+/** Safely read a tilt value (0..1) from a path point, else 0 */
+function readTilt01(pt: unknown): number {
+  const t = (pt as { tilt?: unknown })?.tilt;
+  return typeof t === "number" && Number.isFinite(t) ? clamp01(t) : 0;
+}
+
 /* --------------------------------- Types --------------------------------- */
 
 type ExtRenderOptions = RenderOptions & { input?: BrushInputConfig };
@@ -96,13 +104,29 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   const overrides = (options.engine.overrides ??
     {}) as Partial<RenderOverrides>;
 
+  // === NEW: Read tilt routing knobs (0..1 scalars) =========================
+  const tiltToGrainScale = num(overrides.tiltToGrainScale, 0);
+  const tiltToEdgeNoise = num(overrides.tiltToEdgeNoise, 0);
+
+  // Compute a simple average tilt across the stroke (0..1).
+  const tiltVals: number[] = [];
+  for (let i = 0; i < pts.length; i++) tiltVals.push(readTilt01(pts[i]));
+  const avgTilt01 =
+    tiltVals.length > 0
+      ? tiltVals.reduce((a, b) => a + b, 0) / tiltVals.length
+      : 0;
+
   // Brush knobs
   const innerGrainAlpha = clamp01(
     num((overrides as Record<string, number>).innerGrainAlpha, 0.55)
   );
-  const edgeCarveAlpha = clamp01(
+  const edgeCarveAlphaBase = clamp01(
     num((overrides as Record<string, number>).edgeCarveAlpha, 0.26)
   );
+
+  // === NEW: Edge noise strength gains with tilt ============================
+  const edgeCarveAlpha =
+    edgeCarveAlphaBase * (1 + clamp01(tiltToEdgeNoise) * avgTilt01);
 
   const baseFlow01 = clamp01(num(overrides.flow, 64) / 100);
   const baseOpacity01 = clamp01(num(overrides.opacity, 100) / 100);
@@ -178,7 +202,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     taperProfileEnd,
     endBias: num(overrides.endBias, 0),
     uniformity: num(overrides.uniformity, 0),
-    rng: Rand.mulberry32(seed),
+    rng: mulberry32(seed),
     pressureMap: pmap,
     inputQuality: iq,
   });
@@ -234,7 +258,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   const pressureToSplitSpacing = clamp01(
     num(overrides.pressureToSplitSpacing, 0)
   );
-  const tiltToSplitFan = num(overrides.tiltToSplitFan, 0) * (Math.PI / 180); // no tilt threaded yet
+  const tiltToSplitFan = num(overrides.tiltToSplitFan, 0) * (Math.PI / 180);
 
   /* -------------------- A) Stroke mask -------------------- */
   const mask = CanvasUtil.createLayer(options.width, options.height);
@@ -352,7 +376,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   }
   mx.filter = "none";
 
-  // Edge carve: remove faint halo (configurable)
+  // === UPDATED: Edge carve amount scales with tilt ==========================
   if (edgeCarveAlpha > 0.001) {
     const blurred = CanvasUtil.createLayer(options.width, options.height);
     const bx = blurred.getContext("2d", { alpha: true }) as Ctx2D;
@@ -378,7 +402,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     px.drawImage(mask, 0, 0);
   });
 
-  /* -------------------- C) Inner-belly grain (optional) -------------------- */
+  /* -------------------- C) Inner-belly grain (tilt→scale) -------------------- */
   const wantInner =
     grainKind !== "none" && grainDepth > 0 && innerGrainAlpha > 0.001;
 
@@ -429,8 +453,14 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
 
     const grain = CanvasUtil.createLayer(options.width, options.height);
     const gx = grain.getContext("2d", { alpha: true }) as Ctx2D;
-    const tileA = Texture.makeMultiplyTile(seed ^ 0x0999, 24, 0.17);
-    const tileB = Texture.makeMultiplyTile(seed ^ 0x2ab3, 20, 0.14);
+
+    // === UPDATED: grain tile size scales with tilt ==========================
+    const grainScaleMul = 1 + clamp01(tiltToGrainScale) * avgTilt01;
+    const sizeA = Math.max(4, Math.round(24 * grainScaleMul));
+    const sizeB = Math.max(4, Math.round(20 * grainScaleMul));
+
+    const tileA = Texture.makeMultiplyTile(seed ^ 0x0999, sizeA, 0.17);
+    const tileB = Texture.makeMultiplyTile(seed ^ 0x2ab3, sizeB, 0.14);
     gx.fillStyle = tileA;
     gx.fillRect(0, 0, options.width, options.height);
     gx.globalAlpha = 0.85;

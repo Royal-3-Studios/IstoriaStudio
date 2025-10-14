@@ -8,10 +8,10 @@ import type {
 } from "@/lib/brush/engine.types";
 
 /**
- * Map high-level style intent -> concrete backend (+ stamping variant).
- * Expand as you implement new pipelines.
+ * Map high-level style intent -> concrete backend (+ optional stamping variant).
+ * Expand this as you implement new pipelines.
  */
-const INTENT_TO_RESOLUTION: IntentToResolutionMap = {
+const INTENT_TO_RESOLUTION: IntentToResolutionMap = Object.freeze({
   // stamping family
   ink: { backend: "stamping", stampingMode: "ink" },
   marker: { backend: "stamping", stampingMode: "ink" },
@@ -24,8 +24,9 @@ const INTENT_TO_RESOLUTION: IntentToResolutionMap = {
   smudge: { backend: "smudge" },
   spray: { backend: "spray" },
   pastel: { backend: "stamping", stampingMode: "graphite" }, // temporary mapping
-};
+} as const);
 
+/** Look up a RenderingResolution for a given intent. */
 export function resolveRendering(
   intent?: RenderingIntent
 ): RenderingResolution | undefined {
@@ -34,12 +35,11 @@ export function resolveRendering(
 
 /**
  * Apply a RenderingIntent to an EngineConfig.
- * - Does NOT overwrite explicit backend choice if it's not "auto"
- * - Does NOT overwrite an explicit backendOverrides.stamping.mode if present
+ * - Does NOT overwrite explicit backend choice if it's not "auto".
+ * - Does NOT overwrite an explicit backendOverrides.stamping.mode if present.
  * Returns a shallow-cloned config (original untouched).
  *
- * With exactOptionalPropertyTypes, we never assign properties to `undefined`;
- * we only include keys when we have values.
+ * With exactOptionalPropertyTypes, we avoid assigning undefined — we only add keys when we have values.
  */
 export function applyRenderingIntent(config: EngineConfig): EngineConfig {
   const intent = config.rendering?.intent;
@@ -48,34 +48,36 @@ export function applyRenderingIntent(config: EngineConfig): EngineConfig {
   const resolved = resolveRendering(intent);
   if (!resolved) return config;
 
-  // Decide backend: only auto-pick when backend is "auto" or unset.
+  // Respect explicit backend selection
   const existingBackend = config.backend;
   const chosenBackend: BrushBackend =
     existingBackend && existingBackend !== "auto"
       ? existingBackend
       : resolved.backend;
 
-  // Respect explicit stamping mode if already set in backendOverrides
-  const existingStampingMode =
-    config.backendOverrides?.stamping?.mode ?? undefined;
+  // Respect explicit stamping mode if already set
+  const existingStampingMode = config.backendOverrides?.stamping?.mode;
 
-  // Build next backendOverrides only if we actually need to set stamping.mode
+  // Only add/merge stamping.mode if:
+  // - we ended up with the stamping backend, and
+  // - the intent specifies a stampingMode, and
+  // - no explicit stamping.mode is already defined.
   let nextBackendOverrides = config.backendOverrides;
   if (
     chosenBackend === "stamping" &&
-    resolved.stampingMode &&
+    resolved.stampingMode !== undefined &&
     existingStampingMode === undefined
   ) {
     nextBackendOverrides = {
       ...(config.backendOverrides ?? {}),
       stamping: {
         ...(config.backendOverrides?.stamping ?? {}),
-        mode: resolved.stampingMode, // typed and backend-scoped
+        mode: resolved.stampingMode,
       },
     };
   }
 
-  // Return new config (omit keys rather than writing undefined)
+  // Return new config; omit keys rather than setting undefined
   return {
     ...config,
     backend: chosenBackend,

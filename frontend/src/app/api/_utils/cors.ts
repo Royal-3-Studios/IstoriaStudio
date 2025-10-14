@@ -2,10 +2,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 type CorsRules = {
+  /** Allowed origins (exact match). */
   origin: string[];
+  /** Allowed methods. */
   methods?: string[];
+  /** Allowed request headers. */
   headers?: string[];
+  /** Preflight cache time (seconds). */
   maxAgeSec?: number;
+  /** If true, allow credentials and echo a specific origin. */
   credentials?: boolean;
 };
 
@@ -38,20 +43,24 @@ function matchOrigin(
   return allowed.includes(reqOrigin) ? reqOrigin : null;
 }
 
-export function corsHeaders(req: NextRequest, rules: Partial<CorsRules> = {}) {
+/** Build CORS headers for a given request + rule set. */
+export function corsHeaders(
+  req: NextRequest,
+  rules: Partial<CorsRules> = {}
+): Headers {
   const merged = normalizeRules(rules);
   const reqOrigin = req.headers.get("origin");
   const matched = matchOrigin(reqOrigin, merged.origin);
 
-  // Guard against empty arrays under `noUncheckedIndexedAccess`
+  // When credentials=true, we must return a concrete origin (not "*")
   const primaryOrigin =
     merged.origin.length > 0 ? merged.origin[0]! : DEFAULT_RULES.origin[0]!;
-
   const allowOrigin: string = merged.credentials
     ? matched ?? primaryOrigin
     : matched ?? "*";
 
   const h = new Headers();
+  // Helpful for caches/CDNs when Origin varies
   h.set("Vary", "Origin");
   h.set("Access-Control-Allow-Origin", allowOrigin);
   h.set("Access-Control-Allow-Methods", merged.methods.join(", "));
@@ -61,18 +70,23 @@ export function corsHeaders(req: NextRequest, rules: Partial<CorsRules> = {}) {
   return h;
 }
 
-export function handleOptions(req: NextRequest, rules?: Partial<CorsRules>) {
+/** Quick preflight handler for OPTIONS requests. */
+export function handleOptions(
+  req: NextRequest,
+  rules?: Partial<CorsRules>
+): NextResponse {
   return new NextResponse(null, {
     status: 204,
     headers: corsHeaders(req, rules),
   });
 }
 
-export function withCors(
-  resp: NextResponse,
+/** Attach CORS headers to a JSON/stream/file response. */
+export function withCors<T extends NextResponse>(
+  resp: T,
   req: NextRequest,
   rules?: Partial<CorsRules>
-) {
+): T {
   const h = corsHeaders(req, rules);
   h.forEach((v, k) => resp.headers.set(k, v));
   return resp;

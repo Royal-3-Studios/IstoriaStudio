@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/backends/impasto/variants/_common.ts
 import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine.types";
-import { Stroke as StrokeUtil } from "@backends";
+import * as StrokeUtil from "@backends/utils/stroke";
 import { mulberry32 } from "@backends/utils/random";
 import type { BrushInputConfig } from "@/data/brushPresets";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";

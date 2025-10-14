@@ -1,0 +1,49 @@
+{
+  "id": "luminance/light-pen",
+  "name": "Light Pen",
+  "category": "Luminance",
+  "backend": "spray",
+  "variant": "airbrush",
+
+  "baseSizePx": 8,
+  "color": "#FFFFFF",
+
+  "engine": {
+    "rendering": {
+      "blendMode": "add"
+    },
+
+    "strokePath": {
+      "spacing": 4,
+      "jitter": 0.15,
+      "scatter": 0.5,
+      "count": 1,
+      "streamline": 0.2
+    },
+
+    "overrides": {
+      "flow": 85,
+      "opacity": 100,
+      "tiltToFan": 0.35,
+      "tiltToSize": 0.15
+    },
+
+    "grain": {
+      "kind": "none"
+    },
+
+    "backendOverrides": {
+      "spray": {
+        "dropletCount": 16,
+        "dropletJitter": 0.25,
+        "dropletSizeMin": 0.6,
+        "dropletSizeMax": 1.8,
+        "sizeJitter": 0.25,
+        "alphaMin": 0.1,
+        "alphaMax": 0.9,
+        "speedToDensity": 0.2,
+        "coneAngleDeg": 10
+      }
+    }
+  }
+}

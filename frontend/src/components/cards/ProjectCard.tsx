@@ -150,7 +150,12 @@ export function ProjectCard({ project, onChanged }: Props): React.ReactElement {
               <div className="absolute inset-0 hidden items-end justify-end p-2 group-hover:flex bg-gradient-to-t from-black/30 via-transparent">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button size="sm" variant="secondary" disabled={coverBusy}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="cursor-pointer"
+                      disabled={coverBusy}
+                    >
                       <MoreHorizontal className="mr-2 h-4 w-4" />
                       Change cover
                     </Button>
@@ -243,6 +248,7 @@ export function ProjectCard({ project, onChanged }: Props): React.ReactElement {
 
                 <div className="mt-4 flex gap-2">
                   <Button
+                    className="cursor-pointer"
                     onClick={() =>
                       router.push(`/projects/${project.id}/editor`)
                     }
@@ -253,7 +259,7 @@ export function ProjectCard({ project, onChanged }: Props): React.ReactElement {
                   <Button
                     variant="destructive"
                     onClick={() => setDeleteOpen(true)}
-                    className="ml-auto"
+                    className="ml-auto cursor-pointer"
                   >
                     <Trash2 className="mr-2 h-4 w-4" />
                     Delete

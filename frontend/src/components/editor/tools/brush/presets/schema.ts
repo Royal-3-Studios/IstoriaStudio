@@ -5,7 +5,7 @@
  * - Stable surface for sharing + migrations
  */
 
-import type { EngineConfig } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine.types";
 
 /** Current preset version. Bump when the top-level preset shape changes. */
 export const PRESET_VERSION = 1 as const;

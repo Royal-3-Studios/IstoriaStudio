@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/dev/smokePaths.ts
-import type { RenderPathPoint } from "@/lib/brush/engine";
+import type { RenderPathPoint } from "@/lib/brush/engine.types";
 
 export type SmokePoint = { x: number; y: number; p?: number }; // p = pressure 0..1
 export type SmokePath = { name: string; seed: number; points: SmokePoint[] };

@@ -10,6 +10,7 @@ import React, {
 } from "react";
 
 import type { TextLayer, BoxLayer, Step, CanvasBg } from "./types/layers";
+import { newLayerId, type LayerId } from "./types/layers";
 import { useEditorStore } from "./store/editor.store";
 import type Konva from "konva";
 import { saveAs } from "file-saver";
@@ -104,7 +105,12 @@ export default function EditorScreen({
   }, []);
 
   /* ------------------------------ Project data ----------------------------- */
-  const { project, loading: isProjectLoading } = useProject(projectId);
+  const {
+    project,
+    loading: isProjectLoading,
+    error,
+    reload,
+  } = useProject(projectId);
 
   /* ----------------------------- Preset picker ----------------------------- */
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
@@ -340,10 +346,11 @@ export default function EditorScreen({
       // Perf sample (very rough)
       const frameMs = performance.now() - t0;
       const stampsPerSec = frameMs > 0 ? Math.min(240, 1000 / frameMs) : null;
-      setPerfMetrics({
-        frameMs,
-        stampsPerSec: stampsPerSec ?? undefined,
-      });
+      if (stampsPerSec != null) {
+        setPerfMetrics({ frameMs, stampsPerSec });
+      } else {
+        setPerfMetrics({ frameMs });
+      }
     },
     [
       boxes,
@@ -483,7 +490,7 @@ export default function EditorScreen({
 
   /* ------------------------------ Edit helpers ----------------------------- */
   function addTitleText(): void {
-    const id = crypto.randomUUID();
+    const id = newLayerId();
     const W = presetW || 1;
     const H = presetH || 1;
     setTexts((t) => [
@@ -500,7 +507,7 @@ export default function EditorScreen({
   }
 
   /* --------------------------------- Render -------------------------------- */
-  if (isProjectLoading) return <div className="p-6">Loading…</div>;
+  if (isProjectLoading) return <div className="p-6">Loading...</div>;
   if (!project) return <div className="p-6">Project not found.</div>;
 
   const showCtaOverlay =
@@ -842,6 +849,7 @@ export default function EditorScreen({
 
 function getPresetById(id: string): Preset {
   if (id === PRESET_PLACEHOLDER.id) return PRESET_PLACEHOLDER;
-  const found = (PRESETS as Preset[]).find((p) => p.id === id);
-  return found ?? (PRESETS as Preset[])[0];
+  const arr = PRESETS as Preset[];
+  const found = arr.find((p) => p.id === id);
+  return found ?? arr[0] ?? PRESET_PLACEHOLDER;
 }

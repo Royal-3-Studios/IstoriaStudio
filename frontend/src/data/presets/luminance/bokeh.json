@@ -1,0 +1,41 @@
+{
+  "id": "luminance/bokeh",
+  "name": "Bokeh",
+  "category": "Luminance",
+
+  "backend": "particle",
+  "variant": "sparkle",
+
+  "baseSizePx": 18,
+  "color": "#FFFFFF",
+
+  "engine": {
+    "rendering": {
+      "blendMode": "screen"
+    },
+
+    "strokePath": {
+      "spacing": 8,
+      "jitter": 0.3,
+      "scatter": 6,
+      "count": 2,
+      "streamline": 0.1
+    },
+
+    "overrides": {
+      "flow": 90,
+      "opacity": 100,
+      "tiltToSize": 0.2
+    },
+
+    "grain": {
+      "kind": "none"
+    },
+
+    "backendOverrides": {
+      "particle": {
+        "mode": "sparkle"
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ import type {
   BrushParam,
   BrushParamType,
 } from "@/data/brushPresets";
-import type { EngineConfig } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine.types";
 
 // local copy of your helper so this file is self-contained
 const p = (
@@ -344,18 +344,16 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           grain: { kind: "none", depth: 0, scale: 1 },
           rendering: { mode: "marker", wetEdges: false, flow: 100 },
           overrides: {
-            renderingMode: "ink", // forces Ink Mode
-            spacing: 4, // percent
+            spacing: 4,
             angleFollowDirection: 1,
             angleJitter: 0,
             jitter: 0,
             scatter: 0,
-            tipScaleStart: 0.9, // slightly sharper start
+            tipScaleStart: 0.9,
             tipScaleEnd: 0.9,
-            tipMinPx: 0, // or small value if you want a non-pointy tip
+            tipMinPx: 0,
             opacity: 100,
             flow: 100,
-            // make sure grain.kind = "none"
           },
         },
       },
@@ -596,7 +594,6 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("spacing", "Spacing", "spacing", 3, 0, 100, 1),
         ],
         engine: {
-          // Switch to ribbon for smooth, brush-pen feel
           backend: "ribbon",
           strokePath: {
             spacing: 2,
@@ -629,7 +626,6 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           p("spacing", "Spacing", "spacing", 3, 0, 100, 1),
         ],
         engine: {
-          // still a stamp-y marker but de-noised
           backend: "stamping",
           strokePath: {
             spacing: 5,
@@ -733,6 +729,32 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           grain: { kind: "noise", depth: 68, scale: 1.25 },
           rendering: { mode: "glazed", wetEdges: false, flow: 100 },
           overrides: { tipScaleStart: 0.85, tipScaleEnd: 0.8 },
+        },
+      },
+      // NEW: 9B close variant, slightly heavier/softer body than 6B
+      {
+        id: "9b-compressed",
+        name: "9B Compressed",
+        params: [
+          p("size", "Size", "size", 24, 1, 120, 1),
+          p("flow", "Flow", "flow", 100, 0, 100, 1),
+          p("smoothing", "Smoothing", "smoothing", 24, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 4, 0, 100, 1),
+          p("grain", "Grain", "grain", 60, 0, 100, 1),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 7,
+            jitter: 10,
+            scatter: 1.1,
+            streamline: 22,
+            count: 1,
+          },
+          shape: { type: "charcoal", softness: 60, sizeScale: 1.15 },
+          grain: { kind: "noise", depth: 72, scale: 1.3 },
+          rendering: { mode: "glazed", wetEdges: false, flow: 100 },
+          overrides: { tipScaleStart: 0.84, tipScaleEnd: 0.78, tipMinPx: 0.7 },
         },
       },
       {
@@ -1391,7 +1413,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
         name: "Soft Airbrush",
         params: [
           p("size", "Size", "size", 28, 1, 160, 1),
-          p("flow", "Flow", "flow", 24, 0, 100, 1), // ↓ was 100 at UI level; engine uses rendering.flow=...
+          p("flow", "Flow", "flow", 24, 0, 100, 1),
           p("smoothing", "Smoothing", "smoothing", 24, 0, 100, 1),
           p("spacing", "Spacing", "spacing", 10, 0, 100, 1),
         ],
@@ -2125,7 +2147,7 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
     id: "luminance",
     name: "Luminance",
     brushes: [
-      // Simulate additive by lowering flow and increasing softness/spacing/jitter
+      // Existing luminance
       {
         id: "flare",
         name: "Flare",
@@ -2310,10 +2332,223 @@ export const BRUSH_CATEGORIES: BrushCategory[] = [
           rendering: { mode: "spray", wetEdges: false, flow: 18 },
         },
       },
+
+      // NEW: Bokeh (round particle scatter with size jitter feel)
+      {
+        id: "bokeh",
+        name: "Bokeh",
+        params: [
+          p("size", "Size", "size", 26, 1, 160, 1),
+          p("flow", "Flow", "flow", 22, 0, 100, 1),
+          p("smoothing", "Smoothing", "smoothing", 20, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 12, 0, 100, 1),
+        ],
+        engine: {
+          backend: "spray",
+          strokePath: {
+            spacing: 12,
+            jitter: 18,
+            scatter: 0.35,
+            streamline: 18,
+            count: 3,
+          },
+          shape: { type: "spray", softness: 80, sizeScale: 1 },
+          grain: { kind: "none" },
+          rendering: { mode: "spray", wetEdges: false, flow: 22 },
+          overrides: { sizeJitter: 18, opacity: 100 },
+        },
+      },
+
+      // NEW: Glow Marker (soft round additive-like low flow)
+      {
+        id: "glow-marker",
+        name: "Glow Marker",
+        params: [
+          p("size", "Size", "size", 20, 1, 160, 1),
+          p("flow", "Flow", "flow", 28, 0, 100, 1),
+          p("smoothing", "Smoothing", "smoothing", 20, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 8, 0, 100, 1),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 8,
+            jitter: 6,
+            scatter: 0.1,
+            streamline: 22,
+            count: 1,
+          },
+          shape: { type: "round", softness: 92, sizeScale: 1 },
+          grain: { kind: "none" },
+          rendering: { mode: "marker", wetEdges: false, flow: 28 },
+          overrides: { buildup: true, opacity: 100 },
+        },
+      },
+    ],
+  },
+
+  // NEW: Touch-ups category
+  {
+    id: "touchups",
+    name: "Touch-ups",
+    brushes: [
+      // Screen/add highlights
+      {
+        id: "highlights",
+        name: "Highlights",
+        params: [
+          p("size", "Size", "size", 18, 1, 160, 1),
+          p("flow", "Flow", "flow", 22, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 8, 0, 100, 1),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 8,
+            jitter: 4,
+            scatter: 0,
+            streamline: 20,
+            count: 1,
+          },
+          shape: { type: "round", softness: 88, sizeScale: 1 },
+          grain: { kind: "none" },
+          rendering: {
+            mode: "marker",
+            blendMode: "screen",
+            wetEdges: false,
+            flow: 22,
+          },
+        },
+      },
+      // Multiply shadows
+      {
+        id: "shadows",
+        name: "Shadows",
+        params: [
+          p("size", "Size", "size", 18, 1, 160, 1),
+          p("flow", "Flow", "flow", 28, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 8, 0, 100, 1),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 8,
+            jitter: 4,
+            scatter: 0,
+            streamline: 20,
+            count: 1,
+          },
+          shape: { type: "round", softness: 80, sizeScale: 1 },
+          grain: { kind: "none" },
+          rendering: {
+            mode: "marker",
+            blendMode: "multiply",
+            wetEdges: false,
+            flow: 28,
+          },
+        },
+      },
+      // Dust & scratches pattern touch-up
+      {
+        id: "dust-scratches",
+        name: "Dust & Scratches",
+        params: [
+          p("size", "Size", "size", 20, 1, 160, 1),
+          p("flow", "Flow", "flow", 40, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 10, 0, 100, 1),
+        ],
+        engine: {
+          backend: "pattern",
+          strokePath: {
+            spacing: 10,
+            jitter: 12,
+            scatter: 0.4,
+            streamline: 16,
+            count: 1,
+          },
+          shape: { type: "square", softness: 20, sizeScale: 1 },
+          grain: { kind: "noise", depth: 40, scale: 1.1 },
+          rendering: {
+            mode: "marker",
+            blendMode: "overlay",
+            wetEdges: false,
+            flow: 40,
+          },
+        },
+      },
+      // Halftone overlay
+      {
+        id: "halftone",
+        name: "Halftone",
+        params: [
+          p("size", "Size", "size", 22, 1, 160, 1),
+          p("flow", "Flow", "flow", 36, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 12, 0, 100, 1),
+        ],
+        engine: {
+          backend: "pattern",
+          strokePath: {
+            spacing: 12,
+            jitter: 4,
+            scatter: 0,
+            streamline: 16,
+            count: 1,
+          },
+          shape: { type: "square", softness: 10, sizeScale: 1 },
+          grain: { kind: "paper", depth: 0, scale: 1 },
+          rendering: {
+            mode: "marker",
+            blendMode: "soft-light",
+            wetEdges: false,
+            flow: 36,
+          },
+        },
+      },
+    ],
+  },
+
+  // NEW: Vintage category
+  {
+    id: "vintage",
+    name: "Vintage",
+    brushes: [
+      {
+        id: "old-print",
+        name: "Old Print",
+        params: [
+          p("size", "Size", "size", 20, 1, 160, 1),
+          p("flow", "Flow", "flow", 48, 0, 100, 1),
+          p("spacing", "Spacing", "spacing", 10, 0, 100, 1),
+          p("grain", "Grain", "grain", 60, 0, 100, 1),
+        ],
+        engine: {
+          backend: "stamping",
+          strokePath: {
+            spacing: 10,
+            jitter: 8,
+            scatter: 0.4,
+            streamline: 18,
+            count: 1,
+          },
+          shape: { type: "round", softness: 70, sizeScale: 1 },
+          grain: { kind: "paper", depth: 60, scale: 1.1, rotate: 0 },
+          rendering: {
+            mode: "marker",
+            blendMode: "overlay",
+            wetEdges: false,
+            flow: 48,
+          },
+          overrides: { rimMode: "off", opacity: 90 },
+        },
+      },
     ],
   },
 ];
 
-export const BRUSH_BY_ID: Record<string, BrushPreset> = Object.fromEntries(
-  BRUSH_CATEGORIES.flatMap((c) => c.brushes.map((b) => [b.id, b]))
-);
+export const BRUSH_BY_ID: Record<string, BrushPreset> = (() => {
+  const m: Record<string, BrushPreset> = {};
+  for (const cat of BRUSH_CATEGORIES) {
+    for (const b of cat.brushes) m[b.id] = b;
+  }
+  return m;
+})();

@@ -1,12 +1,24 @@
-import type { BackendAdapter, RenderStrokeOptions } from "./types";
+// FILE: src/lib/brush/backends/smudgeAdapter.ts
+import type {
+  BackendAdapter,
+  RenderStrokeOptions,
+  CanvasSurface,
+  AdapterExtra,
+} from "@backends/types";
+
 import type {
   RenderOptions,
   RenderPathPoint,
   RenderOverrides,
   EngineConfig,
   EngineStrokePath,
-} from "@/lib/brush/engine";
+} from "@/lib/brush/engine.types";
+
 import drawSmudge from "./smudge"; // resolves to ./smudge/index.ts
+import { get2D } from "@backends/utils/canvas";
+import { withBaseCaps } from "@/lib/brush/backends/caps";
+
+/* ============================ Local helper types ============================ */
 
 type IncomingPoint = {
   x: number;
@@ -18,27 +30,34 @@ type IncomingPoint = {
   t?: number;
 };
 
-type SmudgeExtras = Partial<RenderOverrides> & {
-  baseSizePx?: number;
-  sizePx?: number;
-  spacing?: number; // forwards to engine.strokePath.spacing
-};
+type SmudgeExtrasWide = Partial<RenderOverrides> &
+  AdapterExtra & {
+    baseSizePx?: number;
+    sizePx?: number; // legacy alias
+    spacing?: number; // legacy→ EngineStrokePath.spacing
+    streamline?: number; // → EngineStrokePath.streamline
+  };
+
+/* ================================= Helpers ================================= */
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
+
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
-  return isFiniteNumber(pt.p)
-    ? pt.p
-    : isFiniteNumber(pt.pressure)
-      ? pt.pressure
-      : 0.7;
+  if (isFiniteNumber(pt.p)) return pt.p;
+  if (isFiniteNumber(pt.pressure)) return pt.pressure;
+  return 0.7; // gentle default suits smudge
 }
+
+/** Keep only defined fields (preserve 0/false/null). */
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
   return out as Partial<T>;
 }
+
+/** Normalize external path → engine path (omit undefined optionals). */
 function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -51,49 +70,71 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
+/* ================================= Adapter ================================= */
+
+const SMUDGE_DEFAULT_BASE = 12;
+
 const smudgeAdapter: BackendAdapter = {
   id: "smudge",
   name: "smudge",
+  caps: withBaseCaps({
+    flow: true, // pickup/laydown scaling
+    tilt: true, // directional bias if core supports it
+    smudge: true, // pickup/laydown pipeline
+    worker: true, // OffscreenCanvas-safe
+  }),
 
   async renderStroke(
-    canvas: HTMLCanvasElement | OffscreenCanvas,
+    surface: CanvasSurface,
     opts: RenderStrokeOptions
   ): Promise<void> {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    const ctx =
-      (canvas.getContext &&
-        (canvas.getContext("2d", { alpha: true }) as
-          | CanvasRenderingContext2D
-          | OffscreenCanvasRenderingContext2D
-          | null)) ||
-      null;
-    if (!ctx) throw new Error("2D context not available.");
+    const ctx = get2D(surface);
 
-    const rawExtra: SmudgeExtras = (opts.extra ?? {}) as SmudgeExtras;
+    // Standardized extras (support new locations + legacy root fields)
+    const extra = (opts.extra ?? {}) as SmudgeExtrasWide;
+
+    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
+    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
+
     const {
       baseSizePx: extraBase,
-      sizePx,
-      spacing,
-      ...restOverrides
-    } = rawExtra;
+      sizePx, // legacy alias
+      spacing, // legacy/compat shortcut → strokePath.spacing
+      streamline, // compat mapping → strokePath.streamline
+      ...legacyOverridesAtRoot
+    } = extra;
 
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      restOverrides as Partial<RenderOverrides>
+      {
+        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+        ...extraOverrides,
+      }
     );
 
-    const baseSizePx = isFiniteNumber(extraBase)
-      ? extraBase
-      : isFiniteNumber(sizePx)
-        ? sizePx
-        : isFiniteNumber(opts.baseSizePx)
-          ? opts.baseSizePx
-          : 12;
+    // Strict baseSizePx
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
+      ? opts.baseSizePx
+      : isFiniteNumber(extraBase)
+        ? extraBase
+        : isFiniteNumber(sizePx)
+          ? sizePx
+          : SMUDGE_DEFAULT_BASE;
 
-    const strokePath: EngineStrokePath = {};
+    // Compose strokePath from standardized bag + compat mapping (omit undefineds)
+    const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(spacing)) strokePath.spacing = spacing;
+    if (isFiniteNumber(overrides.spacing))
+      strokePath.spacing = overrides.spacing;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
+    if (isFiniteNumber(overrides.scatter))
+      strokePath.scatter = overrides.scatter;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
+    if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
+    // Engine config
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
@@ -104,18 +145,14 @@ const smudgeAdapter: BackendAdapter = {
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      ...(typeof (opts as { color?: string }).color === "string"
-        ? { color: (opts as { color: string }).color }
-        : {}),
-      ...(isFiniteNumber((opts as { dpr?: number }).dpr)
-        ? { pixelRatio: (opts as { dpr: number }).dpr }
-        : {}),
-      ...(isFiniteNumber((opts as { pixelRatio?: number }).pixelRatio)
-        ? { pixelRatio: (opts as { pixelRatio: number }).pixelRatio }
+      ...(typeof opts.color === "string" ? { color: opts.color } : {}),
+      ...(isFiniteNumber(opts.pixelRatio)
+        ? { pixelRatio: opts.pixelRatio }
         : {}),
       ...(opts.input ? { input: opts.input } : {}),
     };
 
+    // drawSmudge is sync in most cases
     drawSmudge(ctx, renderOpts);
   },
 };

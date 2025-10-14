@@ -2,11 +2,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import type Konva from "konva";
-import Transformer from "@/features/editor/canvas/konva/TransformerClient";
 import type { TextLayer, BoxLayer } from "@/features/editor/types/layers";
-
+import Stage from "@/features/editor/canvas/konva/StageClient";
+import {
+  Layer,
+  Image as KonvaImage,
+  Text as KonvaText,
+  Rect,
+  Transformer,
+} from "react-konva";
 import {
   Sheet,
   SheetContent,
@@ -33,33 +38,6 @@ import { useCanvasSizing } from "@/features/editor/hooks/useCanvasSizing";
 import { useFullscreen } from "@/features/editor/hooks/useFullscreen";
 import LeftSidebar from "./LeftSidebar";
 import { EditorToolsProvider } from "./context/EditorToolsProvider";
-
-// Konva (client-only)
-const Stage = dynamic(
-  () =>
-    import("@/features/editor/canvas/konva/StageClient").then((m) => m.default),
-  { ssr: false }
-);
-const Layer = dynamic(
-  () =>
-    import("@/features/editor/canvas/konva/LayerClient").then((m) => m.default),
-  { ssr: false }
-);
-const KonvaImage = dynamic(
-  () =>
-    import("@/features/editor/canvas/konva/ImageClient").then((m) => m.default),
-  { ssr: false }
-);
-const KonvaText = dynamic(
-  () =>
-    import("@/features/editor/canvas/konva/TextClient").then((m) => m.default),
-  { ssr: false }
-);
-const Rect = dynamic(
-  () =>
-    import("@/features/editor/canvas/konva/RectClient").then((m) => m.default),
-  { ssr: false }
-);
 
 export type FullEditorOverlayProps = {
   open: boolean;
@@ -120,7 +98,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     onSelectAssetAction,
   } = props;
 
-  // Fullscreen control on overlay root
   const {
     targetRef: overlayRef,
     isFullscreen,
@@ -128,7 +105,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     toggle: toggleFullscreen,
   } = useFullscreen<HTMLDivElement>();
 
-  // Prevent background scroll only while open
   useEffect(() => {
     if (!open) return;
     const prev = document.documentElement.style.overflow;
@@ -138,19 +114,15 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     };
   }, [open]);
 
-  // View state
   const [hand, setHand] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
 
-  // Zoom model: EditBar uses 1 = “Fit to container”
   const [zoomPercent, setZoomPercent] = useState(1);
   const ZOOM_MIN = 0.05;
   const ZOOM_MAX = 4;
 
-  // Scrollable canvas bay
   const bayRef = useRef<HTMLDivElement | null>(null);
 
-  // Base fit-to-container scale, then multiply by zoom
   const { containerRef, fitToContainerScale } = useCanvasSizing(
     preset.width || 1,
     preset.height || 1,
@@ -158,12 +130,28 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
   );
   const totalScale = (fitToContainerScale || 1) * zoomPercent;
 
-  // Stage pixel size
   const stageWidth = Math.max(1, Math.floor((preset.width || 1) * totalScale));
   const stageHeight = Math.max(
     1,
     Math.floor((preset.height || 1) * totalScale)
   );
+
+  // Guard numbers
+  const stageReadyNumbers =
+    Number.isFinite(stageWidth) &&
+    Number.isFinite(stageHeight) &&
+    stageWidth > 0 &&
+    stageHeight > 0;
+
+  // Explicit host container for Konva.Stage
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  // Wait for mount
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Only consider container "ready" once the ref exists in the DOM
+  const containerReady = mounted && !!hostRef.current;
 
   // Keep transformer attached to the selected node
   useEffect(() => {
@@ -183,7 +171,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     }
   }, [selectedId, stageRef, transformerRef]);
 
-  // Layers for RightSidebar
   const layers = useMemo(
     () => [
       ...(imageElement
@@ -204,7 +191,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
   );
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
-  // Hand-drag pan in the bay
   function onBayMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!hand) return;
     const el = bayRef.current;
@@ -228,21 +214,18 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     window.addEventListener("mouseup", up);
   }
 
-  // Left / Right panels (desktop) + Mobile “drawers”
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [leftMobileOpen, setLeftMobileOpen] = useState(false);
   const [rightMobileOpen, setRightMobileOpen] = useState(false);
 
-  // Desktop fixed widths (no resizers)
   const LEFT_OPEN_WIDTH = 200;
   const LEFT_RAIL_WIDTH = 24;
   const RIGHT_OPEN_WIDTH = 320;
   const RIGHT_RAIL_WIDTH = 56;
 
-  // Avoid using window in render for columns; track viewport once mounted
   const [isDesktop, setIsDesktop] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true; // SSR-safe default
+    if (typeof window === "undefined") return true;
     return window.innerWidth >= 1024;
   });
   useEffect(() => {
@@ -279,7 +262,6 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {/* On lg: toggle sidebars in/out. On small: open mobile overlays */}
             <Button
               size="sm"
               variant="ghost"
@@ -377,12 +359,12 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
         <div
           className="w-full"
           style={{
-            height: "calc(100vh - 5rem)", // 2.5rem top + 2.5rem editbar
+            height: "calc(100vh - 5rem)",
             display: "grid",
             gridTemplateColumns: gridTemplateColumns,
           }}
         >
-          {/* ===== LEFT (desktop only) ===== */}
+          {/* LEFT */}
           <div className="hidden lg:flex border-r bg-muted/20 relative overflow-visible transition-[width] duration-200 ease-in-out">
             <LeftPanel
               open={leftOpen}
@@ -395,7 +377,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
             />
           </div>
 
-          {/* ===== CENTER: Canvas bay ===== */}
+          {/* CENTER */}
           <div className="relative min-w-0 min-h-0">
             <div
               ref={bayRef}
@@ -408,7 +390,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
               onMouseDown={onBayMouseDown}
             >
               <div className="relative w-full h-full min-w-0 min-h-0">
-                {/* Lightweight CSS rulers (top/left) */}
+                {/* rulers */}
                 <div className="absolute left-6 top-0 right-0 h-6 z-20 pointer-events-none">
                   <div
                     className="w-full h-full"
@@ -428,7 +410,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                   />
                 </div>
 
-                {/* Stage container inset to leave room for rulers */}
+                {/* Stage container inset */}
                 <div
                   ref={containerRef}
                   className="absolute inset-[24px_0_0_24px] flex items-center justify-center min-w-0 min-h-0"
@@ -447,9 +429,9 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                         className="absolute inset-0 pointer-events-none"
                         style={{
                           backgroundImage: `
-                          linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
-                          linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)
-                        `,
+                            linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px),
+                            linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)
+                          `,
                           backgroundSize: `${Math.max(
                             8,
                             Math.round(50 * totalScale)
@@ -458,163 +440,167 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                       />
                     )}
 
-                    {/* Konva Stage */}
-                    <Stage
-                      width={stageWidth}
-                      height={stageHeight}
-                      ref={stageRef}
-                      onMouseDown={(
-                        e: Konva.KonvaEventObject<MouseEvent>
-                      ): void => {
-                        if (e.target === e.target.getStage()) {
-                          setSelectedId(null);
-                        }
-                      }}
-                      onTap={(e: Konva.KonvaEventObject<TouchEvent>): void => {
-                        if (e.target === e.target.getStage()) {
-                          setSelectedId(null);
-                        }
-                      }}
-                    >
-                      <Layer scaleX={totalScale} scaleY={totalScale}>
-                        {/* Frame */}
-                        <Rect
-                          x={0}
-                          y={0}
-                          width={preset.width || 1}
-                          height={preset.height || 1}
-                          fill={canvasBg === "white" ? "#fff" : "#000"}
-                          listening={false}
-                        />
-
-                        {/* Background image (respect hidden) */}
-                        {imageElement && !hiddenIds.has("bg") && (
-                          <KonvaImage
-                            id="bg"
-                            image={imageElement}
-                            x={imageOffsetX}
-                            y={imageOffsetY}
-                            scaleX={imageScale}
-                            scaleY={imageScale}
-                            draggable
-                            onClick={() => setSelectedId("bg")}
-                            onTap={() => setSelectedId("bg")}
-                            onDragEnd={(e) => {
-                              setImageOffsetX(e.target.x());
-                              setImageOffsetY(e.target.y());
-                            }}
+                    {/* Stage mounts once hostRef exists and sizes are valid */}
+                    {mounted && stageReadyNumbers && hostRef.current ? (
+                      <Stage
+                        width={stageWidth}
+                        height={stageHeight}
+                        ref={stageRef}
+                        onMouseDown={(
+                          e: Konva.KonvaEventObject<MouseEvent>
+                        ): void => {
+                          if (e.target === e.target.getStage()) {
+                            setSelectedId(null);
+                          }
+                        }}
+                        onTap={(
+                          e: Konva.KonvaEventObject<TouchEvent>
+                        ): void => {
+                          if (e.target === e.target.getStage()) {
+                            setSelectedId(null);
+                          }
+                        }}
+                      >
+                        <Layer scaleX={totalScale} scaleY={totalScale}>
+                          {/* Frame */}
+                          <Rect
+                            x={0}
+                            y={0}
+                            width={preset.width || 1}
+                            height={preset.height || 1}
+                            fill={canvasBg === "white" ? "#fff" : "#000"}
+                            listening={false}
                           />
-                        )}
 
-                        {/* Boxes */}
-                        {boxes.map((b) =>
-                          hiddenIds.has(b.id) ? null : (
-                            <Rect
-                              key={b.id}
-                              id={b.id}
-                              x={b.x}
-                              y={b.y}
-                              width={b.w}
-                              height={b.h}
-                              fill="#00000088"
-                              stroke="#ffffff"
-                              strokeWidth={2}
+                          {/* Background image (respect hidden) */}
+                          {imageElement && !hiddenIds.has("bg") && (
+                            <KonvaImage
+                              id="bg"
+                              image={imageElement}
+                              x={imageOffsetX}
+                              y={imageOffsetY}
+                              scaleX={imageScale}
+                              scaleY={imageScale}
                               draggable
-                              onClick={() => setSelectedId(b.id)}
-                              onTap={() => setSelectedId(b.id)}
+                              onClick={() => setSelectedId("bg")}
+                              onTap={() => setSelectedId("bg")}
                               onDragEnd={(e) => {
-                                const { x, y } = e.target.position();
-                                setBoxes((arr) =>
-                                  arr.map((it) =>
-                                    it.id === b.id ? { ...it, x, y } : it
-                                  )
-                                );
-                              }}
-                              onTransformEnd={(
-                                e: Konva.KonvaEventObject<Event>
-                              ) => {
-                                const node = e.target;
-                                const scaleX = node.scaleX();
-                                const scaleY = node.scaleY();
-                                node.scaleX(1);
-                                node.scaleY(1);
-                                setBoxes((arr) =>
-                                  arr.map((it) =>
-                                    it.id === b.id
-                                      ? {
-                                          ...it,
-                                          x: node.x(),
-                                          y: node.y(),
-                                          w: Math.max(2, b.w * scaleX),
-                                          h: Math.max(2, b.h * scaleY),
-                                        }
-                                      : it
-                                  )
-                                );
+                                setImageOffsetX(e.target.x());
+                                setImageOffsetY(e.target.y());
                               }}
                             />
-                          )
-                        )}
+                          )}
 
-                        {/* Texts */}
-                        {texts.map((t) =>
-                          hiddenIds.has(t.id) ? null : (
-                            <KonvaText
-                              key={t.id}
-                              id={t.id}
-                              text={t.text}
-                              fill="#ffffff"
-                              fontSize={t.size}
-                              x={t.x}
-                              y={t.y}
-                              draggable
-                              onClick={() => setSelectedId(t.id)}
-                              onTap={() => setSelectedId(t.id)}
-                              onDragEnd={(e) => {
-                                const { x, y } = e.target.position();
-                                setTexts((arr) =>
-                                  arr.map((it) =>
-                                    it.id === t.id ? { ...it, x, y } : it
-                                  )
-                                );
-                              }}
-                              onTransformEnd={(
-                                e: Konva.KonvaEventObject<Event>
-                              ) => {
-                                const node = e.target;
-                                const scaleY = node.scaleY();
-                                node.scaleY(1);
-                                const nextSize = Math.max(
-                                  4,
-                                  Math.round(t.size * scaleY)
-                                );
-                                setTexts((arr) =>
-                                  arr.map((it) =>
-                                    it.id === t.id
-                                      ? { ...it, size: nextSize }
-                                      : it
-                                  )
-                                );
-                              }}
-                            />
-                          )
-                        )}
+                          {/* Boxes */}
+                          {boxes.map((b) =>
+                            hiddenIds.has(b.id) ? null : (
+                              <Rect
+                                key={b.id}
+                                id={b.id}
+                                x={b.x}
+                                y={b.y}
+                                width={b.w}
+                                height={b.h}
+                                fill="#00000088"
+                                stroke="#ffffff"
+                                strokeWidth={2}
+                                draggable
+                                onClick={() => setSelectedId(b.id)}
+                                onTap={() => setSelectedId(b.id)}
+                                onDragEnd={(e) => {
+                                  const { x, y } = e.target.position();
+                                  setBoxes((arr) =>
+                                    arr.map((it) =>
+                                      it.id === b.id ? { ...it, x, y } : it
+                                    )
+                                  );
+                                }}
+                                onTransformEnd={(
+                                  e: Konva.KonvaEventObject<Event>
+                                ) => {
+                                  const node = e.target;
+                                  const scaleX = node.scaleX();
+                                  const scaleY = node.scaleY();
+                                  node.scaleX(1);
+                                  node.scaleY(1);
+                                  setBoxes((arr) =>
+                                    arr.map((it) =>
+                                      it.id === b.id
+                                        ? {
+                                            ...it,
+                                            x: node.x(),
+                                            y: node.y(),
+                                            w: Math.max(2, b.w * scaleX),
+                                            h: Math.max(2, b.h * scaleY),
+                                          }
+                                        : it
+                                    )
+                                  );
+                                }}
+                              />
+                            )
+                          )}
 
-                        {/* Transformer */}
-                        <Transformer
-                          ref={transformerRef}
-                          rotateEnabled
-                          keepRatio
-                        />
-                      </Layer>
-                    </Stage>
+                          {/* Texts */}
+                          {texts.map((t) =>
+                            hiddenIds.has(t.id) ? null : (
+                              <KonvaText
+                                key={t.id}
+                                id={t.id}
+                                text={t.text}
+                                fill="#ffffff"
+                                fontSize={t.size}
+                                x={t.x}
+                                y={t.y}
+                                draggable
+                                onClick={() => setSelectedId(t.id)}
+                                onTap={() => setSelectedId(t.id)}
+                                onDragEnd={(e) => {
+                                  const { x, y } = e.target.position();
+                                  setTexts((arr) =>
+                                    arr.map((it) =>
+                                      it.id === t.id ? { ...it, x, y } : it
+                                    )
+                                  );
+                                }}
+                                onTransformEnd={(
+                                  e: Konva.KonvaEventObject<Event>
+                                ) => {
+                                  const node = e.target;
+                                  const scaleY = node.scaleY();
+                                  node.scaleY(1);
+                                  const nextSize = Math.max(
+                                    4,
+                                    Math.round(t.size * scaleY)
+                                  );
+                                  setTexts((arr) =>
+                                    arr.map((it) =>
+                                      it.id === t.id
+                                        ? { ...it, size: nextSize }
+                                        : it
+                                    )
+                                  );
+                                }}
+                              />
+                            )
+                          )}
+
+                          {/* Transformer */}
+                          <Transformer
+                            ref={transformerRef}
+                            rotateEnabled
+                            keepRatio
+                          />
+                        </Layer>
+                      </Stage>
+                    ) : null}
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* ===== RIGHT (desktop only) ===== */}
+          {/* RIGHT */}
           <div className="hidden lg:flex border-l bg-muted/10 relative overflow-visible transition-[width] duration-200 ease-in-out">
             <RightPanel
               open={rightOpen}
@@ -640,9 +626,8 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
           </div>
         </div>
 
-        {/* === MOBILE: Left sheet (under lg) === */}
+        {/* MOBILE: Left sheet */}
         <div className="lg:hidden">
-          {/* Custom overlay to dim/close (high z to beat page overlay) */}
           {leftMobileOpen && (
             <div
               className="cursor-pointer fixed inset-0 bg-background/70 backdrop-blur-[1px] z-[990]"
@@ -694,7 +679,7 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
           </Sheet>
         </div>
 
-        {/* === MOBILE: Right sheet (under lg) === */}
+        {/* MOBILE: Right sheet */}
         <div className="lg:hidden">
           {rightMobileOpen && (
             <div className="cursor-pointer fixed top-2 right-2 z-[5000] rounded bg-blue-600 text-white text-xs px-2 py-1">

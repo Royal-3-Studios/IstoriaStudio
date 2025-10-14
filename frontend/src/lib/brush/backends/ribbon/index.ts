@@ -7,6 +7,9 @@ import { drawRibbonInk } from "./variants/ink";
 import { drawRibbonCalligraphy } from "./variants/calligraphy";
 import { drawRibbonMarker } from "./variants/marker";
 
+// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend
+import { getTiltOverrides } from "@backends/stamping/utils/scalars";
+
 /** All supported ribbon rendering modes. */
 export type RibbonMode = "pencil" | "ink" | "calligraphy" | "marker";
 
@@ -24,26 +27,40 @@ function getRibbonConfig(opt: RenderOptions): RibbonBackendConfig | undefined {
   return bo?.ribbon;
 }
 
-function pickMode(opt: RenderOptions): RibbonMode {
+/** Resolve concrete mode (default "pencil"). */
+export function pickMode(opt: RenderOptions): RibbonMode {
   const m = getRibbonConfig(opt)?.mode;
   return m === "ink" || m === "calligraphy" || m === "marker" ? m : "pencil";
 }
 
 /** Core entry: draw using the selected variant. */
 export default function drawRibbon(ctx: Ctx2D, opt: RenderOptions): void {
-  switch (pickMode(opt)) {
+  // Merge normalized tilt knobs into overrides once, so variants can just read ov.tiltTo*
+  const tilt = getTiltOverrides(opt.engine.overrides);
+  const optWithTilt: RenderOptions = {
+    ...opt,
+    engine: {
+      ...opt.engine,
+      overrides: {
+        ...(opt.engine.overrides ?? {}),
+        ...tilt,
+      },
+    },
+  };
+
+  switch (pickMode(optWithTilt)) {
     case "ink":
-      drawRibbonInk(ctx, opt);
+      drawRibbonInk(ctx, optWithTilt);
       break;
     case "calligraphy":
-      drawRibbonCalligraphy(ctx, opt);
+      drawRibbonCalligraphy(ctx, optWithTilt);
       break;
     case "marker":
-      drawRibbonMarker(ctx, opt);
+      drawRibbonMarker(ctx, optWithTilt);
       break;
     case "pencil":
     default:
-      drawRibbonPencil(ctx, opt);
+      drawRibbonPencil(ctx, optWithTilt);
       break;
   }
 }

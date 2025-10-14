@@ -1,5 +1,5 @@
 // FILE: src/lib/brush/presets/requirements.ts
-import type { EngineConfig } from "@/lib/brush/engine";
+import type { EngineConfig } from "@/lib/brush/engine.types";
 import type { BrushPreset } from "@/data/brushPresets"; // adjust if your alias differs
 
 // Non-nullable backend key type (safe for Record/Set keys)

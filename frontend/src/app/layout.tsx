@@ -1,5 +1,9 @@
+// src/app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
+import { ConditionalAuth } from "@/components/ConditionalAuth";
+
 import { ThemeProvider } from "@/components/theme-provider";
 import {
   SidebarProvider,
@@ -17,8 +21,10 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Separator } from "@/components/ui/separator";
 import { ModeToggle } from "@/components/theme-toggle";
-import { ConditionalAuth } from "@/components/ConditionalAuth"; // 👈 new wrapper
+
 import "./globals.css";
+
+// Lazy-load the client-only auth widget (prevents SSR cookie/window issues)
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,13 +43,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
         <ThemeProvider
           attribute="class"
@@ -75,11 +79,12 @@ export default function RootLayout({
                 </div>
                 <div className="flex space-x-1">
                   <ModeToggle />
-                  <ConditionalAuth /> {/* 👈 LoginMenu + AuthInitProvider */}
+                  <Suspense fallback={null}>
+                    <ConditionalAuth />
+                  </Suspense>
                 </div>
               </header>
 
-              {/* <div className="flex flex-1 flex-col gap-4 p-4 pt-0"> */}
               <div className="flex flex-1 min-h-0 flex-col gap-4 p-4 pt-0 overflow-hidden">
                 {children}
               </div>

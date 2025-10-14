@@ -1,6 +1,6 @@
 // FILE: src/lib/brush/engine.types.ts
 
-import type { BrushInputConfig } from "@/data/brushPresets";
+// import type { BrushInputConfig } from "@/data/brushPresets";
 
 /* ============================== Enums/Strings ============================== */
 
@@ -83,7 +83,7 @@ export type EngineGrain = {
   depth?: number; // 0..100
   scale?: number; // 0.5..3
   rotate?: number; // deg
-  motion?: "paperLocked" | "tipLocked" | "smudgeLocked";
+  motion?: "paperLocked" | "tipLocked" | "smudgeLocked" | "animated";
 };
 
 export type EngineRendering = {
@@ -131,7 +131,7 @@ export type RenderOverrides = {
   grainScale?: number;
   grainDepth?: number;
   grainRotate?: number;
-  grainMotion?: "paperLocked" | "tipLocked" | "smudgeLocked";
+  grainMotion?: "paperLocked" | "tipLocked" | "smudgeLocked" | "animated";
 
   /* Wet hint */
   wetEdges?: boolean;
@@ -455,3 +455,115 @@ export type RenderingResolution = {
 export type IntentToResolutionMap = Partial<
   Record<RenderingIntent, RenderingResolution>
 >;
+/* ================= UI Param Types ================= */
+
+export type BrushParamType =
+  | "size"
+  | "hardness"
+  | "flow"
+  | "spacing"
+  | "smoothing"
+  | "angle"
+  | "jitterSize"
+  | "jitterAngle"
+  | "grain"
+  | "opacity";
+
+export type BrushParam = {
+  key: string;
+  label: string;
+  type: BrushParamType;
+  min?: number;
+  max?: number;
+  step?: number;
+  defaultValue: number;
+  /** Hide from UI without removing from schema. */
+  show?: boolean;
+};
+
+/* ================= Catalog Types ================= */
+
+export type BrushPreset = {
+  id: string;
+  name: string;
+  subtitle?: string;
+  params: BrushParam[];
+  engine: EngineConfigLike;
+  /** Optional discovery/organization tags (e.g., "textured", "thin", "pencil"). */
+  tags?: string[];
+  /**
+   * Optional input pipeline metadata.
+   */
+  input?: BrushInputConfig;
+};
+
+export type BrushCategory = {
+  id: string;
+  name: string;
+  brushes: BrushPreset[];
+};
+
+/** Handy id alias for components/selectors. */
+export type BrushId = BrushPreset["id"];
+
+/* ================= Input Pipeline Types ================= */
+
+export type PressureCurve =
+  | { type: "gamma"; gamma: number }
+  | { type: "cubic"; p0: number; p1: number; p2: number; p3: number };
+
+export type PressureSmoothing =
+  | { mode: "disabled" }
+  | {
+      mode: "oneEuro";
+      oneEuro: { minCutoff: number; beta: number; dCutoff: number };
+    };
+
+export type PressureSynth =
+  | { enabled: false }
+  | {
+      enabled: true;
+      /** range of pointer speed in px/s to map into pressure */
+      speedRange: [number, number];
+      /** clamp range of synthesized pressure */
+      minPressure: number; // 0..1
+      maxPressure: number; // 0..1
+      curve: "linear" | "easeIn" | "easeOut" | "easeInOut";
+    };
+
+/**
+ * UI-facing input config.
+ * (Kept here so engine and UI can both reference it without a circular import.)
+ */
+export type BrushInputConfig = {
+  pressure: {
+    clamp: { min: number; max: number };
+    curve: PressureCurve;
+    smoothing: PressureSmoothing;
+    velocityComp?: { k: number; refSpeed: number };
+    synth?: PressureSynth;
+    gain?: number;
+    deadZone?: number; // 0..0.5
+  };
+  quality?: {
+    predictPx?: number;
+    speedToSpacing?: number;
+    minStepPx?: number;
+  };
+};
+
+/**
+ * Minimal EngineConfig-like shape for presets, so this file doesn’t import engine.types.ts.
+ * The real EngineConfig lives in the engine; presets will be validated when loaded.
+ */
+export type EngineConfigLike = {
+  version?: number;
+  backend?: string;
+  shape?: Record<string, unknown>;
+  strokePath?: Record<string, unknown>;
+  grain?: Record<string, unknown>;
+  rendering?: Record<string, unknown>;
+  overrides?: Record<string, unknown>;
+  backendOverrides?: Record<string, unknown>;
+  modulations?: unknown;
+};

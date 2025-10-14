@@ -10,7 +10,7 @@
  * - Simple ink shading curve
  */
 
-import { createLayer, get2DOrNull, type Ctx2D } from "@backends";
+import { createLayer, get2DOrNull, type Ctx2D } from "@backends/utils/canvas";
 import { generateFbmNoiseTexture } from "@/lib/brush/backends/utils/texture";
 import { mulberry32 } from "@backends/utils/random";
 

@@ -4,7 +4,7 @@
 import * as React from "react";
 import type { BrushPreset } from "@/data/brushPresets";
 import { BRUSH_CATEGORIES, BRUSH_BY_ID } from "@/data/brushPresets";
-import type { EngineConfig, RenderOptions } from "@/lib/brush/engine";
+import type { EngineConfig, RenderOptions } from "@/lib/brush/engine.types";
 import {
   BRUSH_SECTIONS,
   type ControlDef,
@@ -23,8 +23,14 @@ import { debounce } from "@/lib/shared/timing";
 
 /* ---------- enums mirrored by select controls (indices map to strings) ---------- */
 const GRAIN_KIND = ["none", "paper", "canvas", "noise"] as const;
+// include 'animated' since your overrides union allows it
+const GRAIN_MOTION = [
+  "paperLocked",
+  "tipLocked",
+  "smudgeLocked",
+  "animated",
+] as const;
 const RIM_MODE = ["auto", "on", "off"] as const;
-const GRAIN_MOTION = ["paperLocked", "tipLocked", "smudgeLocked"] as const;
 const TAPER_PROFILE = [
   "linear",
   "easeIn",
@@ -112,8 +118,9 @@ export function BrushSettings({
   const safePreset: BrushPreset = preset ?? CATALOG_FALLBACK;
 
   /* ---------- hooks (always called, no early returns) ---------- */
+  // Ensure initial value matches SectionDef["id"] exactly
   const [activeSection, setActiveSection] = React.useState<SectionDef["id"]>(
-    sections[0]?.id ?? "general"
+    () => (sections[0]?.id ?? "general") as SectionDef["id"]
   );
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
@@ -123,9 +130,6 @@ export function BrushSettings({
     React.useMemo(() => {
       const v = values;
       const o: Partial<NonNullable<RenderOptions["overrides"]>> = {};
-
-      // NOTE: spacing/jitter/scatter/count are now handled on engine.strokePath
-      // so we intentionally DO NOT mirror them into overrides to avoid conflicts.
 
       // Per-stamp jitter
       if (v.jitterSize != null)
@@ -146,16 +150,20 @@ export function BrushSettings({
       if (v.wetEdges != null) o.wetEdges = !!Number(v.wetEdges);
 
       // Grain
-      if (v.grainKind != null)
-        o.grainKind =
-          GRAIN_KIND[clampIdx(Number(v.grainKind), GRAIN_KIND.length)];
+      if (v.grainKind != null) {
+        const idx = clampIdx(Number(v.grainKind), GRAIN_KIND.length);
+        const grainKind = GRAIN_KIND[idx] as (typeof GRAIN_KIND)[number];
+        o.grainKind = grainKind as NonNullable<(typeof o)["grainKind"]>;
+      }
       if (v.grainDepth != null) o.grainDepth = Number(v.grainDepth);
       if (v.grainScale != null)
         o.grainScale = clamp(Number(v.grainScale) / 100, 0.25, 4);
       if (v.grainRotate != null) o.grainRotate = Number(v.grainRotate);
-      if (v.grainMotion != null)
-        o.grainMotion =
-          GRAIN_MOTION[clampIdx(Number(v.grainMotion), GRAIN_MOTION.length)];
+      if (v.grainMotion != null) {
+        const idx = clampIdx(Number(v.grainMotion), GRAIN_MOTION.length);
+        const motion = GRAIN_MOTION[idx] as (typeof GRAIN_MOTION)[number];
+        o.grainMotion = motion as NonNullable<(typeof o)["grainMotion"]>;
+      }
 
       // Paper tooth
       if (v.toothBody != null) o.toothBody = clamp01(Number(v.toothBody));
@@ -186,16 +194,18 @@ export function BrushSettings({
         o.thicknessCurve = clamp(Number(v.thicknessCurve), 0.2, 3);
 
       // Taper profile enums
-      if (v.taperProfileStart != null)
-        o.taperProfileStart =
-          TAPER_PROFILE[
-            clampIdx(Number(v.taperProfileStart), TAPER_PROFILE.length)
-          ];
-      if (v.taperProfileEnd != null)
-        o.taperProfileEnd =
-          TAPER_PROFILE[
-            clampIdx(Number(v.taperProfileEnd), TAPER_PROFILE.length)
-          ];
+      if (v.taperProfileStart != null) {
+        const idx = clampIdx(Number(v.taperProfileStart), TAPER_PROFILE.length);
+        o.taperProfileStart = TAPER_PROFILE[idx] as NonNullable<
+          (typeof o)["taperProfileStart"]
+        >;
+      }
+      if (v.taperProfileEnd != null) {
+        const idx = clampIdx(Number(v.taperProfileEnd), TAPER_PROFILE.length);
+        o.taperProfileEnd = TAPER_PROFILE[idx] as NonNullable<
+          (typeof o)["taperProfileEnd"]
+        >;
+      }
 
       // Optional JSON curves
       if (
@@ -266,8 +276,10 @@ export function BrushSettings({
 
       // Pencil rim / lighting
       if (v.rimStrength != null) o.rimStrength = clamp01(Number(v.rimStrength));
-      if (v.rimMode != null)
-        o.rimMode = RIM_MODE[clampIdx(Number(v.rimMode), RIM_MODE.length)];
+      if (v.rimMode != null) {
+        const idx = clampIdx(Number(v.rimMode), RIM_MODE.length);
+        o.rimMode = RIM_MODE[idx] as NonNullable<(typeof o)["rimMode"]>;
+      }
       if (v.bgIsLight != null) o.bgIsLight = !!Number(v.bgIsLight);
 
       // Backend-specific
@@ -311,8 +323,6 @@ export function BrushSettings({
     const shape = {
       ...src.shape,
       ...(values.angle != null ? { angle: Number(values.angle) } : {}),
-      // If you want hardness->softness mapping at engine level:
-      // ...(values.hardness != null ? { softness: 100 - Number(values.hardness) } : {}),
     };
 
     const gkIdx =
@@ -322,7 +332,9 @@ export function BrushSettings({
 
     const grain = {
       ...src.grain,
-      ...(gkIdx >= 0 ? { kind: GRAIN_KIND[gkIdx] } : {}),
+      ...(gkIdx >= 0
+        ? { kind: GRAIN_KIND[gkIdx] as (typeof GRAIN_KIND)[number] }
+        : {}),
       ...(values.grainDepth != null
         ? { depth: Number(values.grainDepth) }
         : {}),
@@ -361,13 +373,15 @@ export function BrushSettings({
     const uiSize = Number(values.size ?? sizeParam?.defaultValue ?? 12);
     const scale = previewEngine.shape?.sizeScale ?? 1;
     return clamp(Math.round(uiSize * scale), 2, 28);
+    // keep preview small/fast
   }, [values.size, sizeParam, previewEngine.shape?.sizeScale]);
 
   // Debounced renderer (stable ref)
   const debouncedRenderPreview = React.useRef(
     debounce(
       (canvas: HTMLCanvasElement, opts: RenderOptions) => {
-        void drawStrokeToCanvas(canvas, opts);
+        // preview doesn’t need fully-normalized input; cast to satisfy TS exact optional types
+        void drawStrokeToCanvas(canvas, opts as any);
       },
       40,
       { trailing: true, leading: false, maxWait: 100 }
@@ -408,11 +422,10 @@ export function BrushSettings({
     debouncedRenderPreview,
   ]);
 
-  React.useEffect(() => {
-    return () => {
-      debouncedRenderPreview.cancel();
-    };
-  }, [debouncedRenderPreview]);
+  React.useEffect(
+    () => () => debouncedRenderPreview.cancel(),
+    [debouncedRenderPreview]
+  );
 
   /* ---------- UI ---------- */
   return (
@@ -467,7 +480,10 @@ export function BrushSettings({
         </Select>
 
         <SectionPanel
-          section={sections.find((s) => s.id === activeSection) ?? sections[0]}
+          section={
+            (sections.find((s) => s.id === activeSection) ??
+              sections[0]!) as SectionDef
+          }
           values={values}
           onChangeAction={onChangeAction}
         />

@@ -1,0 +1,62 @@
+{
+  "id": "luminance/nebula",
+  "name": "Nebula",
+  "category": "Luminance",
+
+  "backend": "spray",
+  "variant": "airbrush",
+
+  "baseSizePx": 18,
+
+  "color": "#FFFFFF",
+
+  "engine": {
+    "rendering": {
+      "blendMode": "add"
+    },
+
+    "strokePath": {
+      "spacing": 8,
+      "jitter": 0.25,
+      "scatter": 12,
+      "count": 1,
+      "streamline": 0.2
+    },
+
+    "overrides": {
+      "flow": 70,
+      "opacity": 100,
+
+      "tiltToFan": 0.2,
+      "tiltToSize": 0.1
+    },
+
+    "grain": {
+      "kind": "noise",
+      "depth": 0.12,
+      "scale": 1.0,
+      "rotate": 0,
+      "motion": "paperLocked"
+    },
+
+    "backendOverrides": {
+      "spray": {
+        "dropletCount": 26,
+        "dropletJitter": 0.3,
+
+        "dropletSizeMin": 0.8,
+        "dropletSizeMax": 10.0,
+        "sizeJitter": 0.5,
+
+        "alphaMin": 0.05,
+        "alphaMax": 0.35,
+
+        "speedToDensity": -0.2,
+
+        "coneAngleDeg": 60,
+
+        "colorJitter": { "h": 35, "s": 0.25, "l": 0.08, "perDroplet": true }
+      }
+    }
+  }
+}

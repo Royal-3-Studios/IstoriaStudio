@@ -1,5 +1,5 @@
 // src/lib/brush/backends/spray/variants/nozzle.ts
-import type { RenderOptions } from "@/lib/brush/engine";
+import type { RenderOptions } from "@/lib/brush/engine.types";
 import type { Ctx2D } from "@backends/utils/canvas";
 import { drawSprayAirbrush } from "./airbrush";
 

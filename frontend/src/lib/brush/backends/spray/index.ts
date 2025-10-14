@@ -7,9 +7,11 @@ import { drawSpraySplatter } from "./variants/splatter";
 import { drawSprayNozzle } from "./variants/nozzle";
 import { drawSprayStipple } from "./variants/stipple";
 
+// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend:
+import { getTiltOverrides } from "@backends/stamping/utils/scalars";
+
 export type SprayMode = "airbrush" | "splatter" | "nozzle" | "stipple";
 
-/** Backend-local overrides (attach under engine.backendOverrides.spray) */
 export type SprayOverrides = Partial<{
   mode: SprayMode;
   dropletCount: number;
@@ -19,7 +21,7 @@ export type SprayOverrides = Partial<{
   sizeJitter: number; // 0..1
   alphaMin: number; // 0..1
   alphaMax: number; // 0..1
-  coneAngleDeg: number; // directional spread for nozzle/airbrush
+  coneAngleDeg: number; // degrees
   speedToDensity: number; // -1..+1
   colorJitter?: { h?: number; s?: number; l?: number; perDroplet?: boolean };
 }>;
@@ -30,32 +32,45 @@ function isSprayMode(v: unknown): v is SprayMode {
   );
 }
 
-function pickMode(opt: RenderOptions): SprayMode {
+export function pickMode(opt: RenderOptions): SprayMode {
   const spr = opt.engine.backendOverrides?.spray as SprayOverrides | undefined;
   const m = spr?.mode;
   return isSprayMode(m) ? m : "airbrush";
 }
 
-/** Core entry: draw using the selected variant. */
 export default function drawSpray(ctx: Ctx2D, opt: RenderOptions): void {
-  switch (pickMode(opt)) {
+  // --- Normalize tilt knobs ONCE here, then pass to all variants -------------
+  const tilt = getTiltOverrides(opt.engine.overrides);
+
+  // Merge into engine.overrides so variants can read `ov.tiltToFan`, etc.
+  const optWithTilt: RenderOptions = {
+    ...opt,
+    engine: {
+      ...opt.engine,
+      overrides: {
+        ...(opt.engine.overrides ?? {}),
+        ...tilt,
+      },
+    },
+  };
+
+  switch (pickMode(optWithTilt)) {
     case "nozzle":
-      drawSprayNozzle(ctx, opt);
+      drawSprayNozzle(ctx, optWithTilt);
       break;
     case "splatter":
-      drawSpraySplatter(ctx, opt);
+      drawSpraySplatter(ctx, optWithTilt);
       break;
     case "stipple":
-      drawSprayStipple(ctx, opt);
+      drawSprayStipple(ctx, optWithTilt);
       break;
     case "airbrush":
     default:
-      drawSprayAirbrush(ctx, opt);
+      drawSprayAirbrush(ctx, optWithTilt);
       break;
   }
 }
 
-/** Convenience: accept a canvas surface, fetch a 2D context, then draw. */
 export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
   const ctx = get2D(surface);
   drawSpray(ctx, opt);

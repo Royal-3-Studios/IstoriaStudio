@@ -1,0 +1,59 @@
+{
+  "id": "touchups_shadows",
+  "name": "Shadows",
+  "subtitle": "Soft multiply touch-ups",
+  "baseSizePx": 10,
+  "color": "#000000",
+
+  "engine": {
+    "version": 1,
+    "backend": "spray",
+    "shape": { "type": "round", "softness": 90, "sizeScale": 1 },
+    "strokePath": {
+      "spacing": 6,
+      "jitter": 0.25,
+      "scatter": 0.6,
+      "count": 1,
+      "streamline": 20
+    },
+    "grain": { "kind": "none" },
+    "rendering": {
+      "intent": "ink",
+      "flow": 30,
+      "blendMode": "multiply"
+    },
+    "overrides": {
+      "opacity": 100,
+      "tiltToSize": 0.2
+    },
+    "backendOverrides": {
+      "spray": {
+        "mode": "airbrush",
+        "dropletCount": 12,
+        "dropletJitter": 0.15,
+        "dropletSizeMin": 0.2,
+        "dropletSizeMax": 2
+      }
+    }
+  },
+
+  "input": {
+    "pressure": {
+      "clamp": { "min": 0, "max": 1 },
+      "curve": { "type": "gamma", "gamma": 1.1 },
+      "smoothing": {
+        "mode": "oneEuro",
+        "oneEuro": { "minCutoff": 1.2, "beta": 0.2, "dCutoff": 1.0 }
+      },
+      "gain": 1,
+      "deadZone": 0.02
+    },
+    "quality": {
+      "predictPx": 4,
+      "speedToSpacing": 0.15,
+      "minStepPx": 0.7
+    }
+  },
+
+  "tags": ["Touch-ups", "Shadows", "Multiply", "Soft"]
+}

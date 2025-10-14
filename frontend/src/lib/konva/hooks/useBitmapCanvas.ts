@@ -1,3 +1,6 @@
+// FILE: src/lib/konva/hooks/useBitmapCanvas.ts
+"use client";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CanvasPool,
@@ -6,51 +9,59 @@ import {
   type Ctx2D,
 } from "@/lib/konva/utils/canvasPool";
 
-/** Draw in CSS space (0..width, 0..height). DPR is applied inside the hook. */
+/** Draw in CSS space (0..width, 0..height). DPR transform is applied inside the hook. */
 export type DrawFn = (canvas: CanvasLike, ctx: Ctx2D) => void | Promise<void>;
 
 export type UseBitmapCanvasOptions = {
-  width: number; // CSS px
-  height: number; // CSS px
-  dpr?: number; // default 1
-  draw: DrawFn;
+  /** CSS pixels */
+  width: number;
+  /** CSS pixels */
+  height: number;
+  /** Device pixel ratio used to scale the backing buffer. Defaults to 1. */
+  dpr?: number;
+  /** Drawing routine (awaited if it returns a Promise). */
+  drawAction: DrawFn;
+  /** Extra dependencies that should trigger a redraw (width/height/dpr are already tracked). */
   deps?: ReadonlyArray<unknown>;
+  /** Optional shared pool. If omitted, a small internal pool is created. */
   pool?: CanvasPool;
 };
-
-type ImgSrc = CanvasImageSource | null;
 
 export function useBitmapCanvas({
   width,
   height,
   dpr = 1,
-  draw,
+  drawAction,
   deps = [],
   pool,
 }: UseBitmapCanvasOptions): {
-  image: ImgSrc;
+  image: ImageBitmap | HTMLCanvasElement | null;
   refresh: () => void;
   busy: boolean;
 } {
   const localPool = useMemo(() => pool ?? new CanvasPool(8), [pool]);
-  const [image, setImage] = useState<ImgSrc>(null);
+  const [image, setImage] = useState<ImageBitmap | HTMLCanvasElement | null>(
+    null
+  );
   const [busy, setBusy] = useState(false);
-
   const abortRef = useRef<AbortController | null>(null);
 
-  const disposeImage = useCallback((src: ImgSrc) => {
-    if (
-      src &&
-      typeof ImageBitmap !== "undefined" &&
-      src instanceof ImageBitmap
-    ) {
-      try {
-        src.close();
-      } catch {
-        /* noop */
+  const disposeImage = useCallback(
+    (src: ImageBitmap | HTMLCanvasElement | null) => {
+      if (
+        src &&
+        typeof ImageBitmap !== "undefined" &&
+        src instanceof ImageBitmap
+      ) {
+        try {
+          src.close();
+        } catch {
+          /* noop */
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     return () => {
@@ -75,16 +86,16 @@ export function useBitmapCanvas({
         deviceW,
         deviceH,
         async (canvas, ctx) => {
-          // Reset transform then apply DPR so draw() uses CSS coords.
+          // CSS-space drawing: reset then apply DPR transform
           const c2d = ctx as CanvasRenderingContext2D;
           if (typeof c2d.setTransform === "function") {
             c2d.setTransform(1, 0, 0, 1, 0, 0);
             c2d.setTransform(dpr, 0, 0, dpr, 0, 0);
           }
 
-          await draw(canvas, ctx);
+          await drawAction(canvas, ctx);
 
-          // Prefer ImageBitmap if available; otherwise snapshot to a standalone canvas.
+          // Prefer ImageBitmap when available (more efficient), else snapshot to an HTMLCanvasElement
           if (typeof createImageBitmap === "function") {
             return await createImageBitmap(
               canvas as unknown as CanvasImageSource
@@ -95,7 +106,7 @@ export function useBitmapCanvas({
             snapshot.height = deviceH;
             const sctx = snapshot.getContext("2d");
             sctx?.drawImage(canvas as unknown as CanvasImageSource, 0, 0);
-            return snapshot as CanvasImageSource;
+            return snapshot;
           }
         },
         { allowLarger: true, clear: true }
@@ -114,7 +125,7 @@ export function useBitmapCanvas({
       if (abortRef.current === ac) abortRef.current = null;
       setBusy(false);
     }
-  }, [width, height, dpr, draw, localPool, disposeImage]);
+  }, [width, height, dpr, drawAction, localPool, disposeImage]);
 
   useEffect(() => {
     void renderOnce();
@@ -128,20 +139,24 @@ export function useBitmapCanvas({
   return { image, refresh, busy };
 }
 
-/* ---------------- Konva binder ---------------- */
+/* ---------------- Konva binder (optional) ---------------- */
 
-export function useKonvaImageBinder(image: CanvasImageSource | null): (
+export function useKonvaImageBinder(
+  image: ImageBitmap | HTMLCanvasElement | null
+): (
   node: {
     image: (img: CanvasImageSource | null | undefined) => void;
     getLayer: () => { batchDraw: () => void } | null;
   } | null
 ) => void {
-  return useCallback(
-    (node) => {
-      if (!node) return;
-      node.image(image ?? undefined);
-      node.getLayer?.()?.batchDraw?.();
-    },
-    [image]
-  );
+  const latest = useRef<ImageBitmap | HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    latest.current = image;
+  }, [image]);
+
+  return useCallback((node) => {
+    if (!node) return;
+    node.image((latest.current as unknown as CanvasImageSource) ?? undefined);
+    node.getLayer?.()?.batchDraw?.();
+  }, []);
 }

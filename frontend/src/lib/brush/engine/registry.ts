@@ -1,15 +1,18 @@
 // FILE: src/lib/brush/engine/registry.ts
 
+import type { EngineConfig } from "../engine.types";
+
+/** Canvas surface the adapters can draw into. */
 export type CanvasLike = OffscreenCanvas | HTMLCanvasElement;
 
 /** Extra runtime inputs the engine provides when invoking a backend. */
 export type EngineInvocation = {
   engine: EngineConfig;
-  surface: { width: number; height: number; dpr: number };
+  surface: { width: number; height: number; pixelRatio: number };
   path: Array<{
     x: number;
     y: number;
-    pressure?: number;
+    pressure?: number; // alias: p
     p?: number;
     angle?: number;
     tilt?: number;
@@ -31,17 +34,61 @@ import ribbonAdapter from "../backends/ribbonAdapter";
 import sprayAdapter from "../backends/sprayAdapter";
 import wetAdapter from "../backends/wetAdapter";
 import patternAdapter from "../backends/patternAdapter";
+// If/when you implement these, switch the stubs below to real imports:
+// import smudgeAdapter from "../backends/smudgeAdapter";
+// import impastoAdapter from "../backends/impastoAdapter";
+// import particleAdapter from "../backends/particleAdapter";
 
 // Use the actual adapter options type to stay in sync with adapters.
-import type { RenderStrokeOptions as AdapterRenderStrokeOptions } from "../backends/types";
-import type { EngineConfig } from "../engine.types";
+import type {
+  RenderStrokeOptions as AdapterRenderStrokeOptions,
+  RenderStrokePoint,
+  AdapterExtra,
+} from "../backends/types";
+
+/* ------------------------------ Normalizers ------------------------------- */
+
+/** Clamp to [0..1], accommodating devices that report >1 ranges (e.g., 1024/4096). */
+function normalizePressure(v: number | undefined): number {
+  if (typeof v !== "number") return 1;
+  const n = v <= 1 ? v : v / 4096;
+  return n < 0 ? 0 : n > 1 ? 1 : n;
+}
+
+/** One-time path normalization: resolves `p|pressure` -> `pressure ∈ [0..1]`. */
+function normalizePath(
+  src: EngineInvocation["path"]
+): ReadonlyArray<RenderStrokePoint> {
+  return src.map<RenderStrokePoint>((pt) => {
+    const p = typeof pt.p === "number" ? pt.p : pt.pressure;
+    return {
+      x: pt.x,
+      y: pt.y,
+      pressure: normalizePressure(p),
+      ...(typeof pt.angle === "number" ? { angle: pt.angle } : {}),
+      ...(typeof pt.tilt === "number" ? { tilt: pt.tilt } : {}),
+      ...(typeof pt.t === "number" ? { t: pt.t } : {}),
+    };
+  });
+}
+
+/** Collect engine extras in a typed-friendly bag (omit if empty). */
+function buildExtra(engine: EngineConfig): AdapterExtra | undefined {
+  const extra: Record<string, unknown> = {};
+  if (engine.overrides) extra.overrides = engine.overrides;
+  if (engine.strokePath) extra.strokePath = engine.strokePath;
+  if (engine.shape) extra.shape = engine.shape;
+  if (engine.rendering) extra.rendering = engine.rendering;
+  if (engine.grain) extra.grain = engine.grain;
+  return Object.keys(extra).length > 0 ? (extra as AdapterExtra) : undefined;
+}
 
 // --- Strict mapper: EngineInvocation -> AdapterRenderStrokeOptions ----------
 function toRenderStrokeOptions(
   inv: EngineInvocation
 ): AdapterRenderStrokeOptions {
   const {
-    surface: { width, height, dpr },
+    surface: { width, height, pixelRatio },
     path,
     seed,
     color,
@@ -49,27 +96,19 @@ function toRenderStrokeOptions(
     engine,
   } = inv;
 
-  // Build only the required/defined fields (no undefineds).
   const out: AdapterRenderStrokeOptions = {
     width,
     height,
-    dpr,
-    seed: seed ?? 0, // <- required by adapters: guarantee a number
-    path,
+    pixelRatio, // ✅ standardized key (not "dpr")
+    seed: typeof seed === "number" ? seed : 0, // adapters can rely on a number
+    path: normalizePath(path), // ✅ normalize p|pressure → pressure ∈ [0..1]
   };
 
-  // Optional fields: assign only if defined
   if (color !== undefined) out.color = color;
   if (baseSizePx !== undefined) out.baseSizePx = baseSizePx;
 
-  // Bundle relevant engine bits as "extra" only if we have something
-  const extra: Record<string, unknown> = {};
-  if (engine.overrides) extra.overrides = engine.overrides;
-  if (engine.strokePath) extra.strokePath = engine.strokePath;
-  if (engine.shape) extra.shape = engine.shape;
-  if (engine.rendering) extra.rendering = engine.rendering;
-  if (engine.grain) extra.grain = engine.grain;
-  if (Object.keys(extra).length > 0) out.extra = extra;
+  const extra = buildExtra(engine);
+  if (extra) out.extra = extra;
 
   return out;
 }
@@ -111,7 +150,7 @@ const particleRunner: BackendRunner = () => {
 };
 
 // --- Registry ---------------------------------------------------------------
-export const BACKEND_REGISTRY: Record<string, BackendRunner> = {
+export const BACKEND_REGISTRY = {
   stamping: stampingRunner,
   ribbon: ribbonRunner,
   spray: sprayRunner,
@@ -121,10 +160,12 @@ export const BACKEND_REGISTRY: Record<string, BackendRunner> = {
   smudge: smudgeRunner,
   impasto: impastoRunner,
   particle: particleRunner,
-};
+} as const;
+
+export type BackendId = keyof typeof BACKEND_REGISTRY;
 
 export function resolveBackend(name: string): BackendRunner {
-  const fn = BACKEND_REGISTRY[name];
+  const fn = BACKEND_REGISTRY[name as BackendId];
   if (!fn) {
     const known = Object.keys(BACKEND_REGISTRY).join(", ");
     throw new Error(`Unknown backend "${name}". Known: ${known}`);

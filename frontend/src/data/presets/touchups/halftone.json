@@ -1,0 +1,59 @@
+{
+  "id": "touchups_halftone",
+  "name": "Halftone Overlay",
+  "subtitle": "Vintage dot screen",
+  "baseSizePx": 18,
+  "color": "#000000",
+
+  "engine": {
+    "version": 1,
+    "backend": "pattern",
+    "shape": { "type": "round", "softness": 80, "sizeScale": 1 },
+    "strokePath": {
+      "spacing": 10,
+      "jitter": 0.2,
+      "scatter": 0.0,
+      "count": 1,
+      "streamline": 20
+    },
+    "grain": { "kind": "none" },
+    "rendering": {
+      "intent": "marker",
+      "flow": 35,
+      "blendMode": "multiply"
+    },
+    "overrides": {
+      "opacity": 100,
+      "sizeJitter": 0.15,
+      "angleJitter": 5,
+      "grainRotate": 0
+    },
+    "backendOverrides": {
+      "pattern": {
+        "stampTextureId": "halftone_dots_small",
+        "stampScale": 0.8,
+        "stampJitter": 0.25
+      }
+    }
+  },
+
+  "input": {
+    "pressure": {
+      "clamp": { "min": 0, "max": 1 },
+      "curve": { "type": "gamma", "gamma": 1.0 },
+      "smoothing": {
+        "mode": "oneEuro",
+        "oneEuro": { "minCutoff": 1.2, "beta": 0.2, "dCutoff": 1.2 }
+      },
+      "gain": 1,
+      "deadZone": 0.02
+    },
+    "quality": {
+      "predictPx": 2,
+      "speedToSpacing": 0.08,
+      "minStepPx": 0.7
+    }
+  },
+
+  "tags": ["Touch-ups", "Halftone", "Multiply", "Vintage"]
+}

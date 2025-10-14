@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/utils/stroke.ts
 // Canonical stroke/path utilities for all backends (strict-safe; no `any`)
 
-import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine";
+import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine.types";
 import type { RNG } from "@backends/utils/random";
 import { clamp, lerp } from "@backends/utils/math";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";

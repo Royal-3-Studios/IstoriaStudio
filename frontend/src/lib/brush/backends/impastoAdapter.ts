@@ -1,16 +1,24 @@
 // FILE: src/lib/brush/backends/impastoAdapter.ts
+
 import { drawToCanvas as drawImpastoToCanvas } from "./impasto";
+
 import type {
   BackendAdapter,
   CanvasSurface,
   RenderStrokeOptions,
-} from "./types";
+  AdapterExtra,
+} from "@backends/types";
+
 import type {
   RenderOptions,
   RenderPathPoint,
   RenderOverrides,
   EngineStrokePath,
-} from "@/lib/brush/engine";
+  EngineConfig,
+} from "@/lib/brush/engine.types";
+
+import { get2D } from "@backends/utils/canvas";
+import { withBaseCaps } from "@/lib/brush/backends/caps";
 
 /* ============================ Local helper types ============================ */
 
@@ -24,15 +32,15 @@ type IncomingPoint = {
   t?: number; // timestamp (optional)
 };
 
-type ImpastoExtras = Partial<RenderOverrides> & {
-  /** Convenience knobs accepted by this adapter. */
-  baseSizePx?: number; // prefer this; falls back to sizePx
-  sizePx?: number; // legacy alias
-
-  /** StrokePath convenience (if you want to drive from extras). */
-  spacing?: number; // route to EngineStrokePath.spacing
-  streamline?: number; // route to EngineStrokePath.streamline
-};
+type ImpastoExtrasWide = Partial<RenderOverrides> &
+  AdapterExtra & {
+    /** Convenience knobs accepted by this adapter (legacy-friendly). */
+    baseSizePx?: number; // prefer this; falls back to sizePx
+    sizePx?: number; // legacy alias
+    /** Legacy one-offs (prefer extra.strokePath) */
+    spacing?: number; // → EngineStrokePath.spacing
+    streamline?: number; // → EngineStrokePath.streamline
+  };
 
 /* ================================= Helpers ================================= */
 
@@ -46,18 +54,15 @@ function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   return 0.7;
 }
 
-// Remove keys whose value is strictly undefined (for exactOptionalPropertyTypes)
+/** Keep only keys with value !== undefined (preserve 0/false/null). */
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
-  for (const k in obj) {
-    const v = obj[k];
-    if (v !== undefined) out[k] = v;
-  }
+  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
   return out as Partial<T>;
 }
 
-// Normalize external path → engine path (omit undefined optionals)
-function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
+/** Normalize external path → engine path (duplicate pressure into p & pressure). */
+function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
     const p = readPressure(pt);
@@ -69,20 +74,23 @@ function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-function pickPixelRatio(opts: {
-  pixelRatio?: number;
-  dpr?: number;
-}): number | undefined {
-  if (isFiniteNumber(opts.pixelRatio)) return opts.pixelRatio;
-  if (isFiniteNumber(opts.dpr)) return opts.dpr; // legacy alias
-  return undefined;
-}
-
 /* ================================= Adapter ================================= */
+
+const DEFAULT_BASE_SIZE = 12;
+const DEFAULT_COLOR = "#46A0FF";
+const DEFAULT_SPACING = 6;
 
 const impastoAdapter: BackendAdapter = {
   id: "impasto",
   name: "impasto",
+  caps: withBaseCaps({
+    flow: true, // laydown amount before lighting
+    tilt: true, // can steer bristle/knife direction
+    rotation: true,
+    heightfield: true,
+    lighting: true, // uses height/normal & lights
+    worker: true, // OffscreenCanvas-safe
+  }),
 
   async renderStroke(
     surface: CanvasSurface,
@@ -91,58 +99,71 @@ const impastoAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Narrow extras to a typed surface
-    const rawExtra: ImpastoExtras = (opts.extra ?? {}) as ImpastoExtras;
+    // Ensure there is a 2D context available (throws if not)
+    get2D(surface);
 
-    // Peel off convenience keys; keep the rest as typed overrides and prune undefineds
+    // Standardized extras (supports new extra.* and legacy fields on root)
+    const extra = (opts.extra ?? {}) as ImpastoExtrasWide;
+
+    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
+    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
+
     const {
       baseSizePx: extraBase,
-      sizePx,
-      spacing,
-      streamline,
-      ...restOverrides
-    } = rawExtra;
+      sizePx, // legacy alias
+      spacing, // legacy shortcut to strokePath.spacing
+      streamline, // legacy shortcut to strokePath.streamline
+      ...legacyOverridesAtRoot
+    } = extra;
 
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      restOverrides as Partial<RenderOverrides>
+      {
+        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+        ...extraOverrides,
+      }
     );
 
-    // Defaults (tweak as desired for smoke tests)
-    const defaultBaseSize = 12;
-    const defaultColor = "#46A0FF";
-    const defaultSpacing = 6;
-
-    // Base diameter (with convenience fallbacks)
-    const baseSizePx = isFiniteNumber(opts.baseSizePx)
+    // Base diameter — strictly number via ternaries
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
       : isFiniteNumber(extraBase)
         ? extraBase
         : isFiniteNumber(sizePx)
           ? sizePx
-          : defaultBaseSize;
+          : DEFAULT_BASE_SIZE;
 
-    // Spacing (engine.strokePath)
-    const spacingVal = isFiniteNumber(spacing) ? spacing : defaultSpacing;
+    // Build strokePath (merge standardized bag first; add compat fields)
+    const strokePath: EngineStrokePath = { ...extraStrokePath };
+    if (isFiniteNumber(spacing)) strokePath.spacing = spacing; // compat
+    if (isFiniteNumber(overrides.spacing))
+      strokePath.spacing = overrides.spacing;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
+    if (isFiniteNumber(overrides.scatter))
+      strokePath.scatter = overrides.scatter;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
+    if (isFiniteNumber(streamline)) strokePath.streamline = streamline; // compat
 
-    // Build strokePath (only fields impasto cares about); avoid undefined writes
-    const strokePath: EngineStrokePath = { spacing: spacingVal };
-    if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
+    // Default spacing if nothing set (impasto needs consistent stepping)
+    if (!isFiniteNumber(strokePath.spacing)) {
+      strokePath.spacing = DEFAULT_SPACING;
+    }
 
-    // Precompute pixel ratio candidate
-    const prCandidate = pickPixelRatio(opts);
+    // Final RenderOptions
+    const engineCfg: EngineConfig = { overrides };
+    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
-    // Final RenderOptions (single expression; no undefined writes)
     const renderOpts: RenderOptions = {
-      engine: { overrides, strokePath },
+      engine: engineCfg,
       baseSizePx,
       width,
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
-      color: typeof opts.color === "string" ? opts.color : defaultColor,
-      ...(isFiniteNumber(prCandidate) ? { pixelRatio: prCandidate } : {}),
-      // Forward input only if your RenderStrokeOptions includes it and it's defined:
-      // ...("input" in opts && opts.input ? { input: opts.input } : {}),
+      color: typeof opts.color === "string" ? opts.color : DEFAULT_COLOR,
+      ...(isFiniteNumber(opts.pixelRatio)
+        ? { pixelRatio: opts.pixelRatio }
+        : {}),
+      ...(opts.input ? { input: opts.input } : {}),
     };
 
     await Promise.resolve(drawImpastoToCanvas(surface, renderOpts));

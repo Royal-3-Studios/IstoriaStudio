@@ -1,13 +1,22 @@
 // FILE: src/lib/brush/backends/sprayAdapter.ts
-import type { BackendAdapter, RenderStrokeOptions } from "./types";
+import type {
+  BackendAdapter,
+  RenderStrokeOptions,
+  CanvasSurface,
+  AdapterExtra,
+} from "@backends/types";
+
 import type {
   RenderOptions,
   RenderPathPoint,
   RenderOverrides,
   EngineConfig,
   EngineStrokePath,
-} from "@/lib/brush/engine";
-import drawSpray from "./spray/index"; // "./spray" resolves to ./spray/index.ts
+} from "@/lib/brush/engine.types";
+
+import drawSpray from "./spray"; // resolves to ./spray/index.ts
+import { get2D } from "@backends/utils/canvas";
+import { withBaseCaps } from "@/lib/brush/backends/caps";
 
 /* ============================ Local helper types ============================ */
 
@@ -18,14 +27,15 @@ type IncomingPoint = {
   pressure?: number; // verbose pressure
   angle?: number;
   tilt?: number;
-  t?: number; // timestamp (optional)
+  t?: number; // optional timestamp
 };
 
-type SprayExtras = Partial<RenderOverrides> & {
-  baseSizePx?: number; // allow passing base size via extra
-  sizePx?: number; // legacy alias
-  streamline?: number; // route to EngineStrokePath.streamline
-};
+type SprayExtrasWide = Partial<RenderOverrides> &
+  AdapterExtra & {
+    baseSizePx?: number; // allow passing base size via extra
+    sizePx?: number; // legacy alias
+    streamline?: number; // → EngineStrokePath.streamline
+  };
 
 /* ================================= Helpers ================================= */
 
@@ -36,18 +46,10 @@ function isFiniteNumber(v: unknown): v is number {
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 1; // default full press for spray feel
+  return 0.7; // consistent, “feels right” default
 }
 
-function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
-  const out: Record<string, unknown> = {};
-  for (const k in obj) {
-    const v = obj[k];
-    if (v !== undefined) out[k] = v;
-  }
-  return out as Partial<T>;
-}
-
+/** Normalize external path → engine path (omit undefined optionals). */
 function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
@@ -60,68 +62,78 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-/* ================================= Adapter ================================= */
+/** Remove only keys with `undefined` values (keeps 0/false/null). */
+function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
+  return out as Partial<T>;
+}
+
+/* ================================ Adapter ================================= */
+
+const sprayCaps = withBaseCaps({
+  flow: true, // honors flow for droplet alpha
+  tilt: true, // airbrush variant uses tilt → ellipse fan/size
+  worker: true, // OffscreenCanvas-safe
+});
 
 const sprayAdapter: BackendAdapter = {
   id: "spray",
   name: "spray",
+  caps: sprayCaps,
 
   async renderStroke(
-    canvas: HTMLCanvasElement | OffscreenCanvas,
+    surface: CanvasSurface,
     opts: RenderStrokeOptions
   ): Promise<void> {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Get a 2D context — drawSpray expects a context, not the canvas
-    const ctx =
-      (canvas.getContext &&
-        (canvas.getContext("2d", { alpha: true }) as
-          | CanvasRenderingContext2D
-          | OffscreenCanvasRenderingContext2D
-          | null)) ||
-      null;
-    if (!ctx) throw new Error("2D context not available.");
+    const ctx = get2D(surface);
 
-    // Narrow `extra` to a typed surface (no any)
-    const rawExtra: SprayExtras = (opts.extra ?? {}) as SprayExtras;
+    // Standardized extras (supports new extra.* and legacy-on-root)
+    const extra = (opts.extra ?? {}) as SprayExtrasWide;
 
-    // Peel off special keys; keep the rest as overrides and prune undefineds
+    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
+    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
+
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
-      ...restOverrides
-    } = rawExtra;
+      ...legacyOverridesAtRoot
+    } = extra;
 
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      restOverrides as Partial<RenderOverrides>
+      {
+        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+        ...extraOverrides,
+      }
     );
 
-    // Base size for spray dots
-    const baseSizePx = isFiniteNumber(extraBase)
-      ? extraBase
-      : isFiniteNumber(sizePx)
-        ? sizePx
-        : isFiniteNumber(opts.baseSizePx)
-          ? opts.baseSizePx
+    // Base size selection (strict number)
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
+      ? opts.baseSizePx
+      : isFiniteNumber(extraBase)
+        ? extraBase
+        : isFiniteNumber(sizePx)
+          ? sizePx
           : 12;
 
-    // Build strokePath conditionally (avoid setting any key to undefined)
-    const strokePath: EngineStrokePath = {};
+    // Build strokePath only with defined keys (keeps exactOptionalPropertyTypes happy)
+    const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(overrides.spacing))
-      strokePath.spacing = overrides.spacing!;
-    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter!;
+      strokePath.spacing = overrides.spacing;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
     if (isFiniteNumber(overrides.scatter))
-      strokePath.scatter = overrides.scatter!;
-    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
+      strokePath.scatter = overrides.scatter;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Build engine config, omitting empty optionals
+    // Engine config
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
-    // Build RenderOptions, forwarding color/pixelRatio/input if present
     const renderOpts: RenderOptions = {
       engine: engineCfg,
       baseSizePx,
@@ -130,19 +142,15 @@ const sprayAdapter: BackendAdapter = {
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
       ...(typeof opts.color === "string" ? { color: opts.color } : {}),
-      ...(isFiniteNumber((opts as unknown as { dpr?: number }).dpr)
-        ? { pixelRatio: (opts as unknown as { dpr: number }).dpr }
+      ...(isFiniteNumber(opts.pixelRatio)
+        ? { pixelRatio: opts.pixelRatio }
         : {}),
-      ...(isFiniteNumber(
-        (opts as unknown as { pixelRatio?: number }).pixelRatio
-      )
-        ? { pixelRatio: (opts as unknown as { pixelRatio: number }).pixelRatio }
-        : {}),
+      // Forward input so engine’s unified stabilization/prediction applies
       ...(opts.input ? { input: opts.input } : {}),
     };
 
-    // Call the spray index (which switches between airbrush/nozzle/splatter/stipple)
-    drawSpray(ctx, renderOpts);
+    // Synchronous in practice; keep uniform async signature
+    await Promise.resolve(drawSpray(ctx, renderOpts));
   },
 };
 

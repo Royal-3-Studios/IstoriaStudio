@@ -11,8 +11,7 @@ export const DEFAULT_BRUSH_INPUT: BrushInputConfig = {
     clamp: { min: 0, max: 1 },
     curve: { type: "gamma", gamma: 1 },
     smoothing: { mode: "disabled" },
-    // keep synth optional off by default
-    // synth omitted ⇒ optional
+    // synth intentionally omitted by default (keeps it optional)
     gain: 1,
     deadZone: 0,
   },
@@ -43,14 +42,14 @@ export function normalizeBrushInput(
   const clampMin = Math.max(0, Math.min(1, minRaw));
   const clampMax = Math.max(clampMin, Math.min(1, maxRaw));
 
-  // Start with required fields
+  // required fields
   const pressureBase: BrushInputConfig["pressure"] = {
     clamp: { min: clampMin, max: clampMax },
     curve: inP.curve ?? def.pressure.curve,
     smoothing: inP.smoothing ?? def.pressure.smoothing,
   };
 
-  // Conditionally add optional fields ONLY if defined
+  // optional fields (only include when defined)
   const pressure: BrushInputConfig["pressure"] = {
     ...pressureBase,
     ...(inP.velocityComp ? { velocityComp: inP.velocityComp } : {}),

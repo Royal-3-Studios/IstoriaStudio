@@ -31,7 +31,7 @@ export function isCanvas2DContext(ctx: unknown): ctx is Ctx2D {
   );
 }
 
-/** Create a DOM-based canvas (prefer createLayer() for offscreen). */
+/** Create a DOM-based canvas (prefer your shared createLayer for offscreen). */
 export function createDomCanvas(
   width: number,
   height: number
@@ -42,15 +42,17 @@ export function createDomCanvas(
   return c;
 }
 
+/** Resolve a safe device pixel ratio (cap to avoid huge backing stores). */
 export function resolveDevicePixelRatio(pixelRatio?: number): number {
   const sys =
     typeof window !== "undefined" && typeof window.devicePixelRatio === "number"
       ? window.devicePixelRatio
       : 1;
   const pr = pixelRatio ?? sys ?? 1;
-  return Math.max(1, Math.min(pr, 2));
+  return Math.max(1, Math.min(pr, 3));
 }
 
+/** Size a DOM canvas to DPR; your engine uses a separate offscreen util for layers. */
 export function ensureCanvasDprSize(
   canvas: HTMLCanvasElement,
   cssWidth: number,
@@ -67,6 +69,16 @@ export function ensureCanvasDprSize(
     canvas.style.width = `${Math.max(1, Math.floor(cssWidth))}px`;
     canvas.style.height = `${Math.max(1, Math.floor(cssHeight))}px`;
   }
+}
+
+// Add near the other helpers:
+export function getTiltOverrides(ov: RenderOverrides) {
+  return {
+    tiltToSize: ov.tiltToSize ?? 0,
+    tiltToFan: ov.tiltToFan ?? 0,
+    tiltToGrainScale: ov.tiltToGrainScale ?? 0,
+    tiltToEdgeNoise: ov.tiltToEdgeNoise ?? 0,
+  };
 }
 
 /* ========================== Normalization helpers ========================== */
@@ -105,7 +117,8 @@ export function normalizeGrain(grain?: EngineGrain): Required<EngineGrain> {
     motion: (g.motion ?? "paperLocked") as
       | "paperLocked"
       | "tipLocked"
-      | "smudgeLocked",
+      | "smudgeLocked"
+      | "animated",
   };
 }
 
@@ -114,7 +127,7 @@ export function normalizeRendering(
 ): Required<EngineRendering> {
   const ren = r ?? ({} as EngineRendering);
 
-  // Choose a safe default RenderingIntent in your union (adjust if your union differs).
+  // Pick the safest default for your union
   const DEFAULT_INTENT: RenderingIntent = "paint" as RenderingIntent;
 
   return {
@@ -237,10 +250,10 @@ export function mergeOverrides(
     jitter: u.jitter ?? e.jitter ?? DEF.jitter,
     scatter: u.scatter ?? e.scatter ?? DEF.scatter,
     count: Math.max(1, Math.round(u.count ?? e.count ?? DEF.count)),
-    sizeJitter: u.sizeJitter ?? e.sizeJitter ?? DEF.sizeJitter,
 
     angle: u.angle ?? e.angle ?? DEF.angle,
     softness: u.softness ?? e.softness ?? DEF.softness,
+    sizeJitter: u.sizeJitter ?? e.sizeJitter ?? DEF.sizeJitter,
     angleJitter: u.angleJitter ?? e.angleJitter ?? DEF.angleJitter,
     angleFollowDirection:
       u.angleFollowDirection ??
@@ -259,7 +272,8 @@ export function mergeOverrides(
     grainMotion: (u.grainMotion ?? e.grainMotion ?? DEF.grainMotion) as
       | "paperLocked"
       | "tipLocked"
-      | "smudgeLocked",
+      | "smudgeLocked"
+      | "animated",
 
     wetEdges: u.wetEdges ?? e.wetEdges ?? DEF.wetEdges,
 
@@ -312,6 +326,7 @@ export function mergeOverrides(
       DEF.pressureToSplitSpacing,
     tiltToSplitFan: u.tiltToSplitFan ?? e.tiltToSplitFan ?? DEF.tiltToSplitFan,
 
+    /* Speed & tilt */
     speedToWidth: u.speedToWidth ?? e.speedToWidth ?? DEF.speedToWidth,
     speedToFlow: u.speedToFlow ?? e.speedToFlow ?? DEF.speedToFlow,
     speedSmoothingMs: Math.max(
@@ -328,15 +343,18 @@ export function mergeOverrides(
     tiltToEdgeNoise:
       u.tiltToEdgeNoise ?? e.tiltToEdgeNoise ?? DEF.tiltToEdgeNoise,
 
+    /* Edge noise / dry fringe */
     edgeNoiseStrength:
       u.edgeNoiseStrength ?? e.edgeNoiseStrength ?? DEF.edgeNoiseStrength,
     edgeNoiseScale: u.edgeNoiseScale ?? e.edgeNoiseScale ?? DEF.edgeNoiseScale,
     dryThreshold: u.dryThreshold ?? e.dryThreshold ?? DEF.dryThreshold,
 
+    /* Extra knobs */
     innerGrainAlpha:
       u.innerGrainAlpha ?? e.innerGrainAlpha ?? DEF.innerGrainAlpha,
     edgeCarveAlpha: u.edgeCarveAlpha ?? e.edgeCarveAlpha ?? DEF.edgeCarveAlpha,
 
+    /* Smudge defaults */
     smudgeStrength: u.smudgeStrength ?? e.smudgeStrength ?? DEF.smudgeStrength,
     smudgeAlpha: u.smudgeAlpha ?? e.smudgeAlpha ?? DEF.smudgeAlpha,
     smudgeBlur: u.smudgeBlur ?? e.smudgeBlur ?? DEF.smudgeBlur,
@@ -370,8 +388,9 @@ export function normalizeEngineConfig(
   };
 }
 
+/** Ensure sane input config; respects exactOptionalPropertyTypes. */
 export function ensureInput(input?: BrushInputConfig): BrushInputConfig {
-  // ---- pressure (no undefined keys inserted) ----
+  // pressure
   const clampMin =
     input?.pressure?.clamp?.min ?? DEFAULT_INPUT.pressure.clamp.min;
   const clampMax =
@@ -381,7 +400,6 @@ export function ensureInput(input?: BrushInputConfig): BrushInputConfig {
   const smoothing =
     input?.pressure?.smoothing ?? DEFAULT_INPUT.pressure.smoothing;
 
-  // Ensure these are concrete (not undefined) via non-null assertion on defaults
   const velocityComp =
     input?.pressure?.velocityComp ?? DEFAULT_INPUT.pressure.velocityComp!;
   const synth = input?.pressure?.synth ?? DEFAULT_INPUT.pressure.synth!;
@@ -400,7 +418,7 @@ export function ensureInput(input?: BrushInputConfig): BrushInputConfig {
       : {}),
   } satisfies BrushInputConfig["pressure"];
 
-  // ---- quality (concrete numbers; friendly to exactOptionalPropertyTypes) ----
+  // quality
   type QualityConcrete = {
     predictPx: number;
     speedToSpacing: number;
@@ -426,6 +444,7 @@ export function ensureInput(input?: BrushInputConfig): BrushInputConfig {
   return { pressure, quality };
 }
 
+/** Normalize a full render request into a safe, concrete option bag. */
 export function normalizeOptions(opt: RenderOptions): NormalizedRenderOptions {
   const engine = normalizeEngineConfig(opt.engine);
   const pixelRatio = resolveDevicePixelRatio(opt.pixelRatio);
@@ -462,7 +481,7 @@ export function scoreBackends(
 ): Record<Exclude<BrushBackend, "auto">, number> {
   const { engine: cfg } = opts;
 
-  // Top-level overrides are optional; keep them narrow and safe
+  // Top-level overrides from call-site (rare). Keep narrow and safe.
   const ui = (opts as { overrides?: Partial<RenderOverrides> }).overrides ?? {};
   const ov = cfg.overrides;
 

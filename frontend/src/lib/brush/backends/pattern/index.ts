@@ -1,11 +1,13 @@
 // FILE: src/lib/brush/backends/pattern/index.ts
-import type { RenderOptions } from "@/lib/brush/engine";
-import { get2D, type Ctx2D } from "@backends/utils/canvas";
+import type { RenderOptions } from "@/lib/brush/engine.types";
+import { get2D, type Ctx2D, type CanvasLike } from "@backends/utils/canvas";
 
 import { drawPatternStroke } from "./variants/stroke";
-// If you have these, keep; otherwise comment them out.
 import { drawPatternFill } from "./variants/fill";
 import { drawPatternScatter } from "./variants/scatter";
+
+// Normalize tilt routing once per backend (tilt→size/fan/grainScale/edgeNoise)
+import { getTiltOverrides } from "@backends/stamping/utils/scalars";
 
 export type PatternVariant = "stroke" | "fill" | "scatter";
 
@@ -18,32 +20,52 @@ const VARIANTS: Record<
   scatter: drawPatternScatter,
 };
 
-/** Safely read a string `variant` off an unknown object (no `any`). */
-function readVariant(o: unknown): string | undefined {
-  if (o && typeof o === "object") {
-    const v = (o as Record<string, unknown>).variant;
-    return typeof v === "string" ? v : undefined;
-  }
-  return undefined;
+function isPatternVariant(x: unknown): x is PatternVariant {
+  return x === "stroke" || x === "fill" || x === "scatter";
+}
+
+/** Preferred: read mode from engine.backendOverrides.pattern.mode */
+export function pickVariant(opt: RenderOptions): PatternVariant {
+  const local = opt.engine.backendOverrides?.pattern as
+    | { mode?: unknown }
+    | undefined;
+  const m = local?.mode;
+  return isPatternVariant(m) ? m : "stroke";
 }
 
 /**
- * Render entry for the pattern backend.
- * If `variant` is not provided, it tries `opt.engine.variant`, else defaults to "stroke".
+ * Core entry. Priority:
+ *  1) explicit `variant` arg
+ *  2) engine.backendOverrides.pattern.mode
+ *  3) "stroke" fallback
+ *
+ * We also merge normalized tilt knobs into overrides once, so variants
+ * can just read ov.tiltTo* without re-deriving.
  */
 export default function renderPattern(
   ctx: Ctx2D,
   opt: RenderOptions,
   variant?: PatternVariant
 ): void {
-  const hint = readVariant(opt.engine) as PatternVariant | undefined;
-  const key: PatternVariant = variant ?? hint ?? "stroke";
-  (VARIANTS[key] ?? drawPatternStroke)(ctx, opt);
+  const tilt = getTiltOverrides(opt.engine.overrides);
+  const optWithTilt: RenderOptions = {
+    ...opt,
+    engine: {
+      ...opt.engine,
+      overrides: {
+        ...(opt.engine.overrides ?? {}),
+        ...tilt,
+      },
+    },
+  };
+
+  const key = variant ?? pickVariant(optWithTilt);
+  (VARIANTS[key] ?? drawPatternStroke)(ctx, optWithTilt);
 }
 
-/** Convenience: accept a canvas surface, fetch a 2D context, then draw. */
+/** Convenience: accept a canvas surface, fetch 2D, then draw. */
 export function drawToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
+  canvas: CanvasLike,
   opt: RenderOptions,
   variant?: PatternVariant
 ): void {

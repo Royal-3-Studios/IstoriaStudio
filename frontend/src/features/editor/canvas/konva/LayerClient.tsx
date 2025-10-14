@@ -1,10 +1,20 @@
 // src/features/editor/canvas/konva/LayerClient.tsx
 "use client";
-import { Layer as RLayer } from "react-konva";
-import type React from "react";
+import dynamic from "next/dynamic";
+import * as React from "react";
+import type Konva from "konva";
 
-export default function LayerClient(
-  props: React.ComponentProps<typeof RLayer>
-) {
-  return <RLayer {...props} />;
-}
+const LayerImpl = dynamic(() => import("react-konva").then((m) => m.Layer), {
+  ssr: false,
+});
+
+type ImplProps = React.ComponentProps<typeof LayerImpl>;
+
+const LayerClient = React.forwardRef<Konva.Layer, ImplProps>(
+  function LayerClient(props, ref) {
+    const { ref: _ignored, ...rest } = props as Record<string, unknown>;
+    return <LayerImpl ref={ref} {...(rest as ImplProps)} />;
+  }
+);
+
+export default LayerClient;

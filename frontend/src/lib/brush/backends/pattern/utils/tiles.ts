@@ -1,7 +1,7 @@
 // FILE: src/lib/brush/backends/pattern/utils/tiles.ts
 
-import { createLayer, get2D } from "./canvas";
-import type { Ctx2D } from "./canvas";
+import { createLayer, get2D } from "../../utils/canvas";
+import type { Ctx2D } from "../../utils/canvas";
 import { makeFbmTile } from "../core/noise";
 
 /** Dots tile (paper-like pores). */

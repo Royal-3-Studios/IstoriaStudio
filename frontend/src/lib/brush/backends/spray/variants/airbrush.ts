@@ -1,18 +1,25 @@
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
-import { Rand, Texture as TexUtil, Blend } from "@backends";
+// FILE: src/lib/brush/backends/spray/airbrush.ts
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
+import { Rand } from "@backends/utils/random";
+import * as TexUtil from "@backends/utils/texture";
+import * as Blend from "@backends/utils/blending";
 import { pathToStamps, type InputQualityOpts } from "@backends/utils/stroke";
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
-
+import {
+  avgTiltFromPath,
+  getTiltOverrides,
+  fanFromTilt,
+  sizeMulFromTilt,
+} from "@backends/stamping/utils/scalars"; // ← shared tilt helpers
 import type { Ctx2D } from "@backends/utils/canvas";
 import { get2D } from "@backends/utils/canvas";
-
 import { paintDroplet, gaussianRadius } from "../core/droplet";
 import {
   radialFalloff,
   pressureToSize,
   pressureToAlpha,
 } from "../core/falloff";
-import { dotsThisStep, sampleConeAngle } from "../core/emitter";
+import { dotsThisStep } from "../core/emitter";
 
 import {
   newMask,
@@ -32,7 +39,6 @@ export type SprayBackendOverrides = Partial<{
   sizeJitter: number; // 0..1 size jitter per droplet
   alphaMin: number; // 0..1 alpha clamp
   alphaMax: number; // 0..1 alpha clamp
-  coneAngleDeg: number; // spray cone width
   speedToDensity: number; // -1..+1: add/remove dots at speed
   colorJitter?: { h?: number; s?: number; l?: number; perDroplet?: boolean };
 }>;
@@ -44,12 +50,15 @@ const clamp = (v: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, v));
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+const isNum = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
+
 /** Build PressureMapOpts from input curve/clamp, omitting undefined keys (for exactOptionalPropertyTypes). */
 function toPressureMapFromInput(
   opt: RenderOptions
 ): PressureMapOpts | undefined {
   const input = opt.input;
-  if (!input) return undefined;
+  if (!input || !input.pressure) return undefined;
 
   const gamma =
     input.pressure.curve?.type === "gamma"
@@ -63,6 +72,7 @@ function toPressureMapFromInput(
   const o: Partial<PressureMapOpts> = {};
   if (gamma !== undefined) o.gamma = gamma;
   if (deadZone !== undefined) o.deadZone = deadZone;
+
   return Object.keys(o).length ? (o as PressureMapOpts) : undefined;
 }
 
@@ -72,15 +82,17 @@ function buildInputQualityFromOptions(
 ): InputQualityOpts | undefined {
   const q = opt.input?.quality;
   if (!q) return undefined;
+
   const iq: Partial<InputQualityOpts> = {};
   if (typeof q.predictPx === "number") iq.predictPx = q.predictPx;
   if (typeof q.speedToSpacing === "number")
     iq.speedToSpacing = q.speedToSpacing;
   if (typeof q.minStepPx === "number") iq.minStepPx = q.minStepPx;
+
   return Object.keys(iq).length ? (iq as InputQualityOpts) : undefined;
 }
 
-/** Classic “soft” airbrush */
+/** Classic “soft” airbrush with tilt→elliptical footprint/spread */
 export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   const path = opt.path ?? [];
   if (path.length < 2) return;
@@ -88,10 +100,18 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   const viewW = Math.max(1, Math.floor(opt.width));
   const viewH = Math.max(1, Math.floor(opt.height));
 
-  // Flow/opacity come from engine overrides (0..100 UI → 0..1)
+  // Flow/opacity (0..100 UI → 0..1)
   const ov = (opt.engine.overrides ?? {}) as Partial<RenderOverrides>;
   const flow01 = clamp01(((ov.flow ?? 100) as number) / 100);
   const opacity01 = clamp01(((ov.opacity ?? 100) as number) / 100);
+
+  // Tilt routing gains + measured tilt
+  const { tiltToFan, tiltToSize } = getTiltOverrides(ov);
+  const avgTilt01 = avgTiltFromPath(path);
+
+  // Derived scalars from tilt
+  const fan = fanFromTilt(avgTilt01, tiltToFan); // >1: stretch along tangent
+  const sizeMulTilt = sizeMulFromTilt(avgTilt01, tiltToSize); // gentle droplet radius boost
 
   // Per-backend spray overrides
   const spr =
@@ -108,7 +128,6 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   );
   const dotsJitter01 = clamp01(spr.dropletJitter ?? 0);
   const speedToDensity = Math.max(-1, Math.min(1, spr.speedToDensity ?? 0));
-  const coneRad = ((spr.coneAngleDeg ?? 0) * Math.PI) / 180;
 
   // Stroke/placement inputs
   const spacingPercent = (opt.engine.strokePath?.spacing ??
@@ -127,9 +146,9 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   // Randomness
   const seed = (opt.seed ?? 1337) >>> 0;
   const rng = new Rand(seed);
-  const rand = () => rng.nextFloat();
+  const rand = (): number => rng.nextFloat();
 
-  // Pressure mapping + input quality
+  // Pressure mapping + input quality (omit empty)
   const pmap = toPressureMapFromInput(opt);
   const inputQuality = buildInputQualityFromOptions(opt);
 
@@ -146,8 +165,8 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
     tipMinPx: 0,
     tipScaleStart: 0.85,
     tipScaleEnd: 0.85,
-    taperProfileStart: "linear",
-    taperProfileEnd: "linear",
+    taperProfileStart: "linear" as const,
+    taperProfileEnd: "linear" as const,
     endBias: 0,
     uniformity: 0,
     rng,
@@ -172,7 +191,7 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   const alphaMin = clamp01(spr.alphaMin ?? 0);
   const alphaMax = clamp01(spr.alphaMax ?? 1);
 
-  // Nominal step estimate (used for scatter baseline and speed→density)
+  // Nominal step estimate (for scatter baseline and speed→density)
   const nominalStepPx = Math.max(
     0.6,
     (spacingPercent > 1 ? spacingPercent / 100 : spacingPercent) *
@@ -187,29 +206,42 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   for (let i = 0; i < stamps.length; i++) {
     const s = stamps[i]!;
     const prev = i > 0 ? stamps[i - 1]! : s;
-    const localSegPx = Math.hypot(s.x - prev.x, s.y - prev.y);
+    const segL = Math.hypot(s.x - prev.x, s.y - prev.y);
 
     // Density for this step (speed/pressure/jitter aware)
     const dots = dotsThisStep(
       { dotsPerStepBase, dotsJitter01, speedToDensity },
       rand,
-      { localSegPx, nominalStepPx },
+      { localSegPx: segL, nominalStepPx },
       s.pressure
     );
 
+    // Stroke tangent (radians) for local ellipse orientation
+    const tanRad = (s.tangentDeg * Math.PI) / 180;
+    const ct = Math.cos(tanRad);
+    const st = Math.sin(tanRad);
+
     for (let k = 0; k < dots; k++) {
-      // Radial placement with optional cone direction
-      const rr = radialFalloff(rand()); // 0..1, biased toward center
-      const base = (s.tangentDeg * Math.PI) / 180; // use path direction for a directional feel
-      const ang = sampleConeAngle(base, coneRad, rand);
+      // Sample a point in an ellipse aligned to the stroke:
+      // major radius ∝ fan, minor ∝ 1/fan
+      const rr = radialFalloff(rand()); // 0..1 (biased to center)
+      const phi = rand() * Math.PI * 2; // local angle within ellipse
+      const base = scatterPx + nominalStepPx * 0.5;
+      const major = base * fan;
+      const minor = base / Math.max(1e-6, fan);
 
-      const rScatter = rr * (scatterPx + nominalStepPx * 0.5);
-      const px = s.x + Math.cos(ang) * rScatter;
-      const py = s.y + Math.sin(ang) * rScatter;
+      // Local ellipse coords → world via rotation by tangent
+      const dxLocal = rr * Math.cos(phi) * major;
+      const dyLocal = rr * Math.sin(phi) * minor;
+      const px = s.x + dxLocal * ct - dyLocal * st;
+      const py = s.y + dxLocal * st + dyLocal * ct;
 
-      // Size & alpha vs pressure
-      const sizeMul = pressureToSize(s.pressure, 0.85);
-      const rCore = gaussianRadius(baseR * (0.6 + 0.9 * sizeMul), rand);
+      // Size & alpha vs pressure (+ tilt size multiplier)
+      const sizeMulP = pressureToSize(s.pressure, 0.85);
+      const rCore = gaussianRadius(
+        baseR * (0.6 + 0.9 * sizeMulP) * sizeMulTilt,
+        rand
+      );
       const rJitMul = sizeJitter
         ? lerp(1 - sizeJitter, 1 + sizeJitter, rand())
         : 1;
@@ -232,7 +264,7 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
 
       // 2) Color layer with optional HSL jitter
       const tint = cj?.perDroplet
-        ? jitterColorHSLA(color, cj, rng, alpha) // <-- pass RNG object here
+        ? jitterColorHSLA(color, cj, rng, alpha)
         : color;
       paintDroplet(cx, {
         x: px,
@@ -283,7 +315,7 @@ export function drawSprayAirbrush(ctx: Ctx2D, opt: RenderOptions): void {
   }
 
   // Composite to destination (engine still applies global blend/opacity)
-  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, () => {
+  Blend.withCompositeAndAlpha(ctx, "source-over", opacity01, (): void => {
     ctx.drawImage(colorLayer, 0, 0);
   });
 }

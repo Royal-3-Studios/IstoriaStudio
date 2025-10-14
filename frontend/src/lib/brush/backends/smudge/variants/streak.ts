@@ -1,4 +1,4 @@
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
 import type { Ctx2D, CanvasLike } from "@backends/utils/canvas";
 import { createLayer, get2D } from "@backends/utils/canvas";
 import { makeStamps, clamp01 } from "./_common";

@@ -1,18 +1,24 @@
 // FILE: src/lib/brush/backends/particleAdapter.ts
-import drawParticle, { type ParticleMode } from "./particle"; // resolves to ./particle/index.ts
+
+import drawParticle, { type ParticleMode } from "./particle"; // ./particle/index.ts
 
 import type {
   BackendAdapter,
   RenderStrokeOptions,
   CanvasSurface,
-} from "./types";
+  AdapterExtra,
+} from "@backends/types";
+
 import type {
   RenderOptions,
   RenderPathPoint,
   RenderOverrides,
   EngineConfig,
   EngineStrokePath,
-} from "@/lib/brush/engine";
+} from "@/lib/brush/engine.types";
+
+import { get2D } from "@backends/utils/canvas";
+import { withBaseCaps } from "@/lib/brush/backends/caps";
 
 /* ============================ Local helper types ============================ */
 
@@ -26,17 +32,19 @@ type IncomingPoint = {
   t?: number; // timestamp
 };
 
-type ParticleExtras = Partial<RenderOverrides> & {
-  // Adapter convenience
-  baseSizePx?: number;
-  sizePx?: number; // legacy alias
-  streamline?: number; // -> strokePath.streamline
+type ParticleExtrasWide = Partial<RenderOverrides> &
+  AdapterExtra & {
+    baseSizePx?: number;
+    sizePx?: number; // legacy alias
+    streamline?: number; // → strokePath.streamline
+    mode?: ParticleMode; // "trail" | "smoke" | "sparkle"
+  };
 
-  // Optional: choose variant in backend
-  mode?: ParticleMode; // "trail" | "smoke" | "sparkle"
+type EngineConfigWithParticle = EngineConfig & {
+  backendOverrides?: { particle?: { mode?: ParticleMode } };
 };
 
-/* ================================ Helpers ================================== */
+/* ================================= Helpers ================================= */
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -48,16 +56,14 @@ function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   return 0.7; // sensible default for non-pressure inputs
 }
 
+/** Keep only defined fields (preserve 0/false/null). */
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
-  for (const k in obj) {
-    const v = obj[k];
-    if (v !== undefined) out[k] = v;
-  }
+  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
   return out as Partial<T>;
 }
 
-function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
+function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
     const p = readPressure(pt);
@@ -69,20 +75,18 @@ function toEnginePath(path?: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-function pickPixelRatio(opts: {
-  pixelRatio?: number;
-  dpr?: number;
-}): number | undefined {
-  if (isFiniteNumber(opts.pixelRatio)) return opts.pixelRatio;
-  if (isFiniteNumber(opts.dpr)) return opts.dpr; // legacy alias
-  return undefined;
-}
-
 /* ================================= Adapter ================================= */
+
+const DEFAULT_BASE = 12;
 
 const particleAdapter: BackendAdapter = {
   id: "particle",
   name: "particle",
+  caps: withBaseCaps({
+    flow: true, // alpha/ink amount honored for emission/opacity
+    tilt: true, // set true if emission cone / physics uses tilt
+    worker: true, // OffscreenCanvas-safe
+  }),
 
   async renderStroke(
     surface: CanvasSurface,
@@ -91,54 +95,59 @@ const particleAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Typed extras
-    const rawExtra: ParticleExtras = (opts.extra ?? {}) as ParticleExtras;
+    // Standardized extras
+    const extra = (opts.extra ?? {}) as ParticleExtrasWide;
+
+    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
+    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
+
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
       mode,
-      ...rest
-    } = rawExtra;
+      ...legacyOverridesAtRoot
+    } = extra;
 
-    // RenderOverrides without undefined keys
+    // Merge legacy root overrides with standardized overrides, pruning undefined
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      rest as Partial<RenderOverrides>
+      {
+        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+        ...extraOverrides,
+      }
     );
 
     // StrokePath (only defined keys)
-    const strokePath: EngineStrokePath = {};
+    const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(overrides.spacing))
-      strokePath.spacing = overrides.spacing!;
-    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter!;
+      strokePath.spacing = overrides.spacing;
+    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
     if (isFiniteNumber(overrides.scatter))
-      strokePath.scatter = overrides.scatter!;
-    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count!;
+      strokePath.scatter = overrides.scatter;
+    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Build engine config
-    const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+    // Build engine config (attach optional bags only when non-empty)
+    const engineCfgBase: EngineConfig = { overrides };
+    if (Object.keys(strokePath).length > 0)
+      engineCfgBase.strokePath = strokePath;
 
-    // Forward backend-local mode safely (no `any`)
+    // Narrow backendOverrides typing (no `as` casts needed later)
+    const engineCfg: EngineConfigWithParticle = { ...engineCfgBase };
     if (typeof mode === "string") {
       engineCfg.backendOverrides ??= {};
-      (
-        engineCfg.backendOverrides as { particle?: { mode?: ParticleMode } }
-      ).particle ??= {};
-      (
-        engineCfg.backendOverrides as { particle?: { mode?: ParticleMode } }
-      ).particle!.mode = mode;
+      engineCfg.backendOverrides.particle ??= {};
+      engineCfg.backendOverrides.particle.mode = mode;
     }
 
-    // Base diameter preference chain — avoid `number | false` by not using `&&`
-    const baseSizePx =
-      (isFiniteNumber(opts.baseSizePx) ? opts.baseSizePx : undefined) ??
-      (isFiniteNumber(extraBase) ? extraBase : undefined) ??
-      (isFiniteNumber(sizePx) ? sizePx : undefined) ??
-      12;
-
-    const pr = pickPixelRatio(opts as { pixelRatio?: number; dpr?: number });
+    // Base diameter preference chain — strict number via ternaries
+    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
+      ? opts.baseSizePx
+      : isFiniteNumber(extraBase)
+        ? extraBase
+        : isFiniteNumber(sizePx)
+          ? sizePx
+          : DEFAULT_BASE;
 
     const renderOpts: RenderOptions = {
       engine: engineCfg,
@@ -148,19 +157,14 @@ const particleAdapter: BackendAdapter = {
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
       path: toEnginePath(opts.path),
       ...(typeof opts.color === "string" ? { color: opts.color } : {}),
-      ...(isFiniteNumber(pr) ? { pixelRatio: pr } : {}),
-      // Forward input if your RenderStrokeOptions includes it:
-      // ...( "input" in opts && (opts as any).input ? { input: (opts as any).input } : {}),
+      ...(isFiniteNumber(opts.pixelRatio)
+        ? { pixelRatio: opts.pixelRatio }
+        : {}),
+      ...(opts.input ? { input: opts.input } : {}),
     };
 
     // Resolve 2D context and delegate to particle/index
-    const ctx =
-      (surface.getContext?.("2d", { alpha: true }) as
-        | CanvasRenderingContext2D
-        | OffscreenCanvasRenderingContext2D
-        | null) ?? null;
-    if (!ctx) throw new Error("2D context not available.");
-
+    const ctx = get2D(surface);
     drawParticle(ctx, renderOpts);
   },
 };

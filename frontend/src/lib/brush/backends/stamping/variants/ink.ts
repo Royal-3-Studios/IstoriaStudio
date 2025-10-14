@@ -1,20 +1,21 @@
 // FILE: src/lib/brush/backends/stamping/variants/ink.ts
 // Inking — crisp body, no paper tooth, optional micro anti-halo carve
-// Strict TS safe, no `any`, compatible with exactOptionalPropertyTypes.
+// Strict TS-safe, no `any`, compatible with exactOptionalPropertyTypes.
 
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine";
+import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
 import type { BrushInputConfig } from "@/data/brushPresets";
-import { CanvasUtil, Blend } from "@backends";
+import * as CanvasUtil from "@backends/utils/canvas";
+import * as Blend from "@backends/utils/blending";
 
 import type { Ctx2D } from "@backends/utils/canvas";
-import { clamp01 } from "@backends/utils/color";
 import {
+  clamp01,
   tipBlend,
   applyEndBias,
   applyUniformity,
   pressureToFlowScale,
   pressureToWidthScale,
-} from "../utils/scalars";
+} from "../utils";
 import {
   toPressureMapFromInput,
   toInputQualityFromInput,
@@ -67,19 +68,24 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
     options.engine.strokePath?.spacing ??
     (overrides.spacing as number | undefined) ??
     7;
+
   const jitterPercent =
     ((options.engine.strokePath?.jitter ?? overrides.jitter ?? 0) as number) *
     100;
+
   const scatterPx = (options.engine.strokePath?.scatter ??
     overrides.scatter ??
     0) as number;
+
   const stampsPerStep = (options.engine.strokePath?.count ??
     overrides.count ??
     1) as number;
+
   const streamline = (options.engine.strokePath?.streamline ?? 0.1) as number;
 
   const tipScaleStart = (overrides.tipScaleStart ?? 0.9) as number;
   const tipScaleEnd = (overrides.tipScaleEnd ?? 0.9) as number;
+
   const taperProfileStart = (overrides.taperProfileStart ??
     "linear") as TaperProfile;
   const taperProfileEnd = (overrides.taperProfileEnd ??
@@ -100,8 +106,8 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
     taperProfileStart,
     taperProfileEnd,
     endBias: (overrides.endBias ?? 0) as number,
-    uniformity: (overrides.uniformity ?? 0.5) as number, // tighter shape for ink
-    // rng: omitted intentionally → stroke.ts uses Math.random()
+    uniformity: (overrides.uniformity ?? 0.5) as number, // a touch flatter for ink
+    // rng: omit → stroke.ts uses Math.random()
     pressureMap: pmap,
     inputQuality: iq,
   });
@@ -134,7 +140,7 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
   // Body shaping choices for ink
   const tipMinPx = Math.max(0, (overrides.tipMinPx ?? 0) as number);
   const endBias = Math.max(-1, Math.min(1, (overrides.endBias ?? 0) as number));
-  const uniformity = clamp01((overrides.uniformity ?? 0.6) as number); // a bit flatter vs graphite
+  const uniformity = clamp01((overrides.uniformity ?? 0.6) as number); // flatter vs graphite
 
   // Split nibs (ink can still use multi-track)
   const splitCount = Math.max(
@@ -174,7 +180,7 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
     const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1]!;
     if (alphaProgress <= 0.001) continue;
 
-    // Ink body: a bit crisper/flatter than graphite
+    // Ink body: crisper/flatter than graphite
     let widthPx =
       baseSizePx *
       pressureToWidthScale(midPressure) *
@@ -190,7 +196,7 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
       baseOpacity01 * baseFlow01 * pressureToFlowScale(midPressure);
 
     forEachTrack(
-      0xdeadbeef, // deterministic seed for ink track offsets (used internally)
+      0xdeadbeef, // deterministic seed for ink offsets (used internally)
       splitCount,
       splitSpacing,
       splitSpacingJitter,
@@ -223,7 +229,7 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
     px.drawImage(mask, 0, 0);
   });
 
-  // Optional: micro anti-halo carve (very small)
+  // Optional: micro anti-halo carve
   const carve = clamp01(
     (overrides.edgeCarveAlpha as number | undefined) ?? 0.06
   );
@@ -243,4 +249,5 @@ export function drawInk(ctx: Ctx2D, options: ExtRenderOptions): void {
     ctx.drawImage(paint, 0, 0);
   });
 }
+
 export const drawStampInk = drawInk;
