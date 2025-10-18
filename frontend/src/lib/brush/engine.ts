@@ -76,6 +76,21 @@ async function drawStrokeToAny(
     brushCtx,
   };
 
+  // 👇 NEW: push any raw input samples (if provided by caller)
+  // Accept either opt.inputSamples or opt.engine.inputSamples to be flexible.
+  const inputSamples: unknown =
+    (opt as any).inputSamples ?? (opt as any)?.engine?.inputSamples;
+
+  if (
+    Array.isArray(inputSamples) &&
+    typeof brushCtx.pushInputSample === "function"
+  ) {
+    for (const s of inputSamples) {
+      // We don’t validate shape here; BrushContext can ignore bad fields.
+      brushCtx.pushInputSample(s);
+    }
+  }
+
   // Size the destination surface (device pixels) and prep its 2D ctx in CSS space
   ensureCanvasDprSize(surface, nopt.width, nopt.height, dpr);
   const ctx = surface.getContext?.("2d", { alpha: true }) as Ctx2D | null;

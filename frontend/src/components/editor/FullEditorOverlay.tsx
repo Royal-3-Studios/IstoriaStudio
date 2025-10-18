@@ -1,10 +1,12 @@
-// src/components/editor/FullEditorOverlay.tsx
+// FILE: src/components/editor/FullEditorOverlay.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type Konva from "konva";
 import type { TextLayer, BoxLayer } from "@/features/editor/types/layers";
-import Stage from "@/features/editor/canvas/konva/StageClient";
+import Stage, {
+  type NormalizedPointer,
+} from "@/features/editor/canvas/konva/StageClient";
 import {
   Layer,
   Image as KonvaImage,
@@ -39,6 +41,13 @@ import { useFullscreen } from "@/features/editor/hooks/useFullscreen";
 import LeftSidebar from "./LeftSidebar";
 import { EditorToolsProvider } from "./context/EditorToolsProvider";
 
+// NEW: input normalization helpers/types
+import { speedPxPerSec, toInputSample } from "@/lib/brush/core/input";
+import type {
+  BrushInputSample,
+  RenderOverrides,
+} from "@/lib/brush/engine.types";
+
 export type FullEditorOverlayProps = {
   open: boolean;
   onClose: () => void;
@@ -70,6 +79,24 @@ export type FullEditorOverlayProps = {
   assets?: Array<{ id: string; label: string; width: number; height: number }>;
   activeAssetId?: string | null;
   onSelectAssetAction?: (id: string) => void;
+
+  // OPTIONAL: if you already have a brush engine, you can pass these:
+  drawBegin?: (pt: {
+    x: number;
+    y: number;
+    t: number;
+    input: BrushInputSample;
+  }) => void;
+  drawContinue?: (pt: {
+    x: number;
+    y: number;
+    t: number;
+    input: BrushInputSample;
+  }) => void;
+  drawEnd?: () => void;
+
+  // OPTIONAL: if you want custom overrides available to toInputSample
+  inputOverrides?: Partial<RenderOverrides>;
 };
 
 export default function FullEditorOverlay(props: FullEditorOverlayProps) {
@@ -96,6 +123,14 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     assets = [],
     activeAssetId = null,
     onSelectAssetAction,
+
+    // OPTIONAL brush engine callbacks
+    drawBegin,
+    drawContinue,
+    drawEnd,
+
+    // OPTIONAL overrides for input normalization (speed ref, tilt exp, etc.)
+    inputOverrides,
   } = props;
 
   const {
@@ -136,21 +171,15 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     Math.floor((preset.height || 1) * totalScale)
   );
 
-  // Guard numbers
   const stageReadyNumbers =
     Number.isFinite(stageWidth) &&
     Number.isFinite(stageHeight) &&
     stageWidth > 0 &&
     stageHeight > 0;
 
-  // Explicit host container for Konva.Stage
   const hostRef = useRef<HTMLDivElement | null>(null);
-
-  // Wait for mount
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-
-  // Only consider container "ready" once the ref exists in the DOM
   const containerReady = mounted && !!hostRef.current;
 
   // Keep transformer attached to the selected node
@@ -245,6 +274,61 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
     }
     return "minmax(0,1fr)";
   }, [isDesktop, leftOpen, rightOpen]);
+
+  /* ----------------------- NEW: normalized pen handling ----------------------- */
+  const prevPtrRef = useRef<NormalizedPointer | null>(null);
+
+  // If you have preset/runtime overrides, provide them via props.inputOverrides
+  const mergedOverrides = useMemo<RenderOverrides | undefined>(() => {
+    return inputOverrides
+      ? ({ ...inputOverrides } as RenderOverrides)
+      : undefined;
+  }, [inputOverrides]);
+
+  const handlePointerDownNorm = useCallback(
+    (e: NormalizedPointer) => {
+      prevPtrRef.current = e;
+      const input: BrushInputSample = toInputSample(
+        e.pressure,
+        0, // first point: speed undefined -> treat as 0 px/s
+        e.altitudeDeg,
+        e.azimuthRad,
+        mergedOverrides
+      );
+      // If hooked up to your brush engine, start the stroke:
+      // drawBegin?.({ x: e.x, y: e.y, t: e.t, input });
+    },
+    [mergedOverrides, drawBegin]
+  );
+
+  const handlePointerMoveNorm = useCallback(
+    (e: NormalizedPointer) => {
+      const prev = prevPtrRef.current;
+      if (!prev) {
+        prevPtrRef.current = e;
+        return;
+      }
+      const v = speedPxPerSec(prev.x, prev.y, prev.t, e.x, e.y, e.t); // px/s
+      const input: BrushInputSample = toInputSample(
+        e.pressure,
+        v,
+        e.altitudeDeg,
+        e.azimuthRad,
+        mergedOverrides
+      );
+      // Stream segment to engine if present:
+      // drawContinue?.({ x: e.x, y: e.y, t: e.t, input });
+      prevPtrRef.current = e;
+    },
+    [mergedOverrides, drawContinue]
+  );
+
+  const handlePointerUpNorm = useCallback(() => {
+    prevPtrRef.current = null;
+    // End stroke if present:
+    // drawEnd?.();
+  }, [drawEnd]);
+  /* -------------------------------------------------------------------------- */
 
   return (
     <EditorToolsProvider>
@@ -440,8 +524,8 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                       />
                     )}
 
-                    {/* Stage mounts once hostRef exists and sizes are valid */}
-                    {mounted && stageReadyNumbers && hostRef.current ? (
+                    {/* Stage mounts once the container is ready and sizes are valid */}
+                    {mounted && stageReadyNumbers && containerReady ? (
                       <Stage
                         width={stageWidth}
                         height={stageHeight}
@@ -460,6 +544,10 @@ export default function FullEditorOverlay(props: FullEditorOverlayProps) {
                             setSelectedId(null);
                           }
                         }}
+                        // NEW: normalized pen input from StageClient
+                        onPointerDownNorm={handlePointerDownNorm}
+                        onPointerMoveNorm={handlePointerMoveNorm}
+                        onPointerUpNorm={handlePointerUpNorm}
                       >
                         <Layer scaleX={totalScale} scaleY={totalScale}>
                           {/* Frame */}

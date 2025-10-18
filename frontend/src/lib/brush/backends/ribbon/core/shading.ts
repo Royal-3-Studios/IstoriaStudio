@@ -3,8 +3,10 @@ import type { Ctx2D } from "@backends/utils/canvas";
 import type { RibbonSample } from "./resample";
 import type { RibbonTuning } from "./tuning";
 
-/** Small helpers */
+/* ----------------------------- small helpers ----------------------------- */
+
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
 const toRGBA = (hex: string, a: number): string => {
   const aa = clamp01(a);
   if (!hex || hex[0] !== "#") return `rgba(0,0,0,${aa})`;
@@ -23,6 +25,8 @@ const toRGBA = (hex: string, a: number): string => {
   return `rgba(${r},${g},${b},${aa})`;
 };
 
+/* ------------------------------- shaders -------------------------------- */
+
 /** Draw a blurred, rounded “opacity spine” down the center. */
 export function strokeOpacitySpine(
   ctx: Ctx2D,
@@ -33,8 +37,11 @@ export function strokeOpacitySpine(
   alpha01: number
 ): void {
   if (samples.length < 2) return;
+
   const meanR = baseRadius * 0.95;
   const blurPx = Math.max(0.6, tuning.glazeBlurPx * tuning.opacitySpineBlurK);
+
+  ctx.save();
   (ctx as CanvasRenderingContext2D).filter = `blur(${blurPx.toFixed(3)}px)`;
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = clamp01(alpha01 * tuning.opacitySpineAlpha);
@@ -54,7 +61,7 @@ export function strokeOpacitySpine(
   for (let i = 1; i < samples.length; i++)
     ctx.lineTo(samples[i]!.x, samples[i]!.y);
   ctx.stroke();
-  (ctx as CanvasRenderingContext2D).filter = "none";
+  ctx.restore();
 }
 
 /** Multiply “plate” pass — a broad dark band. */
@@ -67,9 +74,11 @@ export function strokePlate(
   widthMul: number
 ): void {
   if (samples.length < 2) return;
+
+  ctx.save();
   ctx.globalCompositeOperation = "multiply";
-  const blurPx = Math.max(0.6, 0.9);
-  (ctx as CanvasRenderingContext2D).filter = `blur(${blurPx.toFixed(3)}px)`;
+  (ctx as CanvasRenderingContext2D).filter =
+    `blur(${Math.max(0.6, 0.9).toFixed(3)}px)`;
   ctx.globalAlpha = clamp01(alpha01);
   (ctx as CanvasRenderingContext2D).strokeStyle = toRGBA(
     color,
@@ -87,10 +96,10 @@ export function strokePlate(
   for (let i = 1; i < samples.length; i++)
     ctx.lineTo(samples[i]!.x, samples[i]!.y);
   ctx.stroke();
-  (ctx as CanvasRenderingContext2D).filter = "none";
+  ctx.restore();
 }
 
-/** Two multiply glaze strokes (softer bands) */
+/** Two multiply glaze strokes (softer bands). */
 export function strokeGlazes(
   ctx: Ctx2D,
   samples: ReadonlyArray<RibbonSample>,
@@ -102,11 +111,13 @@ export function strokeGlazes(
   w2Mul: number
 ): void {
   if (samples.length < 2) return;
+
+  ctx.save();
   ctx.globalCompositeOperation = "multiply";
   (ctx as CanvasRenderingContext2D).filter =
     `blur(${Math.max(0.6, 0.5).toFixed(3)}px)`;
 
-  // #1
+  // pass #1
   ctx.globalAlpha = clamp01(glaze1Alpha);
   (ctx as CanvasRenderingContext2D).strokeStyle = toRGBA(
     color,
@@ -121,7 +132,7 @@ export function strokeGlazes(
     ctx.lineTo(samples[i]!.x, samples[i]!.y);
   ctx.stroke();
 
-  // #2
+  // pass #2
   ctx.globalAlpha = clamp01(glaze2Alpha);
   (ctx as CanvasRenderingContext2D).strokeStyle = toRGBA(
     color,
@@ -134,7 +145,7 @@ export function strokeGlazes(
     ctx.lineTo(samples[i]!.x, samples[i]!.y);
   ctx.stroke();
 
-  (ctx as CanvasRenderingContext2D).filter = "none";
+  ctx.restore();
 }
 
 /** Destination-in tip fade along centerline (light ends). */
@@ -146,8 +157,10 @@ export function applyTipFade(
   viewH: number
 ): void {
   if (samples.length < 2) return;
+
   const a = samples[0]!;
   const b = samples[samples.length - 1]!;
+
   ctx.save();
   ctx.globalCompositeOperation = "destination-in";
   const grad = (ctx as CanvasRenderingContext2D).createLinearGradient(
@@ -156,7 +169,7 @@ export function applyTipFade(
     b.x,
     b.y
   );
-  const endAlpha = Math.max(0, Math.min(1, tipMinAlpha));
+  const endAlpha = clamp01(tipMinAlpha);
   grad.addColorStop(0.0, `rgba(0,0,0,${endAlpha.toFixed(2)})`);
   grad.addColorStop(0.08, "rgba(0,0,0,1.0)");
   grad.addColorStop(0.92, "rgba(0,0,0,1.0)");
@@ -176,11 +189,10 @@ export function innerRimPolish(
   ctx.globalCompositeOperation = "destination-out";
   (ctx as CanvasRenderingContext2D).filter = "blur(0.35px)";
   (ctx as CanvasRenderingContext2D).strokeStyle =
-    `rgba(0,0,0,${Math.max(0, Math.min(1, alpha))})`;
+    `rgba(0,0,0,${clamp01(alpha)})`;
   (ctx as CanvasRenderingContext2D).lineCap = "round";
   (ctx as CanvasRenderingContext2D).lineJoin = "round";
   (ctx as CanvasRenderingContext2D).lineWidth = 0.7;
   ctx.stroke(outline);
-  (ctx as CanvasRenderingContext2D).filter = "none";
   ctx.restore();
 }

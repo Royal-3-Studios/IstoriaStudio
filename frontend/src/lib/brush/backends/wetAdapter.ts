@@ -1,5 +1,4 @@
 // FILE: src/lib/brush/backends/wetAdapter.ts
-
 import type {
   BackendAdapter,
   RenderStrokeOptions,
@@ -48,10 +47,10 @@ function isFiniteNumber(v: unknown): v is number {
 function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 0.7; // consistent default with other adapters
+  return 0.7;
 }
 
-/** Keep only defined fields (preserve 0/false/null). */
+/** Keep only defined keys (preserve 0/false/null). */
 function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
@@ -78,8 +77,8 @@ const wetAdapter: BackendAdapter = {
   name: "wet",
   caps: withBaseCaps({
     wet: true,
-    flow: true, // respects flow for laydown before diffusion
-    tilt: true, // ready to bias diffusion/smudge by tilt if backend supports it
+    flow: true, // laydown respects flow
+    tilt: true, // ready to bias diffusion/edge by tilt if core supports it
     worker: true, // OffscreenCanvas-safe
   }),
 
@@ -90,10 +89,10 @@ const wetAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Ensure a valid 2D context exists (throws if not)
+    // Ensure a 2D context exists (throws if unsupported)
     get2D(surface);
 
-    // Standardized extras (support new locations + legacy root fields)
+    // Standardized extras (new locations + legacy root fields)
     const extra = (opts.extra ?? {}) as WetExtrasWide;
 
     const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
@@ -107,6 +106,7 @@ const wetAdapter: BackendAdapter = {
       ...legacyOverridesAtRoot
     } = extra;
 
+    // Merge + prune undefined
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
       {
         ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
@@ -123,7 +123,7 @@ const wetAdapter: BackendAdapter = {
           ? sizePx
           : 12;
 
-    // Build strokePath conditionally (avoid setting any key to undefined)
+    // strokePath only with defined keys (keeps exactOptionalPropertyTypes happy)
     const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing;
@@ -133,11 +133,11 @@ const wetAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Build engine config (omit empty optionals)
+    // Engine config (attach only non-empty bags)
     const engineCfg: EngineConfig = { overrides };
     if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
 
-    // Only assign rendering when we actually have a value (avoids EngineRendering|undefined)
+    // Optional rendering flag
     if (typeof wetEdges === "boolean") {
       engineCfg.rendering = {
         ...(engineCfg.rendering ?? {}),
@@ -156,7 +156,7 @@ const wetAdapter: BackendAdapter = {
       ...(isFiniteNumber(opts.pixelRatio)
         ? { pixelRatio: opts.pixelRatio }
         : {}),
-      // Forward input so engine’s unified stabilization/prediction applies
+      // forward input so the engine’s unified stabilization/prediction applies
       ...(opts.input ? { input: opts.input } : {}),
     };
 

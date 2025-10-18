@@ -1,4 +1,5 @@
 // FILE: src/lib/brush/backends/smudgeAdapter.ts
+
 import type {
   BackendAdapter,
   RenderStrokeOptions,
@@ -11,12 +12,11 @@ import type {
   RenderPathPoint,
   RenderOverrides,
   EngineConfig,
-  EngineStrokePath,
 } from "@/lib/brush/engine.types";
 
-import drawSmudge from "./smudge"; // resolves to ./smudge/index.ts
-import { get2D } from "@backends/utils/canvas";
+import { drawToCanvas as drawSmudgeToCanvas } from "./smudge"; // resolves to ./smudge/index.ts
 import { withBaseCaps } from "@/lib/brush/backends/caps";
+import type { SmudgeOptions } from "./smudge/types";
 
 /* ============================ Local helper types ============================ */
 
@@ -27,15 +27,25 @@ type IncomingPoint = {
   pressure?: number;
   angle?: number;
   tilt?: number;
-  t?: number;
+  t?: number; // timestamp (ms) optional
 };
 
 type SmudgeExtrasWide = Partial<RenderOverrides> &
   AdapterExtra & {
+    // Global sizing (adapter-level)
     baseSizePx?: number;
     sizePx?: number; // legacy alias
-    spacing?: number; // legacy→ EngineStrokePath.spacing
-    streamline?: number; // → EngineStrokePath.streamline
+
+    // Preferred: nested smudge options
+    smudge?: Partial<SmudgeOptions>;
+
+    // Legacy root fields (still honored)
+    strengthPct?: number; // 0..100
+    scatterPx?: number; // px
+    minStepMs?: number; // ms
+    dirtyAmountPct?: number; // 0..100
+    dirtyEvapPct?: number; // 0..100
+    softenPx?: number; // px
   };
 
 /* ================================= Helpers ================================= */
@@ -44,24 +54,17 @@ function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
-function readPressure(pt: Pick<IncomingPoint, "p" | "pressure">): number {
+function pressureOf(pt: Pick<IncomingPoint, "p" | "pressure">): number {
   if (isFiniteNumber(pt.p)) return pt.p;
   if (isFiniteNumber(pt.pressure)) return pt.pressure;
-  return 0.7; // gentle default suits smudge
-}
-
-/** Keep only defined fields (preserve 0/false/null). */
-function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
-  const out: Record<string, unknown> = {};
-  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
-  return out as Partial<T>;
+  return 0.7; // pleasant default for blending dynamics
 }
 
 /** Normalize external path → engine path (omit undefined optionals). */
-function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
+function normalizePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   const src = (path ?? []) as IncomingPoint[];
   return src.map((pt) => {
-    const p = readPressure(pt);
+    const p = pressureOf(pt);
     const out: RenderPathPoint = { x: pt.x, y: pt.y, p, pressure: p };
     if (isFiniteNumber(pt.angle)) out.angle = pt.angle;
     if (isFiniteNumber(pt.tilt)) out.tilt = pt.tilt;
@@ -70,19 +73,73 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
-/* ================================= Adapter ================================= */
+/** Keep only defined keys (preserve 0/false/null). */
+function pruneUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const k in obj) if (obj[k] !== undefined) out[k] = obj[k];
+  return out as Partial<T>;
+}
 
-const SMUDGE_DEFAULT_BASE = 12;
+/** Safe numeric getter that never returns undefined. */
+function numOr(value: unknown, fallback: number): number {
+  return isFiniteNumber(value) ? (value as number) : fallback;
+}
+
+/* --------------------------- Resolved defaults ----------------------------- */
+
+/** Fully required defaults for smudge (concrete numbers). */
+const DEFAULT_SMUDGE: Required<SmudgeOptions> = {
+  baseSizePx: 18,
+  strengthPct: 70, // 0..100
+  scatterPx: 0, // px
+  minStepMs: 8, // ms
+  dirtyAmountPct: 60, // keep % semantics
+  dirtyEvapPct: 15, // fade % per step
+  softenPx: 0, // px
+};
+
+/** Build a complete SmudgeOptions with definite numbers from extras. */
+function buildSmudgeFromExtras(
+  extras: SmudgeExtrasWide,
+  resolvedBaseSize: number
+): SmudgeOptions {
+  const s = extras.smudge ?? {};
+  return {
+    baseSizePx: numOr(
+      s.baseSizePx ?? resolvedBaseSize,
+      DEFAULT_SMUDGE.baseSizePx
+    ),
+    strengthPct: numOr(
+      s.strengthPct ?? extras.strengthPct,
+      DEFAULT_SMUDGE.strengthPct
+    ),
+    scatterPx: numOr(s.scatterPx ?? extras.scatterPx, DEFAULT_SMUDGE.scatterPx),
+    minStepMs: numOr(s.minStepMs ?? extras.minStepMs, DEFAULT_SMUDGE.minStepMs),
+    dirtyAmountPct: numOr(
+      s.dirtyAmountPct ?? extras.dirtyAmountPct,
+      DEFAULT_SMUDGE.dirtyAmountPct
+    ),
+    dirtyEvapPct: numOr(
+      s.dirtyEvapPct ?? extras.dirtyEvapPct,
+      DEFAULT_SMUDGE.dirtyEvapPct
+    ),
+    softenPx: numOr(s.softenPx ?? extras.softenPx, DEFAULT_SMUDGE.softenPx),
+  };
+}
+
+/* ================================ Adapter ================================= */
+
+const smudgeCaps = withBaseCaps({
+  flow: true, // composite/opacity honored in engine
+  tilt: true, // tilt can be routed via overrides
+  smudge: true,
+  worker: true, // OffscreenCanvas-safe
+});
 
 const smudgeAdapter: BackendAdapter = {
   id: "smudge",
   name: "smudge",
-  caps: withBaseCaps({
-    flow: true, // pickup/laydown scaling
-    tilt: true, // directional bias if core supports it
-    smudge: true, // pickup/laydown pipeline
-    worker: true, // OffscreenCanvas-safe
-  }),
+  caps: smudgeCaps,
 
   async renderStroke(
     surface: CanvasSurface,
@@ -91,69 +148,52 @@ const smudgeAdapter: BackendAdapter = {
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    const ctx = get2D(surface);
+    // Standardized extras (supports new extra.* and legacy root fields)
+    const extras = (opts.extra ?? {}) as SmudgeExtrasWide;
 
-    // Standardized extras (support new locations + legacy root fields)
-    const extra = (opts.extra ?? {}) as SmudgeExtrasWide;
+    // RenderOverrides: compositing/opacity/etc — NOT spacing/physics
+    const extraOverrides = (extras.overrides ?? {}) as Partial<RenderOverrides>;
+    const { smudge: _ignoreSmudgeInsideOverrides, ...legacyOverrideRoots } =
+      extras as any;
 
-    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
-    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
-
-    const {
-      baseSizePx: extraBase,
-      sizePx, // legacy alias
-      spacing, // legacy/compat shortcut → strokePath.spacing
-      streamline, // compat mapping → strokePath.streamline
-      ...legacyOverridesAtRoot
-    } = extra;
-
-    const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      {
-        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+    const renderOverrides: Partial<RenderOverrides> =
+      pruneUndefined<RenderOverrides>({
+        ...(legacyOverrideRoots as Partial<RenderOverrides>),
         ...extraOverrides,
-      }
-    );
+      });
 
-    // Strict baseSizePx
-    const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
+    // Resolve top-level base size (strict number)
+    const baseSizePxTop: number = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
-      : isFiniteNumber(extraBase)
-        ? extraBase
-        : isFiniteNumber(sizePx)
-          ? sizePx
-          : SMUDGE_DEFAULT_BASE;
+      : isFiniteNumber(extras.baseSizePx)
+        ? extras.baseSizePx!
+        : isFiniteNumber(extras.sizePx)
+          ? extras.sizePx!
+          : DEFAULT_SMUDGE.baseSizePx;
 
-    // Compose strokePath from standardized bag + compat mapping (omit undefineds)
-    const strokePath: EngineStrokePath = { ...extraStrokePath };
-    if (isFiniteNumber(spacing)) strokePath.spacing = spacing;
-    if (isFiniteNumber(overrides.spacing))
-      strokePath.spacing = overrides.spacing;
-    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
-    if (isFiniteNumber(overrides.scatter))
-      strokePath.scatter = overrides.scatter;
-    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
-    if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
+    // Merge SmudgeOptions (all numeric, exactOptionalPropertyTypes-safe)
+    const smudge: SmudgeOptions = buildSmudgeFromExtras(extras, baseSizePxTop);
 
-    // Engine config
-    const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+    // Engine config (no strokePath; core reads RenderOptions.smudge + .path)
+    const engineCfg: EngineConfig = { overrides: renderOverrides };
 
-    const renderOpts: RenderOptions = {
+    const renderOpts: RenderOptions & { smudge: SmudgeOptions } = {
       engine: engineCfg,
-      baseSizePx,
+      baseSizePx: baseSizePxTop, // still set global baseSizePx for parity
       width,
       height,
       seed: isFiniteNumber(opts.seed) ? opts.seed : 0,
-      path: toEnginePath(opts.path),
+      path: normalizePath(opts.path),
+      smudge,
       ...(typeof opts.color === "string" ? { color: opts.color } : {}),
       ...(isFiniteNumber(opts.pixelRatio)
         ? { pixelRatio: opts.pixelRatio }
         : {}),
+      // Forward input so unified stabilization/prediction applies
       ...(opts.input ? { input: opts.input } : {}),
     };
 
-    // drawSmudge is sync in most cases
-    drawSmudge(ctx, renderOpts);
+    await Promise.resolve(drawSmudgeToCanvas(surface, renderOpts));
   },
 };
 

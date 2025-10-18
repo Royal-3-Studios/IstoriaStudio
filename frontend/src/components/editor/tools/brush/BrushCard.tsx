@@ -3,7 +3,7 @@
 
 import * as React from "react";
 import { Sun, Moon, Star } from "lucide-react";
-import { drawStrokeToSurface } from "@/lib/brush/engine"; // ✅ accepts RenderOptions
+import { drawStrokeToSurface } from "@/lib/brush/engine";
 import type {
   BrushBackend,
   BrushPreset,
@@ -36,20 +36,13 @@ function isBrushBackend(v: unknown): v is BrushBackend {
 /** Coerce a JSON-ish engine into a typed EngineConfig (no `any`, no explicit `undefined`). */
 function coerceEngineConfig(e: unknown): EngineConfig {
   const src = (e ?? {}) as Partial<EngineConfig> & { backend?: unknown };
-
-  // Only include backend if it’s one of the allowed literals
   const backendPart = isBrushBackend(src.backend)
     ? { backend: src.backend }
     : {};
-
-  // Spread other sub-objects as-is; they’re already optional in EngineConfig
-  return {
-    ...src,
-    ...backendPart,
-  };
+  return { ...src, ...backendPart };
 }
 
-/** Local fallback so we never crash if a preset is half-baked. */
+/** Safe fallback so we never crash if a preset is half-baked. */
 const FALLBACK_ENGINE: EngineConfig = {
   backend: "stamping",
   strokePath: { spacing: 4, jitter: 0, scatter: 0, streamline: 20, count: 1 },
@@ -65,7 +58,6 @@ export const BrushCard = React.memo(function BrushCard({
   selected,
   onSelect,
   initialBg = "light",
-  // New: favorites + tags (all optional / inert if not passed)
   isFavorite,
   onToggleFavorite,
   showTags = false,
@@ -100,11 +92,9 @@ export const BrushCard = React.memo(function BrushCard({
   }, [sizeParam, engine.shape?.sizeScale]);
 
   // We let the engine size the backing store via DPR. We only set CSS size here.
-  // (engine.draw will call ensureCanvasDprSize internally.)
   React.useLayoutEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
-    // CSS size only (backing-store sized by engine)
     c.style.width = `${PREVIEW_CSS_W}px`;
     c.style.height = `${PREVIEW_CSS_H}px`;
   }, []);
@@ -153,13 +143,11 @@ export const BrushCard = React.memo(function BrushCard({
     [preset.id]
   );
 
-  // Keep spacing compact for preview row; convert to percent (what backends expect)
+  // Keep spacing compact for preview row; ensure percent form (what backends expect)
   const previewEngine: EngineConfig = React.useMemo(() => {
     const uiSpacing = Number(engine.strokePath?.spacing ?? 6);
-    // If a preset already sets % (value > 1), keep it; otherwise convert fraction→percent
     const spacingPercent =
       uiSpacing > 1 ? uiSpacing : Math.round(uiSpacing * 100);
-
     return {
       ...engine,
       strokePath: {
@@ -180,7 +168,7 @@ export const BrushCard = React.memo(function BrushCard({
       color: "#000000",
       width: PREVIEW_CSS_W,
       height: PREVIEW_CSS_H,
-      pixelRatio: PREVIEW_PIXEL_RATIO, // DPR (backing-store handled inside)
+      pixelRatio: PREVIEW_PIXEL_RATIO, // engine sizes backing store internally
       seed,
       path,
       overrides: {

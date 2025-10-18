@@ -2,16 +2,18 @@
 import type { RenderOptions } from "@/lib/brush/engine.types";
 import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
 
-import { drawStampGraphite } from "./variants/graphite";
-import { drawStampInk } from "./variants/ink";
-import { drawStampMarker } from "./variants/marker";
-import { drawStampCalligraphy } from "./variants/calligraphy";
-import { drawStampScatter } from "./variants/scatter";
-import { drawSingleStamp } from "./variants/stamp";
-import { drawStampOrnament } from "./variants/ornament";
+// Use DEFAULT exports for all variants (less brittle than named imports)
 
-// 👇 import your tilt normalization helper (adjust path if yours differs)
+import drawInk from "./variants/ink";
+import drawMarker from "./variants/marker";
+import drawCalligraphy from "./variants/calligraphy";
+import drawScatter from "./variants/scatter";
+import drawSingle from "./variants/stamp";
+import drawOrnament from "./variants/ornament";
+
+// If you have tilt helpers, keep this (adjust path if needed)
 import { getTiltOverrides } from "@backends/stamping/utils/scalars";
+import drawGraphite from "./variants/graphite";
 
 /** High-level stamping modes. */
 export type StampingMode =
@@ -25,12 +27,9 @@ export type StampingMode =
 
 /** Backend-local overrides (attach via engine.backendOverrides.stamping). */
 export type StampingOverrides = Partial<{
-  /** Preferred selector: engine.backendOverrides.stamping.mode */
   mode: StampingMode;
-  /** Calligraphy-only: chisel nib angle in degrees. */
-  nibAngleDeg: number;
-  /** Clamp minimum tip width in CSS px. */
-  tipMinPx: number;
+  nibAngleDeg: number; // calligraphy-only
+  tipMinPx: number; // clamp minimum width (px)
 }>;
 
 function isStampingMode(x: unknown): x is StampingMode {
@@ -51,27 +50,19 @@ export function pickMode(opt: RenderOptions): StampingMode {
     | StampingOverrides
     | undefined;
 
-  // Preferred path
   if (isStampingMode(local?.mode)) return local.mode;
 
-  // --- Legacy shim (read-only): engine.overrides.stampingMode ---
-  // Do NOT add this to RenderOverrides; keep it local until presets migrate.
+  // Legacy read-only shim: engine.overrides.stampingMode
   const legacy = opt.engine.overrides as { stampingMode?: unknown } | undefined;
   if (isStampingMode(legacy?.stampingMode)) return legacy.stampingMode;
 
-  // Default
   return "graphite";
 }
 
 /** Core entry: draw using the selected variant. */
 export default function drawStamping(ctx: Ctx2D, opt: RenderOptions): void {
-  // --- Normalize tilt knobs ONCE here, then pass to all variants -------------
-  // getTiltOverrides returns a normalized bag like:
-  // { tiltToSize: number, tiltToFan: number, tiltToGrainScale: number, tiltToEdgeNoise: number }
-  const tilt = getTiltOverrides(opt.engine.overrides);
-
-  // Merge them into engine.overrides so variants can read `ov.tiltToFan`, etc.
-  // Note: we never assign explicit `undefined` (friendly to exactOptionalPropertyTypes)
+  // Normalize tilt knobs once and thread into overrides
+  const tilt = getTiltOverrides?.(opt.engine.overrides) ?? {};
   const optWithTilt: RenderOptions = {
     ...opt,
     engine: {
@@ -85,26 +76,26 @@ export default function drawStamping(ctx: Ctx2D, opt: RenderOptions): void {
 
   switch (pickMode(optWithTilt)) {
     case "ink":
-      drawStampInk(ctx, optWithTilt);
+      drawInk(ctx, optWithTilt);
       break;
     case "marker":
-      drawStampMarker(ctx, optWithTilt);
+      drawMarker(ctx, optWithTilt);
       break;
     case "calligraphy":
-      drawStampCalligraphy(ctx, optWithTilt);
+      drawCalligraphy(ctx, optWithTilt);
       break;
     case "scatter":
-      drawStampScatter(ctx, optWithTilt);
+      drawScatter(ctx, optWithTilt);
       break;
     case "stamp":
-      drawSingleStamp(ctx, optWithTilt);
+      drawSingle(ctx, optWithTilt);
       break;
     case "ornament":
-      drawStampOrnament(ctx, optWithTilt);
+      drawOrnament(ctx, optWithTilt);
       break;
     case "graphite":
     default:
-      drawStampGraphite(ctx, optWithTilt);
+      drawGraphite(ctx, optWithTilt);
       break;
   }
 }

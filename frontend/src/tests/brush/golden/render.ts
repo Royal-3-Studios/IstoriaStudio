@@ -3,10 +3,7 @@
 // Works in Vitest (jsdom or node) via OffscreenCanvas, DOM canvas, or node-canvas.
 
 import { drawStrokeToSurface } from "@/lib/brush/engine";
-import type {
-  RenderOptions,
-  NormalizedRenderOptions,
-} from "@/lib/brush/engine.types";
+import type { RenderOptions } from "@/lib/brush/engine.types";
 
 // ---- Local minimal types (keep strict & no `any`) ---------------------------
 
@@ -18,9 +15,24 @@ type HeadlessCanvas =
   | {
       width: number;
       height: number;
-      getContext: (id: "2d", opts?: CanvasRenderingContext2DSettings) => Ctx2D;
+      getContext: (
+        id: "2d",
+        opts?: CanvasRenderingContext2DSettings
+      ) => Ctx2D | null;
       toBuffer?: (mime?: string) => Buffer;
     };
+
+// Optional: minimal input sample type if you want to push live samples to engine
+export type BrushInputSample = {
+  x: number;
+  y: number;
+  t?: number; // ms
+  pressure?: number; // 0..1
+  tilt?: number; // 0..1
+  angle?: number; // radians
+  device?: "pen" | "mouse" | "touch";
+  eraser?: boolean;
+};
 
 // ---- Canvas creation (Offscreen → DOM → node-canvas) ------------------------
 
@@ -44,8 +56,7 @@ function createNodeCanvas(w: number, h: number): HeadlessCanvas {
   const { createCanvas } = require("canvas") as {
     createCanvas: (w: number, h: number) => HeadlessCanvas;
   };
-  const c = createCanvas(w, h);
-  return c;
+  return createCanvas(w, h);
 }
 
 export function createTestCanvas(
@@ -63,9 +74,11 @@ export function createTestCanvas(
     const c = document.createElement("canvas");
     c.width = pixelW;
     c.height = pixelH;
-    // Give it CSS size so coordinates are clearer if you ever inspect visually
-    c.style && (c.style.width = `${cssW}px`),
-      c.style && (c.style.height = `${cssH}px`);
+    // Set CSS size for easier visual inspection when debugging in a browser
+    if ("style" in c) {
+      (c as HTMLCanvasElement).style.width = `${cssW}px`;
+      (c as HTMLCanvasElement).style.height = `${cssH}px`;
+    }
     canvas = c;
   } else {
     canvas = createNodeCanvas(pixelW, pixelH);
@@ -90,6 +103,8 @@ export type GoldenRenderOpts = Omit<RenderOptions, "width" | "height"> & {
   seed?: number;
   /** Fill background before rendering; null to keep transparent. */
   background?: string | null;
+  /** Optional live input samples to feed the engine under test. */
+  inputSamples?: ReadonlyArray<BrushInputSample>;
 };
 
 /**
@@ -106,17 +121,17 @@ export async function renderToImageData(
 
   const { canvas, ctx, pixelW, pixelH } = createTestCanvas(cssW, cssH, dpr);
 
-  // Optional background
-  if (opts.background) {
+  // Optional background fill (in device pixels)
+  if (typeof opts.background === "string") {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // paint in device px
-    ctx.fillStyle = opts.background;
-    ctx.fillRect(0, 0, pixelW, pixelH);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    (ctx as CanvasRenderingContext2D).fillStyle = opts.background;
+    (ctx as CanvasRenderingContext2D).fillRect(0, 0, pixelW, pixelH);
     ctx.restore();
   }
 
   // Build RenderOptions without undefined keys (keeps exactOptionalPropertyTypes happy)
-  const ro: RenderOptions = {
+  const roBase: RenderOptions = {
     engine: opts.engine,
     baseSizePx: opts.baseSizePx,
     width: cssW,
@@ -126,12 +141,20 @@ export async function renderToImageData(
     ...(typeof opts.pixelRatio === "number"
       ? { pixelRatio: opts.pixelRatio }
       : {}),
-    ...(opts.dpr ? { dpr: opts.dpr } : {}), // legacy alias if present
     ...(opts.path ? { path: opts.path } : {}),
     ...(opts.colorJitter ? { colorJitter: opts.colorJitter } : {}),
     ...(opts.overrides ? { overrides: opts.overrides } : {}),
     ...(opts.input ? { input: opts.input } : {}),
   };
+
+  // If tests want to exercise input history, forward inputSamples
+  const ro =
+    opts.inputSamples && opts.inputSamples.length > 0
+      ? ({
+          ...roBase,
+          inputSamples: opts.inputSamples,
+        } as unknown as RenderOptions)
+      : roBase;
 
   await drawStrokeToSurface(
     canvas as unknown as HTMLCanvasElement | OffscreenCanvas,
@@ -154,8 +177,6 @@ export async function renderToImageData(
 export async function imageDataToPng(
   img: ImageData
 ): Promise<Uint8Array | Buffer> {
-  // Quick path: in Node, encode via canvas if available
-  // We’ll draw into a temporary canvas and call toBuffer / toBlob.
   const w = img.width;
   const h = img.height;
 
@@ -180,7 +201,11 @@ export async function imageDataToPng(
   }
 
   // OffscreenCanvas
-  if (c instanceof OffscreenCanvas && "convertToBlob" in c) {
+  if (
+    typeof OffscreenCanvas !== "undefined" &&
+    c instanceof OffscreenCanvas &&
+    "convertToBlob" in c
+  ) {
     const blob = await c.convertToBlob({ type: "image/png" });
     const buf = new Uint8Array(await blob.arrayBuffer());
     return buf;
@@ -189,10 +214,9 @@ export async function imageDataToPng(
   // DOM Canvas fallback
   if (hasDomCanvas()) {
     const dataUrl = (c as HTMLCanvasElement).toDataURL("image/png");
-    // Convert base64 → Uint8Array
     const b64 = dataUrl.split(",")[1] ?? "";
-    const bin = globalThis.atob
-      ? globalThis.atob(b64)
+    const bin = (globalThis as unknown as { atob?: (s: string) => string }).atob
+      ? (globalThis as unknown as { atob: (s: string) => string }).atob(b64)
       : Buffer.from(b64, "base64").toString("binary");
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -233,16 +257,12 @@ export function compareImageData(
   let sumAbs = 0;
   let sumSq = 0;
   let outliers = 0;
-  const pxCount = (n / 4) | 0;
 
   for (let i = 0; i < n; i++) {
     const d = Math.abs(da[i]! - db[i]!);
     sumAbs += d;
     sumSq += d * d;
-    if (perChannelTolerance > 0 && d > perChannelTolerance) {
-      // count outlier on channel basis; normalize later to pixel basis
-      outliers++;
-    }
+    if (perChannelTolerance > 0 && d > perChannelTolerance) outliers++;
   }
 
   const mae = sumAbs / n;

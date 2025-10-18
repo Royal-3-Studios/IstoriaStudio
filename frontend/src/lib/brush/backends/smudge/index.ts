@@ -1,81 +1,79 @@
 // FILE: src/lib/brush/backends/smudge/index.ts
+
 import type { RenderOptions } from "@/lib/brush/engine.types";
 import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
-
-import { drawSmudgeSoft } from "./variants/soft";
-import { drawSmudgeStreak } from "./variants/streak";
-import { drawSmudgeOily } from "./variants/oily";
-
-// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend
 import { getTiltOverrides } from "@backends/stamping/utils/scalars";
 
-export type SmudgeMode = "soft" | "streak" | "oily";
+import { drawSmudgeToCanvas } from "./core/smudge";
+import type { SmudgeOptions } from "./types";
 
-export type SmudgeOverrides = Partial<{
-  mode: SmudgeMode;
+/* ----------------------------- defaults & merge ----------------------------- */
 
-  // shared knobs
-  strength: number; // 0..2
-  alphaMul: number; // 0..2
-  radiusGain: number; // 0.2..3
-  softenPx: number; // px
-  spacing: number; // % → overrides strokePath.spacing
-
-  // drag (streak/soft)
-  anisotropy: number; // 0..1
-  alignWithTangent: number; // 0..1
-  falloff: "gaussian" | "cosine";
-  maxOffsetPx: number; // px
-
-  // mixer (oily)
-  pickup: number; // 0..1
-  laydown: number; // 0..1
-  liftAmount: number; // 0..1
-  mixFalloff: "gaussian" | "cosine";
-
-  // optional dissolve post
-  dissolve: boolean;
-  dissolveAmount: number; // 0..1
-  dissolveScale: number; // px
-}>;
-
-export function pickMode(opt: RenderOptions): SmudgeMode {
-  const o = opt.engine.backendOverrides?.smudge as SmudgeOverrides | undefined;
-  const m = o?.mode;
-  return m === "streak" || m === "oily" ? m : "soft";
+/** Hard defaults (all numeric; exactOptionalPropertyTypes-safe). */
+function defaultSmudge(): SmudgeOptions {
+  return {
+    baseSizePx: 18,
+    strengthPct: 70, // 0..100
+    scatterPx: 0, // px
+    minStepMs: 8, // ms
+    dirtyAmountPct: 60, // keep % of pigment each mix
+    dirtyEvapPct: 15, // fade % per step
+    softenPx: 0, // px blur when mixing into tip
+  };
 }
 
-/** Core entry */
-export default function drawSmudge(ctx: Ctx2D, opt: RenderOptions): void {
-  // Normalize tilt knobs once and merge into engine.overrides
-  const tilt = getTiltOverrides(opt.engine.overrides);
+/** Merge caller’s options with defaults safely. */
+function normalizeOptions(
+  opt: RenderOptions & Partial<{ smudge: Partial<SmudgeOptions> }>
+): RenderOptions & { smudge: SmudgeOptions } {
+  const d = defaultSmudge();
+  const s = opt.smudge ?? {};
+  const safe: SmudgeOptions = {
+    baseSizePx: typeof s.baseSizePx === "number" ? s.baseSizePx : d.baseSizePx,
+    strengthPct:
+      typeof s.strengthPct === "number" ? s.strengthPct : d.strengthPct,
+    scatterPx: typeof s.scatterPx === "number" ? s.scatterPx : d.scatterPx,
+    minStepMs: typeof s.minStepMs === "number" ? s.minStepMs : d.minStepMs,
+    dirtyAmountPct:
+      typeof s.dirtyAmountPct === "number"
+        ? s.dirtyAmountPct
+        : d.dirtyAmountPct,
+    dirtyEvapPct:
+      typeof s.dirtyEvapPct === "number" ? s.dirtyEvapPct : d.dirtyEvapPct,
+    softenPx: typeof s.softenPx === "number" ? s.softenPx : d.softenPx,
+  };
+  return { ...(opt as RenderOptions), smudge: safe };
+}
+
+/* --------------------------------- entries --------------------------------- */
+
+/** Draw with an existing 2D context (DOM or Offscreen). */
+export function drawSmudge(ctx: Ctx2D, opt: RenderOptions): void {
+  // Normalize tilt controls once (kept for parity even if smudge doesn't use tilt directly now).
+  const tilt = getTiltOverrides((opt as any)?.engine?.overrides);
   const optWithTilt: RenderOptions = {
     ...opt,
     engine: {
-      ...opt.engine,
+      ...(opt as any).engine,
       overrides: {
-        ...(opt.engine.overrides ?? {}),
+        ...((opt as any)?.engine?.overrides ?? {}),
         ...tilt,
       },
     },
   };
 
-  switch (pickMode(optWithTilt)) {
-    case "streak":
-      drawSmudgeStreak(ctx, optWithTilt);
-      break;
-    case "oily":
-      drawSmudgeOily(ctx, optWithTilt);
-      break;
-    case "soft":
-    default:
-      drawSmudgeSoft(ctx, optWithTilt);
-      break;
-  }
+  const nopt = normalizeOptions(optWithTilt);
+  const path = (nopt as any)?.path;
+  if (!path) throw new Error("smudge/index: RenderOptions.path is missing");
+
+  // ctx.canvas is HTMLCanvasElement | OffscreenCanvas → matches CanvasLike
+  drawSmudgeToCanvas(ctx.canvas as CanvasLike, path, nopt);
 }
 
-/** Convenience */
+/** Convenience: accept a surface and fetch a context, then draw. */
 export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
   const ctx = get2D(surface);
   drawSmudge(ctx, opt);
 }
+
+export default drawToCanvas;

@@ -19,6 +19,25 @@ export type BrushBackend =
   | "pattern"
   | "impasto";
 
+export type CurvePoint = {
+  /** Domain in [0..1] */
+  x: number;
+  /** Range in [0..1] */
+  y: number;
+};
+
+// Accept either editable points or a baked LUT.
+export type CurveSource = ReadonlyArray<CurvePoint> | Float32Array;
+
+/** Per-stamp input sample normalized for dynamics (computed at runtime). */
+export type BrushInputSample = {
+  pressure: number;
+  speedNorm: number;
+  altitudeDeg?: number; // optional
+  azimuthRad?: number; // optional
+  tiltShading?: number; // optional
+};
+
 /**
  * Legacy/compat rendering modes (used by some older presets/UIs).
  * Prefer `EngineRendering.intent` for new work.
@@ -221,6 +240,39 @@ export type RenderOverrides = {
   speedToSpacing?: number;
   /** Minimum absolute step in px after modulation. */
   minStepPx?: number;
+
+  /** Alias for globalCompositeOperation; overrides.rendering.blendMode if present */
+  composite?: CanvasRenderingContext2D["globalCompositeOperation"];
+  /** Hint: some browsers ignore, but useful for offscreen/workers */
+  antialias?: boolean;
+
+  /* -------- Editable curves (all in [0..1] → [0..1]) -------- */
+  /** pressure → width multiplier curve (fallback to linear if absent) */
+  pressureToWidthCurve?: CurveSource;
+  /** pressure → flow/opacity multiplier curve */
+  pressureToFlowCurve?: CurveSource;
+  /** normalized speed → flow/opacity multiplier curve */
+  speedToFlowCurve?: CurveSource;
+  /** (optional) normalized speed → width multiplier curve */
+  speedToWidthCurve?: CurveSource;
+
+  /** Tilt dynamics (side shading / pencil / charcoal) */
+  /** tiltShading (0 upright..1 fully on side) → width gain */
+  tiltToWidthCurve?: CurveSource;
+  /** tiltShading → flow/opacity gain */
+  tiltToFlowCurve?: CurveSource;
+  /** shaping exponent for tiltShading (default 1.25). */
+  tiltSideShadingExp?: number;
+
+  /** Use stylus azimuth to rotate stamps (calligraphy/technical pen). */
+  useAzimuthForRotation?: boolean;
+
+  /**
+   * Reference speed for normalizing speed-based curves (px/s).
+   * If provided, cores can compute speedNorm = clamp(speed / speedNormRefPxPerSec, 0..1).
+   * Sensible default in cores: ~800–1200 px/s for tablet workflows.
+   */
+  speedNormRefPxPerSec?: number;
 };
 
 /* ============================== Backend-specific Overrides ============================== */
@@ -279,7 +331,6 @@ export type SprayOverrides = {
 };
 
 /* ---- Wet ---- */
-// engine.types.ts (excerpt)
 export type WetOverrides = {
   // global wet controls
   wetEdges?: boolean; // quick toggle
@@ -455,6 +506,7 @@ export type RenderingResolution = {
 export type IntentToResolutionMap = Partial<
   Record<RenderingIntent, RenderingResolution>
 >;
+
 /* ================= UI Param Types ================= */
 
 export type BrushParamType =

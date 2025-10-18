@@ -92,6 +92,24 @@ export type SmudgeState = {
   spacingOverride?: number;
 };
 
+/** Minimal, engine-agnostic input sample carried per stroke. */
+export type BrushInputSample = {
+  // geometry (CSS px, ms)
+  x: number;
+  y: number;
+  t: number; // ms timestamp
+
+  // optional tablet-ish channels (0..1 unless noted)
+  pressure?: number;
+  tilt?: number; // 0..1 (your engine maps angle/altitude into this if desired)
+  angle?: number; // radians, path heading or device azimuth
+  rotationDeg?: number; // optional pen barrel rotation, degrees
+
+  // provenance / flags
+  device?: "pen" | "mouse" | "touch" | "unknown";
+  eraser?: boolean;
+};
+
 export type BrushContext = {
   width: number;
   height: number;
@@ -108,18 +126,32 @@ export type BrushContext = {
   layers: TempLayerRegistry;
   smudge: SmudgeState;
 
+  /** Per-stroke counters the backends may use. */
   sampleIndex: number;
   stampIndex: number;
 
+  /** Lightweight input ring buffer (recent → oldest). */
+  inputSamples: ReadonlyArray<BrushInputSample>;
+  /** Max logical samples we retain (ring). */
+  inputCapacity: number;
+
+  /** Temp layer management */
   getTempLayer: (key: string, pxWidth: number, pxHeight: number) => CanvasLike;
 
+  /** One-time source capture for smudge tools */
   ensureSmudgeSource: (fromCanvas: CanvasLike) => void;
 
+  /** Velocity smoothing helper */
   updateVelocity: (
     x: number,
     y: number,
     nowMs?: number
   ) => { speed: number; smoothed: number };
+
+  /** Input helpers */
+  pushInputSample: (s: BrushInputSample) => void;
+  getLastInputSample: () => BrushInputSample | undefined;
+  getInputWindow: (maxCount: number) => ReadonlyArray<BrushInputSample>;
 
   resetPerStrokeCounters(): void;
   dispose(): void;
@@ -145,6 +177,9 @@ export type BrushContextInit = {
 
   /** Optional injection to replace the default RNG. */
   rngFactory?: (seed: number) => RNG;
+
+  /** Input buffer capacity (defaults to 64). */
+  inputCapacity?: number;
 };
 
 export function createBrushContext(init: BrushContextInit): BrushContext {
@@ -186,6 +221,12 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
 
   const layers: TempLayerRegistry = Object.create(null);
 
+  // Small, allocation-friendly ring buffer for input samples
+  const inputCapacity = Math.max(1, Math.floor(init.inputCapacity ?? 64));
+  const ring: BrushInputSample[] = new Array(inputCapacity);
+  let head = 0; // points to next write slot
+  let count = 0;
+
   const ctx: BrushContext = {
     width,
     height,
@@ -201,6 +242,18 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
     smudge,
     sampleIndex: 0,
     stampIndex: 0,
+
+    // expose an immutable view each time (recent → oldest)
+    get inputSamples(): ReadonlyArray<BrushInputSample> {
+      if (count === 0) return [];
+      const out: BrushInputSample[] = new Array(count);
+      for (let i = 0; i < count; i++) {
+        const idx = (head - 1 - i + inputCapacity) % inputCapacity;
+        out[i] = ring[idx]!;
+      }
+      return out;
+    },
+    inputCapacity,
 
     getTempLayer(key, pxW, pxH) {
       const w = Math.max(1, Math.floor(pxW));
@@ -265,6 +318,44 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
       return { speed: instantaneous, smoothed: velocity.smoothed };
     },
 
+    // Input helpers
+    pushInputSample(s) {
+      // Write a copy with only defined optional fields included (EOPT-friendly)
+      const base: BrushInputSample = {
+        x: s.x,
+        y: s.y,
+        t: s.t,
+        ...(typeof s.pressure === "number" ? { pressure: s.pressure } : {}),
+        ...(typeof s.tilt === "number" ? { tilt: s.tilt } : {}),
+        ...(typeof s.angle === "number" ? { angle: s.angle } : {}),
+        ...(typeof s.rotationDeg === "number"
+          ? { rotationDeg: s.rotationDeg }
+          : {}),
+        ...(s.device ? { device: s.device } : {}),
+        ...(s.eraser ? { eraser: true } : {}),
+      };
+
+      ring[head] = base;
+      head = (head + 1) % inputCapacity;
+      if (count < inputCapacity) count++;
+    },
+
+    getLastInputSample() {
+      if (count === 0) return undefined;
+      const idx = (head - 1 + inputCapacity) % inputCapacity;
+      return ring[idx];
+    },
+
+    getInputWindow(maxCount) {
+      const k = Math.max(0, Math.min(maxCount, count));
+      const out: BrushInputSample[] = new Array(k);
+      for (let i = 0; i < k; i++) {
+        const idx = (head - 1 - i + inputCapacity) % inputCapacity;
+        out[i] = ring[idx]!;
+      }
+      return out;
+    },
+
     resetPerStrokeCounters() {
       ctx.sampleIndex = 0;
       ctx.stampIndex = 0;
@@ -275,7 +366,10 @@ export function createBrushContext(init: BrushContextInit): BrushContext {
         layers[k] = undefined;
         delete layers[k];
       }
-      ctx.smudge.source = null;
+      ctx.smudge.source = null as CanvasLike | null;
+      // clear input ring
+      for (let i = 0; i < inputCapacity; i++)
+        ring[i] = undefined as unknown as BrushInputSample;
     },
   };
 

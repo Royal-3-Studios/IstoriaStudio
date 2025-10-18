@@ -738,15 +738,15 @@ export default function EditorScreen({
             ].join(" ")}
           >
             {/* Canvas controls */}
-            <CanvasBackgroundToggle
+            {/* <CanvasBackgroundToggle
               value={canvasBg}
               onChangeAction={setCanvasBg}
               className="absolute right-3 top-1/2 -translate-y-1/2 z-[200]"
-            />
-            <ZoomControls
+            /> */}
+            {/* <ZoomControls
               attach="container"
               className="absolute left-0 top-1/2 -translate-y-1/2 z-[200]"
-            />
+            /> */}
 
             {/* StageView (Konva is encapsulated) */}
             <div

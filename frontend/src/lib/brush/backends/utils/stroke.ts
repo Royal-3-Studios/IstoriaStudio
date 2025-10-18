@@ -6,7 +6,9 @@ import type { RNG } from "@backends/utils/random";
 import { clamp, lerp } from "@backends/utils/math";
 import { mapPressure, type PressureMapOpts } from "@/lib/brush/core/pressure";
 
-/* ============================== Types ============================== */
+/* =============================================================================
+ * Public Types (unchanged surface)
+ * ============================================================================= */
 
 export type TaperProfile =
   | "linear"
@@ -87,25 +89,15 @@ export interface StrokePlacementOptions {
   inputQuality?: InputQualityOpts;
 }
 
+/** Placement for a single rendered stamp. */
 export interface Stamp {
-  /** CSS px position. */
   x: number;
   y: number;
-
-  /** Degrees. Includes follow + jitter; backends may add tip angle. */
   angleDeg: number;
-
-  /** Pressure at this point if provided upstream (0..1), else 1. */
   pressure: number;
-
-  /** 0..1 fraction along the stroke. */
-  t: number;
-
-  /** Width scale (0..1) after taper/body shaping (pre tipMinPx clamp). */
-  widthScale: number;
-
-  /** Heading in degrees from path tangent (useful for tip orientation). */
-  tangentDeg: number;
+  t: number; // 0..1 along the stroke
+  widthScale: number; // 0..1 after taper/body shaping
+  tangentDeg: number; // path heading
 }
 
 /** Resampled point used by backends that operate in the arc-length domain. */
@@ -114,207 +106,283 @@ export type SamplePoint = { x: number; y: number; t: number; p: number };
 /** Resampled point with a tangent angle in degrees (for ribbon outlines, etc.). */
 export type SampleWithAngle = SamplePoint & { tangentDeg: number };
 
-/* ============================== Internals ============================== */
+/* =============================================================================
+ * Internal Types (clear names)
+ * ============================================================================= */
 
-// Fully-concrete path point used internally (no optionals)
-interface P {
+/** Strict internal path sample used for geometry & timing. */
+interface InternalPathSample {
   x: number;
   y: number;
-  pressure: number;
-  angleDeg: number;
-  t: number; // cumulative arc fraction 0..1 (unnormalized until pathLengthAndT)
+  pressure: number; // 0..1
+  tangentDeg: number; // orientation
+  /**
+   * Path parameter (0..1) along cumulative arc length.
+   * Initially holds cumulative distance (px) until normalized.
+   */
+  pathParam: number;
+  /** Original timestamp in ms from RenderPathPoint.t — present only if provided. */
+  timeMs?: number;
 }
 
-// Utility to assert non-undefined (strict + runtime safety)
+/* =============================================================================
+ * Tiny utilities
+ * ============================================================================= */
+
 function must<T>(v: T | undefined, where = "value"): T {
   if (v === undefined) throw new Error(`Invariant: ${where} is undefined`);
   return v;
 }
 
-function sub(a: { x: number; y: number }, b: { x: number; y: number }) {
+function subtract(a: { x: number; y: number }, b: { x: number; y: number }) {
   return { x: a.x - b.x, y: a.y - b.y };
 }
-function len(v: { x: number; y: number }) {
+
+function length2D(v: { x: number; y: number }) {
   return Math.hypot(v.x, v.y);
 }
-function tangentDeg(
+
+function toDegrees(rad: number) {
+  return (rad * 180) / Math.PI;
+}
+
+function tangentDegFrom(
   a: { x: number; y: number },
   b: { x: number; y: number }
 ): number {
-  const d = sub(b, a);
-  return (Math.atan2(d.y, d.x) * 180) / Math.PI;
+  const d = subtract(b, a);
+  return toDegrees(Math.atan2(d.y, d.x));
 }
 
-/** simple one-pole smoother in *distance* domain */
-function smoothPath(
-  points: ReadonlyArray<RenderPathPoint>,
+function random01(rng?: RNG): number {
+  return rng ? rng.nextFloat() : Math.random();
+}
+
+/* =============================================================================
+ * Smoothing & Parameterization
+ * ============================================================================= */
+
+/** One-pole smoother in *distance* domain for points/pressure/orientation. */
+function smoothPathOnePole(
+  input: ReadonlyArray<RenderPathPoint>,
   alpha: number
-): P[] {
-  if (points.length === 0) return [];
-  const out: P[] = [];
-  const p0 = must(points[0], "points[0]");
-  const sx0 = Number.isFinite(p0.x) ? p0.x : 0;
-  const sy0 = Number.isFinite(p0.y) ? p0.y : 0;
+): InternalPathSample[] {
+  if (input.length === 0) return [];
+  const first = must(input[0], "points[0]");
+  const sx0 = Number.isFinite(first.x) ? first.x : 0;
+  const sy0 = Number.isFinite(first.y) ? first.y : 0;
   let sx = sx0;
   let sy = sy0;
-  let sp = Number.isFinite(p0.pressure as number) ? (p0.pressure as number) : 1;
-  let sa = Number.isFinite(p0.angle as number)
-    ? ((p0.angle as number) * 180) / Math.PI
+  let sp = Number.isFinite(first.pressure as number)
+    ? (first.pressure as number)
+    : 1;
+  let st = Number.isFinite(first.angle as number)
+    ? toDegrees(first.angle as number)
     : 0;
-  out.push({ x: sx, y: sy, pressure: sp, angleDeg: sa, t: 0 });
+  const out: InternalPathSample[] = [];
+  out.push({
+    x: sx,
+    y: sy,
+    pressure: sp,
+    tangentDeg: st,
+    pathParam: 0,
+    ...(typeof first.t === "number" ? { timeMs: first.t as number } : {}),
+  });
 
-  for (let i = 1; i < points.length; i++) {
-    const p = must(points[i], `points[${i}]`);
+  for (let i = 1; i < input.length; i++) {
+    const p = must(input[i], `points[${i}]`);
     const px = Number.isFinite(p.x) ? p.x : sx;
     const py = Number.isFinite(p.y) ? p.y : sy;
     const pp = Number.isFinite(p.pressure as number)
       ? (p.pressure as number)
       : sp;
     const pa = Number.isFinite(p.angle as number)
-      ? ((p.angle as number) * 180) / Math.PI
-      : sa;
+      ? toDegrees(p.angle as number)
+      : st;
+
     sx = lerp(sx, px, alpha);
     sy = lerp(sy, py, alpha);
     sp = lerp(sp, pp, alpha);
-    sa = lerp(sa, pa, alpha);
-    out.push({ x: sx, y: sy, pressure: sp, angleDeg: sa, t: 0 });
+    st = lerp(st, pa, alpha);
+
+    out.push({
+      x: sx,
+      y: sy,
+      pressure: sp,
+      tangentDeg: st,
+      pathParam: 0,
+      ...(typeof p.t === "number" ? { timeMs: p.t as number } : {}),
+    });
   }
   return out;
 }
 
-function copyP(src: P, tOverride?: number): P {
-  return {
-    x: src.x,
-    y: src.y,
-    pressure: src.pressure,
-    angleDeg: src.angleDeg,
-    t: tOverride ?? src.t,
-  };
-}
-
-function pathLengthAndT(points: ReadonlyArray<P>): {
-  pts: P[];
-  length: number;
+/** Compute cumulative arc length & normalize to pathParam in [0..1]. */
+function computePathLengthAndParam(ptsIn: ReadonlyArray<InternalPathSample>): {
+  pts: InternalPathSample[];
+  lengthPx: number;
 } {
-  const n = points.length;
-  if (n === 0) return { pts: [], length: 0 };
-  if (n === 1)
-    return { pts: [copyP(must(points[0], "points[0]"), 0)], length: 0 };
+  const n = ptsIn.length;
+  if (n === 0) return { pts: [], lengthPx: 0 };
+  if (n === 1) {
+    const only = must(ptsIn[0], "pts[0]");
+    return { pts: [{ ...only, pathParam: 0 }], lengthPx: 0 };
+  }
 
   let total = 0;
-  const out: P[] = new Array<P>(n);
-  out[0] = copyP(must(points[0], "points[0]"), 0);
+  const pts: InternalPathSample[] = new Array(n);
+  pts[0] = { ...must(ptsIn[0], "pts[0]"), pathParam: 0 };
   for (let i = 1; i < n; i++) {
-    const cur = must(points[i], `points[${i}]`);
-    const prev = must(points[i - 1], `points[${i - 1}]`);
-    const ds = len(sub(cur, prev));
+    const curr = must(ptsIn[i], `pts[${i}]`);
+    const prev = must(ptsIn[i - 1], `pts[${i - 1}]`);
+    const ds = length2D(subtract(curr, prev));
     total += ds;
-    out[i] = copyP(cur, total);
+    // spread keeps timeMs as-is without ever assigning undefined
+    pts[i] = { ...curr, pathParam: total };
   }
-  // normalize t to 0..1
+
   if (total > 0) {
     const inv = 1 / total;
     for (let i = 0; i < n; i++) {
-      const o = must(out[i], `out[${i}]`);
-      out[i] = copyP(o, o.t * inv);
+      const p = must(pts[i], `pts[${i}]`);
+      pts[i] = { ...p, pathParam: p.pathParam * inv };
     }
   } else {
     for (let i = 0; i < n; i++) {
-      const o = must(out[i], `out[${i}]`);
-      out[i] = copyP(o, 0);
+      const p = must(pts[i], `pts[${i}]`);
+      pts[i] = { ...p, pathParam: 0 };
     }
   }
-  return { pts: out, length: total };
+  return { pts, lengthPx: total };
 }
 
-function segmentAt(
-  pts: ReadonlyArray<P>,
+/** Binary search into pts by pathParam to find segment containing s∈[0..1]. */
+function findSegmentAtParam(
+  pts: ReadonlyArray<InternalPathSample>,
   s: number
 ): { i0: number; i1: number; u: number } {
-  // s in [0..1] along path t coordinate
   const n = pts.length;
   if (n < 2) return { i0: 0, i1: 0, u: 0 };
-  // binary search the t array
+  const target = clamp(s, 0, 1);
+
   let lo = 0;
   let hi = n - 1;
   while (lo + 1 < hi) {
     const mid = (lo + hi) >> 1;
     const pm = must(pts[mid], `pts[${mid}]`);
-    if (pm.t < s) lo = mid;
+    if (pm.pathParam < target) lo = mid;
     else hi = mid;
   }
   const a = must(pts[lo], `pts[${lo}]`);
   const b = must(pts[hi], `pts[${hi}]`);
-  const denom = Math.max(1e-6, b.t - a.t);
-  const u = clamp((s - a.t) / denom, 0, 1);
+  const denom = Math.max(1e-6, b.pathParam - a.pathParam);
+  const u = clamp((target - a.pathParam) / denom, 0, 1);
   return { i0: lo, i1: hi, u };
 }
 
-function interp(a: P, b: P, u: number): P {
-  return {
+/** Linear interpolation between two internal samples. */
+function interpolateSample(
+  a: InternalPathSample,
+  b: InternalPathSample,
+  u: number
+): InternalPathSample {
+  const mixed: InternalPathSample = {
     x: lerp(a.x, b.x, u),
     y: lerp(a.y, b.y, u),
     pressure: lerp(a.pressure, b.pressure, u),
-    angleDeg: lerp(a.angleDeg, b.angleDeg, u),
-    t: lerp(a.t, b.t, u),
+    tangentDeg: lerp(a.tangentDeg, b.tangentDeg, u),
+    pathParam: lerp(a.pathParam, b.pathParam, u),
+    // timeMs MUST be omitted if undefined; include only when both exist
+    ...(typeof a.timeMs === "number" && typeof b.timeMs === "number"
+      ? { timeMs: Math.round(lerp(a.timeMs, b.timeMs, u)) }
+      : {}),
   };
+  return mixed;
 }
 
-function rand(rng?: RNG): number {
-  return rng ? rng.nextFloat() : Math.random();
+/* =============================================================================
+ * Speed (px/s) & spacing modulation
+ * ============================================================================= */
+
+/** Compute px/s between two *time-stamped* points. Falls back to 0 if dt is missing. */
+export function speedPxPerSecBetween(
+  a: { x: number; y: number; timeMs?: number },
+  b: { x: number; y: number; timeMs?: number }
+): number {
+  if (typeof a.timeMs !== "number" || typeof b.timeMs !== "number") return 0;
+  const dtMs = Math.max(1, b.timeMs - a.timeMs); // ms
+  const dsPx = Math.hypot(b.x - a.x, b.y - a.y);
+  return (dsPx * 1000) / dtMs;
 }
 
-/* ---------- predictive nudge (px) & speed→spacing ---------- */
+/** Edge speeds (px/s) for a path of internal samples (index i = speed from i-1 → i). */
+function computeEdgeSpeeds(pts: ReadonlyArray<InternalPathSample>): number[] {
+  const n = pts.length;
+  const out = new Array<number>(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const a = must(pts[i - 1], `pts[${i - 1}]`);
+    const b = must(pts[i], `pts[${i}]`);
+    out[i] = speedPxPerSecBetween(a, b);
+  }
+  return out;
+}
 
-function predictPointPx(
-  a: P,
-  b: P,
+/** Predictive forward nudge (px) along segment direction. */
+function predictiveNudgePx(
+  from: InternalPathSample,
+  to: InternalPathSample,
   predictPx: number
 ): { x: number; y: number } {
-  const px = clamp(predictPx, 0, 24); // hard clamp for stability
-  if (px <= 0) return { x: b.x, y: b.y };
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
+  const px = clamp(predictPx, 0, 24);
+  if (px <= 0) return { x: to.x, y: to.y };
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
   const L = Math.hypot(dx, dy);
-  if (L < 1e-3) return { x: b.x, y: b.y };
+  if (L < 1e-3) return { x: to.x, y: to.y };
   const ux = dx / L;
   const uy = dy / L;
-  return { x: b.x + ux * px, y: b.y + uy * px };
+  return { x: to.x + ux * px, y: to.y + uy * px };
 }
 
-function modulatedStepPx(
+/** Map base step by a velocity proxy (or true speed) into a modulated step size. */
+function modulateStepBySpeed(
   baseStepPx: number,
-  localSegPx: number,
+  localSpeedMeasure: number,
   speedToSpacing: number,
   minStepPx: number
 ): number {
-  const nominal = Math.max(0.5, baseStepPx); // use current base step as nominal
-  const ratio = clamp(localSegPx / nominal, 0, 4); // 0..4×
+  // Interpret "localSpeedMeasure" as "px per sample" OR "px/s" — shape is relative.
+  const nominal = Math.max(0.5, baseStepPx);
+  const ratio = clamp(localSpeedMeasure / nominal, 0, 4); // 0..4× nominal scale
   const factor = clamp(1 + speedToSpacing * (ratio - 1), 0.5, 2.0);
   const step = baseStepPx * factor;
   return Math.max(minStepPx, step);
 }
 
-function pickTaperValue(
+/* =============================================================================
+ * Taper profiles & width shaping
+ * ============================================================================= */
+
+function evaluateTaperProfile(
   t: number,
   profile: TaperProfile,
   custom?: CurveLUT
 ): number {
-  const tt = clamp(t, 0, 1);
+  const u = clamp(t, 0, 1);
   switch (profile) {
     case "linear":
-      return tt;
+      return u;
     case "easeIn":
-      return tt * tt;
+      return u * u;
     case "easeOut":
-      return 1 - (1 - tt) * (1 - tt);
+      return 1 - (1 - u) * (1 - u);
     case "easeInOut":
-      return tt < 0.5 ? 2 * tt * tt : 1 - Math.pow(-2 * tt + 2, 2) / 2;
+      return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
     case "expo":
-      return tt <= 0 ? 0 : tt >= 1 ? 1 : Math.pow(2, 10 * (tt - 1));
-    case "custom":
+      return u <= 0 ? 0 : u >= 1 ? 1 : Math.pow(2, 10 * (u - 1));
+    case "custom": {
       if (custom && custom.length >= 2) {
-        const x = tt * (custom.length - 1);
+        const x = u * (custom.length - 1);
         const i = Math.floor(x);
         const f = x - i;
         const a = must(custom[i], `curve[${i}]`);
@@ -324,13 +392,55 @@ function pickTaperValue(
         );
         return a + (b - a) * f;
       }
-      return tt;
+      return u;
+    }
     default:
-      return tt;
+      return u;
   }
 }
 
-/* ============================== Public API ============================== */
+/** Compute width scale 0..1 along the stroke using taper options. */
+export function computeWidthScale(
+  t: number,
+  opts: StrokePlacementOptions
+): number {
+  const startScale = clamp(opts.tipScaleStart ?? 0.85, 0, 1);
+  const endScale = clamp(opts.tipScaleEnd ?? 0.85, 0, 1);
+  const uniformity = clamp(opts.uniformity ?? 0, 0, 1);
+  const endBias = clamp(opts.endBias ?? 0, -1, 1);
+
+  const startProfile = opts.taperProfileStart ?? "linear";
+  const endProfile = opts.taperProfileEnd ?? "linear";
+
+  const startK = evaluateTaperProfile(
+    1 - t,
+    startProfile,
+    opts.taperProfileStartCurve
+  );
+  const endK = evaluateTaperProfile(t, endProfile, opts.taperProfileEndCurve);
+
+  // Base scale from start/end
+  let scale = 1.0;
+  scale *= lerp(1, startScale, startK);
+  scale *= lerp(1, endScale, endK);
+
+  // End bias fattens/thins the end
+  if (endBias !== 0) {
+    const bias = endBias > 0 ? t : 1 - t;
+    scale *= lerp(1, 1.25, Math.abs(endBias) * bias);
+  }
+
+  // Push toward uniform/marker look
+  if (uniformity > 0) {
+    scale = lerp(scale, 1.0, uniformity);
+  }
+
+  return clamp(scale, 0, 1);
+}
+
+/* =============================================================================
+ * Public API
+ * ============================================================================= */
 
 /** Convenience: resolve UI spacing from RenderOptions to a *pixel* step size. */
 export function spacingToStepPx(opt: RenderOptions): number {
@@ -353,58 +463,62 @@ export function resampleWithAngle(
   const out: SampleWithAngle[] = [];
   if (!points || points.length < 2) return out;
 
-  // Build concrete P points (no smoothing here)
-  const Pts: P[] = points.map((p) => ({
+  // Build concrete internal samples (no smoothing here)
+  const raw: InternalPathSample[] = points.map((p) => ({
     x: Number.isFinite(p.x) ? p.x : 0,
     y: Number.isFinite(p.y) ? p.y : 0,
     pressure: Number.isFinite(p.pressure as number)
       ? (p.pressure as number)
       : 1,
-    angleDeg: Number.isFinite(p.angle as number)
-      ? ((p.angle as number) * 180) / Math.PI
+    tangentDeg: Number.isFinite(p.angle as number)
+      ? toDegrees(p.angle as number)
       : 0,
-    t: 0,
+    pathParam: 0,
+    ...(typeof p.t === "number" ? { timeMs: p.t as number } : {}),
   }));
-  const { pts, length } = pathLengthAndT(Pts);
-  if (length <= 0) return out;
+
+  const { pts, lengthPx } = computePathLengthAndParam(raw);
+  if (lengthPx <= 0) return out;
 
   const step = Math.max(0.3, Math.min(0.75, stepPx));
-  const evalAtS = (sArc: number) => {
-    const s = clamp(sArc / length, 0, 1);
-    const seg = segmentAt(pts, s);
+
+  const evalAtArcPx = (arcPx: number) => {
+    const s = clamp(arcPx / lengthPx, 0, 1);
+    const seg = findSegmentAtParam(pts, s);
     const a = must(pts[seg.i0], `pts[${seg.i0}]`);
     const b = must(pts[seg.i1], `pts[${seg.i1}]`);
-    const p = interp(a, b, seg.u);
-    const tan = tangentDeg(a, b);
-    return { p, tan };
+    const p = interpolateSample(a, b, seg.u);
+    const tanDeg = tangentDegFrom(a, b);
+    return { p, tanDeg };
   };
 
-  const first = evalAtS(0);
+  const first = evalAtArcPx(0);
   out.push({
     x: first.p.x,
     y: first.p.y,
     t: 0,
     p: first.p.pressure,
-    tangentDeg: first.tan,
+    tangentDeg: first.tanDeg,
   });
 
-  for (let s = step; s < length; s += step) {
-    const e = evalAtS(s);
+  for (let s = step; s < lengthPx; s += step) {
+    const at = evalAtArcPx(s);
     out.push({
-      x: e.p.x,
-      y: e.p.y,
-      t: e.p.t,
-      p: e.p.pressure,
-      tangentDeg: e.tan,
+      x: at.p.x,
+      y: at.p.y,
+      t: at.p.pathParam,
+      p: at.p.pressure,
+      tangentDeg: at.tanDeg,
     });
   }
-  const last = evalAtS(length);
+
+  const last = evalAtArcPx(lengthPx);
   out.push({
     x: last.p.x,
     y: last.p.y,
     t: 1,
     p: last.p.pressure,
-    tangentDeg: last.tan,
+    tangentDeg: last.tanDeg,
   });
 
   return out;
@@ -421,29 +535,27 @@ export function buildRibbonOutline(
   widthAt: (u: number) => number
 ): Path2D {
   const n = samples.length;
+  if (n === 0) return new Path2D();
+
   const left: Array<{ x: number; y: number }> = [];
   const right: Array<{ x: number; y: number }> = [];
-
-  if (n === 0) return new Path2D();
 
   for (let i = 0; i < n; i++) {
     const s = must(samples[i], `samples[${i}]`);
     const rad = (s.tangentDeg * Math.PI) / 180;
     const nx = -Math.sin(rad);
     const ny = Math.cos(rad);
-    const w = Math.max(0.25, widthAt(s.t)); // radius in px
-    left.push({ x: s.x + nx * w, y: s.y + ny * w });
-    right.push({ x: s.x - nx * w, y: s.y - ny * w });
+    const radius = Math.max(0.25, widthAt(s.t)); // radius in px
+    left.push({ x: s.x + nx * radius, y: s.y + ny * radius });
+    right.push({ x: s.x - nx * radius, y: s.y - ny * radius });
   }
 
   const path = new Path2D();
-  // move along left side
   path.moveTo(left[0]!.x, left[0]!.y);
   for (let i = 1; i < left.length; i++) {
     const p = must(left[i], `left[${i}]`);
     path.lineTo(p.x, p.y);
   }
-  // back along right side (reverse)
   for (let i = right.length - 1; i >= 0; i--) {
     const p = must(right[i], `right[${i}]`);
     path.lineTo(p.x, p.y);
@@ -469,43 +581,46 @@ export function pathToStamps(
   const scatterPx = Math.max(0, opts.scatterPx ?? 0);
   const stampsPerStep = Math.max(1, Math.round(opts.stampsPerStep ?? 1));
 
-  // path smoothing factor: map 0..100 -> alpha 0..1
+  // map 0..100 -> smoothing alpha in (0..1]
   const streamlineAmt = clamp(opts.streamline ?? 0, 0, 100) / 100;
-  const alpha = streamlineAmt <= 0 ? 1 : Math.max(0.05, 1 - streamlineAmt);
+  const smoothingAlpha =
+    streamlineAmt <= 0 ? 1 : Math.max(0.05, 1 - streamlineAmt);
 
-  // Smooth (if requested) into P points
-  const smoothed: P[] =
+  // Build internal samples (smoothed or raw)
+  const internal: InternalPathSample[] =
     streamlineAmt > 0
-      ? smoothPath(rawPath as RenderPathPoint[], alpha)
+      ? smoothPathOnePole(rawPath, smoothingAlpha)
       : rawPath.map((p) => ({
           x: Number.isFinite(p.x) ? p.x : 0,
           y: Number.isFinite(p.y) ? p.y : 0,
           pressure: Number.isFinite(p.pressure as number)
             ? (p.pressure as number)
             : 1,
-          angleDeg: Number.isFinite(p.angle as number)
-            ? ((p.angle as number) * 180) / Math.PI
+          tangentDeg: Number.isFinite(p.angle as number)
+            ? toDegrees(p.angle as number)
             : 0,
-          t: 0,
+          pathParam: 0,
+          ...(typeof p.t === "number" ? { timeMs: p.t as number } : {}),
         }));
 
-  const { pts, length } = pathLengthAndT(smoothed);
+  const { pts, lengthPx } = computePathLengthAndParam(internal);
   if (pts.length === 0) return [];
 
-  if (length <= 0 || pts.length < 2) {
+  // Single-point path
+  if (lengthPx <= 0 || pts.length < 2) {
     const p0 = must(pts[0], "pts[0]");
-    const t = 0.0;
-    const angle =
-      (opts.angleFollowDirection ?? 0) * 0 +
-      (opts.angleJitterDeg ?? 0) * (rand(opts.rng) * 2 - 1);
-    const widthScale = computeWidthScale(t, opts);
+    const tFrac = 0.0;
+    const follow = (opts.angleFollowDirection ?? 0) * 0;
+    const jitter = (opts.angleJitterDeg ?? 0) * (random01(opts.rng) * 2 - 1);
+    const angleDeg = follow + jitter;
+    const widthScale = computeWidthScale(tFrac, opts);
     return [
       {
         x: p0.x,
         y: p0.y,
-        angleDeg: angle,
+        angleDeg,
         pressure: mapPressure(p0.pressure, opts.pressureMap),
-        t,
+        t: tFrac,
         widthScale,
         tangentDeg: 0,
       },
@@ -513,132 +628,103 @@ export function pathToStamps(
   }
 
   // convert spacing % to absolute distance (base step)
-  const baseStep = Math.max(0.25, (spacingPct / 100) * opts.baseSizePx);
+  const baseStepPx = Math.max(0.25, (spacingPct / 100) * opts.baseSizePx);
 
-  // input quality (all optional)
+  // input quality (optional)
   const iq = opts.inputQuality ?? {};
   const predictPx = clamp(iq.predictPx ?? 0, 0, 24);
-  const kSpeed = iq.speedToSpacing ?? 0;
+  const speedToSpacing = iq.speedToSpacing ?? 0;
   const minStepPx = Math.max(0.25, iq.minStepPx ?? 0.5);
 
   const stamps: Stamp[] = [];
   const followAmt = clamp(opts.angleFollowDirection ?? 0, 0, 1);
-  const angleJitter = Math.max(0, opts.angleJitterDeg ?? 0);
+  const angleJitterDeg = Math.max(0, opts.angleJitterDeg ?? 0);
 
-  // Walker over arc length with variable step (enables velocity-aware spacing)
-  let sArc = 0;
-  const endArc = length;
+  // Arc-length walker with variable step
+  let arcPx = 0;
+  const arcEnd = lengthPx;
 
-  // Helper to evaluate p at arc-length s (px) and optionally apply predictive nudge
-  const evalAtArcWithPredict = (
-    s: number
-  ): { p: P; x: number; y: number; tanDeg: number } => {
-    const s01 = clamp(s / length, 0, 1);
-    const seg = segmentAt(pts, s01);
+  const evalAtArcPx = (sPx: number) => {
+    const s = clamp(sPx / lengthPx, 0, 1);
+    const seg = findSegmentAtParam(pts, s);
     const a = must(pts[seg.i0], `pts[${seg.i0}]`);
     const b = must(pts[seg.i1], `pts[${seg.i1}]`);
-    const p = interp(a, b, seg.u);
-    const tan = tangentDeg(a, b);
-
+    const p = interpolateSample(a, b, seg.u);
+    const tanDeg = tangentDegFrom(a, b);
     if (predictPx > 0) {
-      const nudged = predictPointPx(a, b, predictPx);
-      return { p, x: nudged.x, y: nudged.y, tanDeg: tan };
+      const nudged = predictiveNudgePx(a, b, predictPx);
+      return { p, x: nudged.x, y: nudged.y, tanDeg };
     }
-    return { p, x: p.x, y: p.y, tanDeg: tan };
+    return { p, x: p.x, y: p.y, tanDeg };
   };
 
-  while (sArc <= endArc + 1e-3) {
-    // --- along-path jitter in *arc length px* (percent of spacing) ---
-    const jitterArc = (rand(opts.rng) * 2 - 1) * (jitterPct / 100) * baseStep;
-    const sArcJittered = clamp(sArc + jitterArc, 0, endArc);
+  while (arcPx <= arcEnd + 1e-3) {
+    // along-path jitter as % of base step (in arc-length px)
+    const jitterArcPx =
+      (random01(opts.rng) * 2 - 1) * (jitterPct / 100) * baseStepPx;
+    const sJitteredPx = clamp(arcPx + jitterArcPx, 0, arcEnd);
 
-    const { p, x, y, tanDeg } = evalAtArcWithPredict(sArcJittered);
+    const { p, x, y, tanDeg } = evalAtArcPx(sJitteredPx);
 
     for (let k = 0; k < stampsPerStep; k++) {
-      // normal for scatter (perpendicular to tangent)
+      // scatter normal to tangent
       const rad = (tanDeg * Math.PI) / 180;
       const nx = -Math.sin(rad);
       const ny = Math.cos(rad);
-
-      const scatter = scatterPx > 0 ? (rand(opts.rng) * 2 - 1) * scatterPx : 0;
+      const scatter =
+        scatterPx > 0 ? (random01(opts.rng) * 2 - 1) * scatterPx : 0;
       const sx = x + nx * scatter;
       const sy = y + ny * scatter;
 
       const followAngle = followAmt * tanDeg;
-      const jitterAngle =
-        angleJitter > 0 ? (rand(opts.rng) * 2 - 1) * angleJitter : 0;
-      const angleDeg = followAngle + jitterAngle;
+      const jitter =
+        angleJitterDeg > 0 ? (random01(opts.rng) * 2 - 1) * angleJitterDeg : 0;
+      const angleDeg = followAngle + jitter;
 
-      const t = p.t; // 0..1 along the stroke
-      const widthScale = computeWidthScale(t, opts);
+      const tFrac = p.pathParam; // 0..1 along the stroke
+      const widthScale = computeWidthScale(tFrac, opts);
 
       stamps.push({
         x: sx,
         y: sy,
         angleDeg,
         pressure: mapPressure(p.pressure, opts.pressureMap),
-        t,
+        t: tFrac,
         widthScale,
         tangentDeg: tanDeg,
       });
     }
 
-    // --- step advance (velocity-aware if enabled) ---
-    // Use the *raw* local segment length near the unjittered sArc as a speed proxy.
-    const s01 = clamp(sArc / length, 0, 1);
-    const seg = segmentAt(pts, s01);
+    // step advance (true velocity if timestamps present, else spatial proxy)
+    const s = clamp(arcPx / lengthPx, 0, 1);
+    const seg = findSegmentAtParam(pts, s);
     const a = must(pts[seg.i0], `pts[${seg.i0}]`);
     const b = must(pts[seg.i1], `pts[${seg.i1}]`);
-    const localSegPx = len(sub(b, a)); // px per raw-segment sample
+    const trueSpeedPxPerSec =
+      typeof a.timeMs === "number" && typeof b.timeMs === "number"
+        ? speedPxPerSecBetween(a, b)
+        : length2D(subtract(b, a)); // proxy
 
+    const localMeasure = trueSpeedPxPerSec;
     const stepPx =
-      kSpeed !== 0
-        ? modulatedStepPx(baseStep, localSegPx, kSpeed, minStepPx)
-        : baseStep;
-    sArc += stepPx;
+      speedToSpacing !== 0
+        ? modulateStepBySpeed(
+            baseStepPx,
+            localMeasure,
+            speedToSpacing,
+            minStepPx
+          )
+        : baseStepPx;
+
+    arcPx += stepPx;
   }
 
   return stamps;
 }
 
-/** Compute width scale 0..1 along the stroke using taper options. */
-export function computeWidthScale(
-  t: number,
-  opts: StrokePlacementOptions
-): number {
-  const start = clamp(opts.tipScaleStart ?? 0.85, 0, 1);
-  const end = clamp(opts.tipScaleEnd ?? 0.85, 0, 1);
-  const uniformity = clamp(opts.uniformity ?? 0, 0, 1);
-  const endBias = clamp(opts.endBias ?? 0, -1, 1);
-
-  // easing for start and end
-  const startProf = opts.taperProfileStart ?? "linear";
-  const endProf = opts.taperProfileEnd ?? "linear";
-
-  const sCurve = pickTaperValue(1 - t, startProf, opts.taperProfileStartCurve);
-  const eCurve = pickTaperValue(t, endProf, opts.taperProfileEndCurve);
-
-  // base scale from start/end taper
-  let scale = 1.0;
-  scale *= lerp(1, start, sCurve);
-  scale *= lerp(1, end, eCurve);
-
-  // endBias fattens/thins the end vs start
-  if (endBias !== 0) {
-    const bias = endBias > 0 ? t : 1 - t;
-    scale *= lerp(1, 1.25, Math.abs(endBias) * bias);
-  }
-
-  // uniformity pushes toward flat marker look
-  if (uniformity > 0) {
-    scale = lerp(scale, 1.0, uniformity);
-  }
-
-  // tipMinPx clamp will be applied by backends when converting scale->pixels
-  return clamp(scale, 0, 1);
-}
-
-/* ============================== Misc helpers ============================== */
+/* =============================================================================
+ * Misc helpers (public)
+ * ============================================================================= */
 
 /** Map UI spacing (percent or fraction) to a safe fraction of diameter. */
 export function resolveSpacingFraction(
@@ -658,40 +744,39 @@ export function resamplePath(
   const out: SamplePoint[] = [];
   if (!points || points.length < 2) return out;
 
-  // Build P points first (no smoothing here; caller can smooth upstream)
-  const Pts: P[] = points.map((p) => ({
+  const raw: InternalPathSample[] = points.map((p) => ({
     x: Number.isFinite(p.x) ? p.x : 0,
     y: Number.isFinite(p.y) ? p.y : 0,
     pressure: Number.isFinite(p.pressure as number)
       ? (p.pressure as number)
       : 1,
-    angleDeg: Number.isFinite(p.angle as number)
-      ? ((p.angle as number) * 180) / Math.PI
+    tangentDeg: Number.isFinite(p.angle as number)
+      ? toDegrees(p.angle as number)
       : 0,
-    t: 0,
+    pathParam: 0,
+    ...(typeof p.t === "number" ? { timeMs: p.t as number } : {}),
   }));
-  const { pts, length } = pathLengthAndT(Pts);
-  if (length <= 0) return out;
-
-  // helper to evaluate position/pressure at target arc-length s (in px)
-  function evalAtS(sArc: number) {
-    const s = clamp(sArc / length, 0, 1);
-    const seg = segmentAt(pts, s);
-    const a = must(pts[seg.i0], `pts[${seg.i0}]`);
-    const b = must(pts[seg.i1], `pts[${seg.i1}]`);
-    const p = interp(a, b, seg.u);
-    return p;
-  }
-
-  const first = evalAtS(0);
-  out.push({ x: first.x, y: first.y, t: 0, p: first.pressure });
+  const { pts, lengthPx } = computePathLengthAndParam(raw);
+  if (lengthPx <= 0) return out;
 
   const step = Math.max(0.3, Math.min(0.75, stepPx));
-  for (let s = step; s < length; s += step) {
-    const p = evalAtS(s);
-    out.push({ x: p.x, y: p.y, t: p.t, p: p.pressure });
+
+  const evalAtArcPx = (arcPx: number) => {
+    const s = clamp(arcPx / lengthPx, 0, 1);
+    const seg = findSegmentAtParam(pts, s);
+    const a = must(pts[seg.i0], `pts[${seg.i0}]`);
+    const b = must(pts[seg.i1], `pts[${seg.i1}]`);
+    return interpolateSample(a, b, seg.u);
+  };
+
+  const first = evalAtArcPx(0);
+  out.push({ x: first.x, y: first.y, t: 0, p: first.pressure });
+
+  for (let s = step; s < lengthPx; s += step) {
+    const p = evalAtArcPx(s);
+    out.push({ x: p.x, y: p.y, t: p.pathParam, p: p.pressure });
   }
-  const last = evalAtS(length);
+  const last = evalAtArcPx(lengthPx);
   out.push({ x: last.x, y: last.y, t: 1, p: last.pressure });
 
   return out;
@@ -703,4 +788,87 @@ export function segmentNormal(ax: number, ay: number, bx: number, by: number) {
   const dy = by - ay;
   const L = Math.hypot(dx, dy) || 1;
   return { nx: -dy / L, ny: dx / L };
+}
+
+/* =============================================================================
+ * Optional: One Euro filter (velocity/pressure smoothing)
+ * ============================================================================= */
+
+export type OneEuroParams = {
+  minCutoff: number; // Hz
+  beta: number; // responsiveness
+  dCutoff: number; // Hz for derivative
+};
+
+class LowPass {
+  private s = 0;
+  private initialized = false;
+  constructor(private alpha: number) {}
+  setAlpha(a: number) {
+    this.alpha = a;
+  }
+  filter(x: number): number {
+    if (!this.initialized) {
+      this.s = x;
+      this.initialized = true;
+      return x;
+    }
+    this.s = this.s + this.alpha * (x - this.s);
+    return this.s;
+  }
+}
+
+function alphaFromCutoff(cutoffHz: number, dtSec: number): number {
+  const tau = 1 / (2 * Math.PI * cutoffHz);
+  return 1 / (1 + tau / Math.max(1e-6, dtSec));
+}
+
+export class OneEuro {
+  private dx: LowPass;
+  private x: LowPass;
+  private lastTimeMs = 0;
+  private lastX = 0;
+  constructor(
+    private params: OneEuroParams,
+    initVal = 0,
+    initTimeMs = 0
+  ) {
+    this.dx = new LowPass(1);
+    this.x = new LowPass(1);
+    this.lastTimeMs = initTimeMs;
+    this.lastX = initVal;
+    this.x.filter(initVal);
+    this.dx.filter(0);
+  }
+  filter(xNew: number, timeMs: number): number {
+    const dtSec = Math.max(1, timeMs - this.lastTimeMs) / 1000;
+    this.lastTimeMs = timeMs;
+
+    const dx = (xNew - this.lastX) / Math.max(1e-6, dtSec);
+    this.lastX = xNew;
+
+    this.dx.setAlpha(alphaFromCutoff(this.params.dCutoff, dtSec));
+    const dxHat = this.dx.filter(dx);
+
+    const cutoff = this.params.minCutoff + this.params.beta * Math.abs(dxHat);
+    this.x.setAlpha(alphaFromCutoff(cutoff, dtSec));
+    return this.x.filter(xNew);
+  }
+}
+
+/** Smooth a series of scalar samples (e.g., raw speed or pressure) with timestamps. */
+export function oneEuroSeries(
+  samples: Array<{ v: number; tMs: number }>,
+  params: OneEuroParams,
+  initVal?: number
+): number[] {
+  const out: number[] = new Array(samples.length);
+  const startVal = initVal ?? samples[0]?.v ?? 0;
+  const startT = samples[0]?.tMs ?? 0;
+  const f = new OneEuro(params, startVal, startT);
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i]!;
+    out[i] = f.filter(s.v, s.tMs);
+  }
+  return out;
 }

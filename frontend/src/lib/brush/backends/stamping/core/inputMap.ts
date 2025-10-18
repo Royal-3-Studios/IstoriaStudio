@@ -1,9 +1,12 @@
 // FILE: src/lib/brush/backends/stamping/core/inputMap.ts
+
 import type { PressureMapOpts } from "@/lib/brush/core/pressure";
-import type { BrushInputConfig } from "@/data/brushPresets";
+import type { BrushInputConfig } from "@/lib/brush/engine.types";
 import type { InputQualityOpts } from "@backends/utils/stroke";
 
-/* ---------------------------- concrete defaults ---------------------------- */
+/* =============================================================================
+ * Concrete defaults
+ * ============================================================================= */
 
 const DEFAULT_GAMMA = 1;
 const DEFAULT_DEADZONE = 0;
@@ -19,7 +22,9 @@ function isNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
-/* ------------------------------- Pressure map ------------------------------ */
+/* =============================================================================
+ * Pressure map (pointer → normalized pressure shaping)
+ * ============================================================================= */
 
 export function toPressureMapFromInput(
   input?: BrushInputConfig
@@ -37,22 +42,26 @@ export function toPressureMapFromInput(
     ) {
       gamma = input.pressure.curve.gamma;
     }
+
     // deadZone from clamp.min → clamp to [0, 0.5]
     if (isNumber(input.pressure?.clamp?.min)) {
       deadZone = Math.max(0, Math.min(0.5, input.pressure.clamp.min));
     }
-    // optional gain at input.pressure.gain
+
+    // optional pressure gain
     if (isNumber(input.pressure?.gain)) {
       gain = input.pressure.gain;
     }
   }
 
-  // fully concrete object; satisfies exactOptionalPropertyTypes
+  // fully concrete; satisfies exactOptionalPropertyTypes
   const out: PressureMapOpts = { gamma, deadZone, gain };
   return out;
 }
 
-/* ----------------------------- Input quality map ---------------------------- */
+/* =============================================================================
+ * Input quality (prediction / velocity-aware spacing / min step)
+ * ============================================================================= */
 
 export function toInputQualityFromInput(
   input?: BrushInputConfig
@@ -66,6 +75,7 @@ export function toInputQualityFromInput(
       predictPx = Math.max(0, Math.min(24, input.quality.predictPx));
     }
     if (isNumber(input.quality?.speedToSpacing)) {
+      // allow modest tightening/loosening with speed
       speedToSpacing = Math.max(
         -0.3,
         Math.min(0.5, input.quality.speedToSpacing)
@@ -79,6 +89,8 @@ export function toInputQualityFromInput(
   return { predictPx, speedToSpacing, minStepPx };
 }
 
-/* ------------------------------ Back-compat alias ------------------------------ */
+/* =============================================================================
+ * Back-compat alias
+ * ============================================================================= */
 
 export const buildPressureMapFromInput = toPressureMapFromInput;

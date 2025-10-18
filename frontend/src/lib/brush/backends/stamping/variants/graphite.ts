@@ -2,7 +2,11 @@
 // Graphite/Charcoal stamping — paper tooth + inner grain + optional rim
 // Strict TS: no `any`, compatible with exactOptionalPropertyTypes.
 
-import type { RenderOptions, RenderOverrides } from "@/lib/brush/engine.types";
+import type {
+  RenderOptions,
+  RenderOverrides,
+  CurvePoint,
+} from "@/lib/brush/engine.types";
 import type { BrushInputConfig } from "@/data/brushPresets";
 import * as Texture from "@backends/utils/texture";
 import * as CanvasUtil from "@backends/utils/canvas";
@@ -20,24 +24,17 @@ import {
   type TaperProfile,
   type InputQualityOpts,
 } from "@backends/utils/stroke";
+import { evaluateCurve, DefaultCurves } from "@/lib/brush/curves";
 
 /* ------------------------- Local util (no external deps) ------------------------- */
 
 const TIP_CULL_RADIUS_PX = 0;
 
-const num = (v: unknown, d: number): number => (typeof v === "number" ? v : d);
+const num = (v: unknown, d: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : d;
+
 const clamp = (v: number, lo: number, hi: number) =>
   v < lo ? lo : v > hi ? hi : v;
-
-/** Pressure → width and flow shaping */
-function pressureToWidthScale(p01: number): number {
-  const q = Math.pow(clamp01(p01), 0.65);
-  return 0.85 + q * 0.45;
-}
-function pressureToFlowScale(p01: number): number {
-  const q = Math.pow(clamp01(p01), 1.15);
-  return 0.4 + q * 0.6;
-}
 
 /** Stroke body shaping helpers */
 function widthEndSqueeze(tNorm: number): number {
@@ -97,18 +94,56 @@ type Gate = {
 
 /* -------------------------------- Renderer -------------------------------- */
 
-export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
+export default function drawGraphite(
+  ctx: Ctx2D,
+  options: ExtRenderOptions
+): void {
   const pts = options.path ?? [];
   if (pts.length < 2) return;
 
   const overrides = (options.engine.overrides ??
     {}) as Partial<RenderOverrides>;
 
-  // === NEW: Read tilt routing knobs (0..1 scalars) =========================
+  // === Composite & global alpha =============================================
+  const composite: GlobalCompositeOperation =
+    (overrides as { composite?: GlobalCompositeOperation }).composite ??
+    options.engine.rendering?.blendMode ??
+    "source-over";
+
+  const baseFlow01 = clamp01(num(overrides.flow, 64) / 100);
+  const baseOpacity01 = clamp01(num(overrides.opacity, 100) / 100);
+
+  // === NEW: Curves for width & flow =========================================
+  const pressureToWidthCurve =
+    (overrides as { pressureToWidthCurve?: ReadonlyArray<CurvePoint> })
+      .pressureToWidthCurve ??
+    ([
+      { x: 0, y: 0.75 }, // graphite keeps some body at low pressure
+      { x: 1, y: 1.25 }, // broad at high pressure
+    ] as ReadonlyArray<CurvePoint>);
+
+  const pressureToFlowCurve =
+    (overrides as { pressureToFlowCurve?: ReadonlyArray<CurvePoint> })
+      .pressureToFlowCurve ??
+    ([
+      { x: 0, y: 0.4 },
+      { x: 1, y: 1 },
+    ] as ReadonlyArray<CurvePoint>);
+
+  const speedToFlowCurve =
+    (overrides as { speedToFlowCurve?: ReadonlyArray<CurvePoint> })
+      .speedToFlowCurve ?? DefaultCurves.easeInOut;
+
+  // We don't have timestamps here; we'll use a geometric proxy (segment length).
+  // If the app supplies speedNormRefPxPerSec, approximate a per-frame ref length.
+  const speedNormRefPxPerSec = (overrides as { speedNormRefPxPerSec?: number })
+    .speedNormRefPxPerSec;
+
+  // === Tilt routing knobs (0..1 scalars) ====================================
   const tiltToGrainScale = num(overrides.tiltToGrainScale, 0);
   const tiltToEdgeNoise = num(overrides.tiltToEdgeNoise, 0);
 
-  // Compute a simple average tilt across the stroke (0..1).
+  // Average tilt across the stroke (0..1)
   const tiltVals: number[] = [];
   for (let i = 0; i < pts.length; i++) tiltVals.push(readTilt01(pts[i]));
   const avgTilt01 =
@@ -124,12 +159,10 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     num((overrides as Record<string, number>).edgeCarveAlpha, 0.26)
   );
 
-  // === NEW: Edge noise strength gains with tilt ============================
+  // Edge carve gain with tilt
   const edgeCarveAlpha =
     edgeCarveAlphaBase * (1 + clamp01(tiltToEdgeNoise) * avgTilt01);
 
-  const baseFlow01 = clamp01(num(overrides.flow, 64) / 100);
-  const baseOpacity01 = clamp01(num(overrides.opacity, 100) / 100);
   const baseSizePx = Math.max(
     1,
     options.baseSizePx * num(options.engine.shape?.sizeScale, 1)
@@ -186,6 +219,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   const taperProfileEnd = (overrides.taperProfileEnd ??
     "linear") as TaperProfile;
 
+  // Build stamps (provides x,y,pressure,t∈[0..1] normalized)
   const stamps = pathToStamps(pts, {
     baseSizePx,
     spacingPercent: Number(spacingPercent),
@@ -260,12 +294,26 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   );
   const tiltToSplitFan = num(overrides.tiltToSplitFan, 0) * (Math.PI / 180);
 
+  // --- Geometric "speed" proxy (maps segment length → 0..1 with a reference) ---
+  const refLenPx =
+    typeof speedNormRefPxPerSec === "number"
+      ? Math.max(1, speedNormRefPxPerSec / 60) // approx px per frame @60Hz
+      : Math.max(1, baseSizePx * 0.85);
+
+  const segmentAlphaFactors = (distPx: number) => {
+    const speedNorm = clamp01(distPx / refLenPx);
+    return {
+      sf: evaluateCurve(speedToFlowCurve, speedNorm),
+    };
+  };
+
   /* -------------------- A) Stroke mask -------------------- */
   const mask = CanvasUtil.createLayer(options.width, options.height);
   const mx = mask.getContext("2d", { alpha: true }) as Ctx2D;
   mx.strokeStyle = "#000";
   mx.lineCap = "round";
   mx.lineJoin = "round";
+  (mx as CanvasRenderingContext2D).globalCompositeOperation = "source-over";
 
   // Pass 1 — main body
   for (let i = 1; i < samples.length; i++) {
@@ -274,9 +322,17 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1]!;
     if (alphaProgress <= 0.001) continue;
 
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distPx = Math.hypot(dx, dy);
+
+    const pressureWidthMul = evaluateCurve(
+      pressureToWidthCurve,
+      clamp01(midPressure)
+    );
     let widthPx =
       baseSizePx *
-      pressureToWidthScale(midPressure) *
+      pressureWidthMul *
       (bellyGain * 0.31 * Math.pow(bellyProgress, 0.75)) *
       widthEndSqueeze(tMid);
 
@@ -286,12 +342,16 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     if (tipMinPx > 0) widthPx = Math.max(widthPx, tipMinPx);
     if (0.5 * widthPx < TIP_CULL_RADIUS_PX) continue;
 
+    const pf = evaluateCurve(pressureToFlowCurve, clamp01(midPressure));
+    const { sf } = segmentAlphaFactors(distPx);
+
     mx.lineWidth = Math.max(0.5, widthPx);
     mx.globalAlpha =
       baseOpacity01 *
       0.76 *
       baseFlow01 *
-      pressureToFlowScale(midPressure) *
+      pf * // pressure curve
+      sf * // geometric speed proxy
       Math.pow(alphaProgress, 0.86) *
       bellyAlphaDampFromProgress(bellyProgress) *
       highPressureDamp(midPressure);
@@ -329,9 +389,17 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1]!;
     if (alphaProgress <= 0.001) continue;
 
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distPx = Math.hypot(dx, dy);
+
+    const pressureWidthMul = evaluateCurve(
+      pressureToWidthCurve,
+      clamp01(midPressure)
+    );
     let widthPx =
       baseSizePx *
-      pressureToWidthScale(midPressure) *
+      pressureWidthMul *
       (bellyGain * 0.155 * Math.pow(bellyProgress, 0.95)) *
       widthEndSqueeze(tMid);
 
@@ -340,12 +408,16 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     widthPx = applyUniformity(widthPx, bellyProgress, uniformity);
     if (tipMinPx > 0) widthPx = Math.max(widthPx, tipMinPx);
 
+    const pf = evaluateCurve(pressureToFlowCurve, clamp01(midPressure));
+    const { sf } = segmentAlphaFactors(distPx);
+
     mx.lineWidth = Math.max(0.5, widthPx);
     mx.globalAlpha =
       baseOpacity01 *
       0.33 *
       baseFlow01 *
-      pressureToFlowScale(midPressure) *
+      pf *
+      sf *
       Math.pow(alphaProgress, 0.92) *
       bellyAlphaDampFromProgress(bellyProgress) *
       highPressureDamp(midPressure);
@@ -376,7 +448,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
   }
   mx.filter = "none";
 
-  // === UPDATED: Edge carve amount scales with tilt ==========================
+  // Edge carve amount scales with tilt
   if (edgeCarveAlpha > 0.001) {
     const blurred = CanvasUtil.createLayer(options.width, options.height);
     const bx = blurred.getContext("2d", { alpha: true }) as Ctx2D;
@@ -419,9 +491,17 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
       const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1]!;
       if (alphaProgress <= 0.001) continue;
 
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const distPx = Math.hypot(dx, dy);
+
+      const pressureWidthMul = evaluateCurve(
+        pressureToWidthCurve,
+        clamp01(midPressure)
+      );
       const innerW =
         baseSizePx *
-        pressureToWidthScale(midPressure) *
+        pressureWidthMul *
         (0.32 * Math.pow(bellyProgress, 0.9) + 0.2);
       ix.lineWidth = Math.max(1, innerW);
       ix.globalAlpha = 0.75 * alphaProgress;
@@ -454,7 +534,7 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     const grain = CanvasUtil.createLayer(options.width, options.height);
     const gx = grain.getContext("2d", { alpha: true }) as Ctx2D;
 
-    // === UPDATED: grain tile size scales with tilt ==========================
+    // grain tile size scales with tilt
     const grainScaleMul = 1 + clamp01(tiltToGrainScale) * avgTilt01;
     const sizeA = Math.max(4, Math.round(24 * grainScaleMul));
     const sizeB = Math.max(4, Math.round(20 * grainScaleMul));
@@ -495,13 +575,22 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
       const { bellyProgress, alphaProgress, midPressure, tMid } = gates[i - 1]!;
       if (alphaProgress <= 0.001) continue;
 
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const distPx = Math.hypot(dx, dy);
+
+      const pressureWidthMul = evaluateCurve(
+        pressureToWidthCurve,
+        clamp01(midPressure)
+      );
       rx.lineWidth = Math.max(
         1,
-        baseSizePx *
-          pressureToWidthScale(midPressure) *
-          (0.14 * bellyProgress + 0.08)
+        baseSizePx * pressureWidthMul * (0.14 * bellyProgress + 0.08)
       );
-      rx.globalAlpha = Math.pow(1 - alphaProgress, 0.85) * rimStrength;
+
+      // Rim is brightest where body alpha is lowest (edge highlight)
+      const { sf } = segmentAlphaFactors(distPx);
+      rx.globalAlpha = Math.pow(1 - alphaProgress, 0.85) * (rimStrength * sf);
 
       forEachTrack(
         seed,
@@ -534,8 +623,8 @@ export function drawGraphite(ctx: Ctx2D, options: ExtRenderOptions): void {
     });
   }
 
-  /* -------------------- E) Composite to target -------------------- */
-  Blend.withComposite(ctx, "source-over", () => {
+  /* -------------------- E) Composite to target (respect blend) --------------- */
+  Blend.withComposite(ctx, composite, () => {
     ctx.drawImage(paint, 0, 0);
   });
 }

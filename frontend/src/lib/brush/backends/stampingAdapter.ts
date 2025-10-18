@@ -1,4 +1,5 @@
 // FILE: src/lib/brush/backends/stamping/stampingAdapter.ts
+
 import type {
   RenderOptions,
   RenderPathPoint,
@@ -6,6 +7,7 @@ import type {
   EngineConfig,
   EngineStrokePath,
 } from "@/lib/brush/engine.types";
+import { get2D } from "@backends/utils/canvas";
 
 import drawStamping from "./stamping";
 
@@ -15,8 +17,6 @@ import type {
   CanvasSurface,
   AdapterExtra,
 } from "@backends/types";
-
-import { get2D } from "@backends/utils/canvas";
 
 import {
   CAPS_STAMPING_TILT,
@@ -38,9 +38,10 @@ type IncomingPoint = {
 
 type StampingExtrasWide = Partial<RenderOverrides> &
   AdapterExtra & {
-    baseSizePx?: number; // prefer this
+    baseSizePx?: number; // preferred
     sizePx?: number; // legacy alias
     streamline?: number;
+    strokePath?: EngineStrokePath;
     mode?:
       | "graphite"
       | "ink"
@@ -86,7 +87,7 @@ function toEngineStampingMode(
 /* ================================ Caps ================================= */
 
 export const caps: Readonly<BackendCaps> = CAPS_STAMPING_TILT;
-// If this adapter truly works in a worker (OffscreenCanvas), extend:
+// Set worker:true only if OffscreenCanvas path is guaranteed
 export const stampingCaps = withBaseCaps({ ...caps, worker: true });
 
 /* =============================== Adapter ================================== */
@@ -105,23 +106,25 @@ const stampingAdapter: BackendAdapter = {
 
     const extra = (opts.extra ?? {}) as StampingExtrasWide;
 
-    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
-    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
-
+    // Split extras
     const {
       baseSizePx: extraBase,
       sizePx,
       streamline,
       mode,
+      strokePath: extraStrokePath,
+      // anything else at root that happens to match RenderOverrides keys
       ...legacyOverridesAtRoot
     } = extra;
 
-    // No custom smoothing here — let the engine handle stabilization/prediction.
+    // Merge overrides: (legacy root) → (extra.overrides)
+    const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
     const overrides: Partial<RenderOverrides> = {
       ...legacyOverridesAtRoot,
       ...extraOverrides,
     };
 
+    // Base size resolution
     const baseSizePx = isFiniteNumber(opts.baseSizePx)
       ? opts.baseSizePx
       : isFiniteNumber(extraBase)
@@ -130,8 +133,8 @@ const stampingAdapter: BackendAdapter = {
           ? sizePx
           : 12;
 
-    // Keep strokePath placement controls; 'streamline' is allowed (not smoothing).
-    const strokePath: EngineStrokePath = { ...extraStrokePath };
+    // Stroke-path controls (placement/jitter/streamline)
+    const strokePath: EngineStrokePath = { ...(extraStrokePath ?? {}) };
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing;
     if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
@@ -140,6 +143,7 @@ const stampingAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
+    // Engine config (keep strokePath separate from overrides)
     const engineCfg: EngineConfig & {
       backendOverrides?: { stamping?: { mode?: EngineStampingMode } };
     } = { overrides };
@@ -155,6 +159,7 @@ const stampingAdapter: BackendAdapter = {
       engineCfg.backendOverrides.stamping.mode = narrowed;
     }
 
+    // Final RenderOptions forwarded to stamping backend
     const renderOpts: RenderOptions = {
       engine: engineCfg,
       baseSizePx,
@@ -166,7 +171,7 @@ const stampingAdapter: BackendAdapter = {
       ...(isFiniteNumber(opts.pixelRatio)
         ? { pixelRatio: opts.pixelRatio }
         : {}),
-      // 🔑 Forward input so the engine’s unified stabilization/prediction applies:
+      // Forward input (pressure pipeline / prediction / spacing modulation)
       ...(opts.input ? { input: opts.input } : {}),
     };
 

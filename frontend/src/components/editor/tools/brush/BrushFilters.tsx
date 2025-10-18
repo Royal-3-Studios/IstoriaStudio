@@ -6,7 +6,7 @@ import * as React from "react";
 export type BrushFiltersProps = {
   /** Current search query (controlled). */
   query: string;
-  onQueryChange: (q: string) => void;
+  onQueryChangeAction: (q: string) => void;
 
   /** Favorites (controlled). If undefined, the toggle is hidden. */
   showOnlyFavorites?: boolean;
@@ -37,7 +37,7 @@ export type BrushFiltersProps = {
  */
 export function BrushFilters({
   query,
-  onQueryChange,
+  onQueryChangeAction,
 
   showOnlyFavorites,
   onToggleShowOnlyFavorites,
@@ -55,7 +55,7 @@ export function BrushFilters({
   inputPlaceholder = "Search brushes…",
   compact = false,
 }: BrushFiltersProps) {
-  const canShowSearch = showSearch && typeof onQueryChange === "function";
+  const canShowSearch = showSearch && typeof onQueryChangeAction === "function";
   const canShowFavToggle =
     showFavoriteToggle &&
     typeof onToggleShowOnlyFavorites === "function" &&
@@ -87,7 +87,7 @@ export function BrushFilters({
             {canShowSearch && (
               <input
                 value={query}
-                onChange={(e) => onQueryChange(e.target.value)}
+                onChange={(e) => onQueryChangeAction(e.target.value)}
                 placeholder={inputPlaceholder}
                 className={
                   compact
@@ -130,7 +130,7 @@ export function BrushFilters({
           {canShowSearch && (
             <input
               value={query}
-              onChange={(e) => onQueryChange(e.target.value)}
+              onChange={(e) => onQueryChangeAction(e.target.value)}
               placeholder="Search…"
               className="h-8 w-full rounded-md border bg-background px-2 text-sm"
               aria-label="Search brushes"
@@ -168,19 +168,21 @@ export function BrushFilters({
 
 /* ------------------------------ Subcomponents ------------------------------ */
 
+type TagBarProps = {
+  tags: readonly string[];
+  selected?: ReadonlySet<string> | undefined; // ⬅ allow undefined explicitly
+  onToggle?: ((tag: string) => void) | undefined;
+  onClear?: (() => void) | undefined;
+  compact?: boolean | undefined;
+};
+
 function TagBar({
   tags,
   selected,
   onToggle,
   onClear,
   compact = false,
-}: {
-  tags: readonly string[];
-  selected?: ReadonlySet<string>;
-  onToggle?: (tag: string) => void;
-  onClear?: () => void;
-  compact?: boolean;
-}) {
+}: TagBarProps) {
   return (
     <div
       className={[

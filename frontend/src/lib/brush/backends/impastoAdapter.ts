@@ -40,6 +40,8 @@ type ImpastoExtrasWide = Partial<RenderOverrides> &
     /** Legacy one-offs (prefer extra.strokePath) */
     spacing?: number; // → EngineStrokePath.spacing
     streamline?: number; // → EngineStrokePath.streamline
+    strokePath?: Partial<EngineStrokePath>;
+    overrides?: Partial<RenderOverrides>;
   };
 
 /* ================================= Helpers ================================= */
@@ -74,6 +76,22 @@ function toEnginePath(path: RenderStrokeOptions["path"]): RenderPathPoint[] {
   });
 }
 
+/** Strip placement/spacing keys from overrides (they belong in strokePath). */
+function stripPlacementKeys(
+  ov: Partial<RenderOverrides>
+): Partial<RenderOverrides> {
+  const {
+    spacing,
+    jitter,
+    scatter,
+    count,
+    // not in overrides normally, but just in case:
+    streamline,
+    ...rest
+  } = ov as Partial<RenderOverrides> & { streamline?: number };
+  return rest;
+}
+
 /* ================================= Adapter ================================= */
 
 const DEFAULT_BASE_SIZE = 12;
@@ -106,7 +124,8 @@ const impastoAdapter: BackendAdapter = {
     const extra = (opts.extra ?? {}) as ImpastoExtrasWide;
 
     const extraOverrides = (extra.overrides ?? {}) as Partial<RenderOverrides>;
-    const extraStrokePath = (extra.strokePath ?? {}) as EngineStrokePath;
+    const extraStrokePath = (extra.strokePath ??
+      {}) as Partial<EngineStrokePath>;
 
     const {
       baseSizePx: extraBase,
@@ -116,12 +135,13 @@ const impastoAdapter: BackendAdapter = {
       ...legacyOverridesAtRoot
     } = extra;
 
-    const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
-      {
-        ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
-        ...extraOverrides,
-      }
-    );
+    // Merge overrides (but strip placement keys; we'll push those to strokePath)
+    const mergedOverrides = pruneUndefined<RenderOverrides>({
+      ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
+      ...extraOverrides,
+    });
+    const overrides: Partial<RenderOverrides> =
+      stripPlacementKeys(mergedOverrides);
 
     // Base diameter — strictly number via ternaries
     const baseSizePx: number = isFiniteNumber(opts.baseSizePx)
@@ -135,12 +155,17 @@ const impastoAdapter: BackendAdapter = {
     // Build strokePath (merge standardized bag first; add compat fields)
     const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(spacing)) strokePath.spacing = spacing; // compat
-    if (isFiniteNumber(overrides.spacing))
-      strokePath.spacing = overrides.spacing;
-    if (isFiniteNumber(overrides.jitter)) strokePath.jitter = overrides.jitter;
-    if (isFiniteNumber(overrides.scatter))
-      strokePath.scatter = overrides.scatter;
-    if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
+    // If caller slipped spacing/jitter/scatter/count into overrides, prefer strokePath
+    const maybe = mergedOverrides as Partial<RenderOverrides> & {
+      spacing?: number;
+      jitter?: number;
+      scatter?: number;
+      count?: number;
+    };
+    if (isFiniteNumber(maybe.spacing)) strokePath.spacing = maybe.spacing;
+    if (isFiniteNumber(maybe.jitter)) strokePath.jitter = maybe.jitter;
+    if (isFiniteNumber(maybe.scatter)) strokePath.scatter = maybe.scatter;
+    if (isFiniteNumber(maybe.count)) strokePath.count = maybe.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline; // compat
 
     // Default spacing if nothing set (impasto needs consistent stepping)
@@ -150,7 +175,8 @@ const impastoAdapter: BackendAdapter = {
 
     // Final RenderOptions
     const engineCfg: EngineConfig = { overrides };
-    if (Object.keys(strokePath).length > 0) engineCfg.strokePath = strokePath;
+    if (Object.keys(strokePath).length > 0)
+      engineCfg.strokePath = strokePath as EngineStrokePath;
 
     const renderOpts: RenderOptions = {
       engine: engineCfg,

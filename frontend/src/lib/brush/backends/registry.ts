@@ -2,12 +2,7 @@
 import type { BackendAdapter as PublicAdapter } from "./adapter.types";
 import type { CanvasLike } from "./utils/canvas";
 import type { RenderOptions, EngineConfig } from "@/lib/brush/engine.types";
-import type { RenderStrokeOptions, RenderStrokePoint } from "./types"; // your existing adapter types
-
-/* -------------------------- concrete legacy adapters -------------------------- */
-/** Each of these modules should export a default LegacyStrokeAdapter-like object.
- *  If they already export `caps`, we’ll surface them; otherwise we’ll inject a safe default.
- */
+import type { RenderStrokeOptions, RenderStrokePoint } from "./types"; // legacy adapter input
 import stampingAdapter from "./stampingAdapter";
 import ribbonAdapter from "./ribbonAdapter";
 import sprayAdapter from "./sprayAdapter";
@@ -33,14 +28,13 @@ type LegacyStrokeAdapter = {
 /* ------------------------------ small helpers ------------------------------ */
 
 function safeDevicePixelRatio(): number {
-  // Avoid `any` and work in SSR too
   if (typeof window === "undefined") return 1;
   const dpr = (window as unknown as { devicePixelRatio?: number })
     .devicePixelRatio;
   return typeof dpr === "number" && Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
 }
 
-// Convert the engine RenderOptions (normalized) → legacy RenderStrokeOptions expected by existing adapters.
+// Convert normalized engine RenderOptions → legacy RenderStrokeOptions (for adapters)
 function toRenderStrokeOptions(opt: RenderOptions): RenderStrokeOptions {
   const engine: EngineConfig = opt.engine ?? {};
 
@@ -101,10 +95,7 @@ function toRenderStrokeOptions(opt: RenderOptions): RenderStrokeOptions {
   return out;
 }
 
-/** Ensure we always expose a truthful caps object.
- *  - pressure is fundamental across all current backends → default true
- *  - other flags default false unless the adapter sets them true
- */
+/** Ensure we always expose a truthful caps object. */
 function normalizeCaps(caps?: Readonly<BackendCaps>): Readonly<BackendCaps> {
   return Object.freeze({
     // required truths in your model
@@ -129,7 +120,7 @@ function normalizeCaps(caps?: Readonly<BackendCaps>): Readonly<BackendCaps> {
 function wrapLegacy(a: LegacyStrokeAdapter): PublicAdapter {
   const normalizedCaps = normalizeCaps(a.caps);
   return {
-    id: a.id,
+    id: a.id, // ✅ now valid because PublicAdapter declares `id`
     caps: normalizedCaps,
     async drawToCanvas(canvas, normalized) {
       return a.renderStroke(canvas, toRenderStrokeOptions(normalized));
@@ -174,7 +165,6 @@ export function getDefaultAdapter(): PublicAdapter {
   return getAdapterForBackend("stamping");
 }
 
-// Optional: allow runtime registration (tests/experiments)
 export function registerAdapter(adapter: PublicAdapter): void {
   (ADAPTERS as Map<string, PublicAdapter>).set(
     adapter.id.toLowerCase(),

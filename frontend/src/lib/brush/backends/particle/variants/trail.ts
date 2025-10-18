@@ -1,65 +1,55 @@
+// FILE: src/lib/brush/backends/particle/variants/trail.ts
 import type { RenderOptions } from "@/lib/brush/engine.types";
 import type { Ctx2D } from "@backends/utils/canvas";
-import { emitAlongPath, ageToAlpha, type Particle } from "../core/emitters";
-import { eulerStep } from "../core/integrators";
-import { applyFields } from "../core/fields";
+import type { ParticleOptions } from "../types";
+import { drawParticleToCanvas } from "../core/particle";
 
-const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+/** Trail: soft, short-lived dots that follow the stroke. */
+function mergeTrailOptions(
+  opt: RenderOptions
+): RenderOptions & { particle: ParticleOptions } {
+  const baseSize = Math.max(6, opt.baseSizePx ?? 10);
+  const scatter = Math.max(
+    0,
+    (opt.engine.strokePath?.scatter as number | undefined) ?? 0
+  );
+
+  const params: ParticleOptions = {
+    emitRatePerSec: 160, // modest emission along motion
+    lifeMs: 420, // short-lived
+    sizeMinPx: Math.max(0.6, baseSize * 0.12),
+    sizeMaxPx: Math.max(1.4, baseSize * 0.28),
+    speedMin: 80,
+    speedMax: 260,
+    dragPerSec: 0.35, // gentle smoothing
+    gravity: 60, // slight sag
+    angleSpreadRad: Math.PI * 0.25,
+    splatterProb: 0.0, // keep it clean
+    dripGravity: 0, // no drips for trail
+    dripStretch: 0,
+    noiseAmount: 0.08, // tiny organic variation
+    noiseScalePx: 56,
+    decal: { kind: "round" },
+    antiHaloPx: 0.5,
+    antiHaloAlpha: 0.28,
+    inkMode: "inner-grain",
+  };
+
+  // Nudge spread based on any stroke scatter (feels nice with jittery paths)
+  params.angleSpreadRad = Math.max(
+    params.angleSpreadRad,
+    Math.min(Math.PI * 0.45, scatter * 0.02)
+  );
+
+  return { ...opt, particle: params };
+}
 
 export function drawTrail(ctx: Ctx2D, opt: RenderOptions): void {
   const path = opt.path ?? [];
   if (path.length < 2) return;
-
-  const flow01 = clamp01(
-    ((opt.engine.overrides?.flow as number | undefined) ?? 100) / 100
+  drawParticleToCanvas(
+    ctx.canvas as HTMLCanvasElement,
+    path,
+    mergeTrailOptions(opt)
   );
-  const opacity01 = clamp01(
-    ((opt.engine.overrides?.opacity as number | undefined) ?? 100) / 100
-  );
-
-  // Seed a tiny burst per point; trail variant = modest speed + longer life
-  const rand = (() => {
-    let t = (opt.seed ?? 12345) >>> 0;
-    return () => (t = (t * 1664525 + 1013904223) >>> 0) / 4294967296;
-  })();
-
-  const particles: Particle[] = emitAlongPath(path, {
-    rate: 1.5,
-    speedPxPerSec: Math.max(50, (opt.baseSizePx ?? 10) * 20),
-    lifetimeSec: { min: 0.25, max: 0.5 },
-    sizePx: {
-      min: Math.max(0.5, (opt.baseSizePx ?? 8) * 0.15),
-      max: Math.max(1, (opt.baseSizePx ?? 8) * 0.25),
-    },
-    dirJitterRad: 0.35,
-    scatterPx: (opt.engine.strokePath?.scatter as number | undefined) ?? 0,
-    rand,
-  });
-
-  // Single quick sim pass ~16ms (this renderer is “instant”, not persistent)
-  const dt = 1 / 60;
-  for (const p of particles) {
-    // 4 mini-steps for a bit of continuity
-    for (let s = 0; s < 4; s++) {
-      applyFields(p, dt / 4, { gravity: { x: 0, y: 50 }, fadePerSec: 0 }); // slight gravity
-      eulerStep(p, { dt: dt / 4, drag: 1.5 });
-    }
-  }
-
-  // Draw as simple round sprites
-  const color = opt.color ?? "#000000";
-  const ctx2d = ctx as CanvasRenderingContext2D;
-  ctx2d.save();
-  ctx2d.globalCompositeOperation = "source-over";
-  ctx2d.fillStyle = color;
-
-  for (const p of particles) {
-    const a = ageToAlpha(p.age, p.life, "ease") * flow01 * opacity01 * p.alpha;
-    if (a <= 0) continue;
-    ctx2d.globalAlpha = Math.max(0, Math.min(1, a));
-    ctx2d.beginPath();
-    ctx2d.arc(p.x, p.y, Math.max(0.5, p.size), 0, Math.PI * 2, false);
-    ctx2d.fill();
-  }
-  ctx2d.restore();
 }

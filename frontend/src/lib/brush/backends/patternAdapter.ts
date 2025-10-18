@@ -1,12 +1,11 @@
 // FILE: src/lib/brush/backends/patternAdapter.ts
 
-import { type PatternVariant } from "./pattern";
-import renderPattern from "./pattern";
+import renderPattern, { type PatternVariant } from "./pattern";
 
 import type {
   BackendAdapter,
   RenderStrokeOptions,
-  CanvasSurface, // HTMLCanvasElement | OffscreenCanvas
+  CanvasSurface,
   AdapterExtra,
 } from "@backends/types";
 
@@ -100,13 +99,12 @@ const patternAdapter: BackendAdapter = {
     surface: CanvasSurface,
     opts: RenderStrokeOptions
   ): Promise<void> {
-    // Resolve 2D context directly from the canvas-like surface.
     const ctx: Ctx2D = get2D(surface);
 
     const width = Math.max(1, Math.floor(opts.width));
     const height = Math.max(1, Math.floor(opts.height));
 
-    // Standardized extras bag (supports both new extra.* and legacy fields on root)
+    // Standardized extras bag (supports both new extra.* and legacy-on-root)
     const extra = (opts.extra ?? {}) as PatternExtrasWide;
 
     // New standardized locations
@@ -125,6 +123,7 @@ const patternAdapter: BackendAdapter = {
       ...legacyOverridesAtRoot
     } = extra;
 
+    // RenderOverrides (pruned)
     const overrides: Partial<RenderOverrides> = pruneUndefined<RenderOverrides>(
       {
         ...(legacyOverridesAtRoot as Partial<RenderOverrides>),
@@ -141,7 +140,7 @@ const patternAdapter: BackendAdapter = {
           ? sizePx
           : DEFAULT_BASE;
 
-    // StrokePath (attach only defined keys; merge standardized bag first)
+    // StrokePath: attach only defined, placement-related keys
     const strokePath: EngineStrokePath = { ...extraStrokePath };
     if (isFiniteNumber(overrides.spacing))
       strokePath.spacing = overrides.spacing;
@@ -151,7 +150,7 @@ const patternAdapter: BackendAdapter = {
     if (isFiniteNumber(overrides.count)) strokePath.count = overrides.count;
     if (isFiniteNumber(streamline)) strokePath.streamline = streamline;
 
-    // Grain (prefer explicit extras; fall back to overrides if still unset)
+    // Grain (prefer explicit extras; then fall back to overrides)
     const grain: Partial<EngineGrain> = {};
     if (typeof grainKind === "string") grain.kind = grainKind;
     if (isFiniteNumber(grainScale)) grain.scale = grainScale;
@@ -194,6 +193,7 @@ const patternAdapter: BackendAdapter = {
       ...(isFiniteNumber(opts.pixelRatio)
         ? { pixelRatio: opts.pixelRatio }
         : {}),
+      // forward input so unified stabilization/prediction applies
       ...(opts.input ? { input: opts.input } : {}),
     };
 

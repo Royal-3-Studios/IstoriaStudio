@@ -1,32 +1,87 @@
 // FILE: src/lib/brush/backends/particle/index.ts
-import type { RenderOptions } from "@/lib/brush/engine.types";
+
+import type { RenderOptions, RenderPathPoint } from "@/lib/brush/engine.types";
 import { type Ctx2D, type CanvasLike, get2D } from "@backends/utils/canvas";
-
-import { drawTrail } from "./variants/trail";
-import { drawSmoke } from "./variants/smoke";
-import { drawSparkle } from "./variants/sparkle";
-
-// Normalize tilt routing (tilt→size/fan/grainScale/edgeNoise) once per backend.
 import { getTiltOverrides } from "@backends/stamping/utils/scalars";
 
-export type ParticleMode = "trail" | "smoke" | "sparkle";
+import { drawParticleToCanvas } from "./core/particle";
+import type { ParticleOptions } from "./types";
 
-/** Optional, local backend overrides carried under engine.backendOverrides.particle */
-export type ParticleOverrides = Partial<{
-  mode: ParticleMode;
-}>;
+/* ----------------------------- defaults & merge ---------------------------- */
 
-export function pickMode(opt: RenderOptions): ParticleMode {
-  const local = opt.engine.backendOverrides?.particle as
-    | ParticleOverrides
-    | undefined;
-  const m = local?.mode;
-  return m === "smoke" || m === "sparkle" ? m : "trail";
+function defaultParticle(): ParticleOptions {
+  return {
+    emitRatePerSec: 220,
+    lifeMs: 950,
+    sizeMinPx: 1.5,
+    sizeMaxPx: 6,
+    speedMin: 120,
+    speedMax: 600,
+    dragPerSec: 0.2,
+    gravity: 900,
+    angleSpreadRad: Math.PI * 0.2,
+    splatterProb: 0.25,
+    dripGravity: 600,
+    dripStretch: 0.35,
+    noiseAmount: 0.15,
+    noiseScalePx: 48,
+    decal: { kind: "round" },
+    antiHaloPx: 0.6,
+    antiHaloAlpha: 0.35,
+    inkMode: "inner-grain",
+  };
 }
 
-/** Core entry: draw using the selected particle variant. */
-export default function drawParticle(ctx: Ctx2D, opt: RenderOptions): void {
-  // Merge normalized tilt knobs into overrides so variants can just read them.
+/** Merge caller’s options with defaults (no undefineds leak). */
+function normalizeOptions(
+  opt: RenderOptions & Partial<{ particle: Partial<ParticleOptions> }>
+): RenderOptions & { particle: ParticleOptions } {
+  const d = defaultParticle();
+  const p = opt.particle ?? {};
+
+  const safe: ParticleOptions = {
+    emitRatePerSec:
+      typeof p.emitRatePerSec === "number"
+        ? p.emitRatePerSec
+        : d.emitRatePerSec,
+    lifeMs: typeof p.lifeMs === "number" ? p.lifeMs : d.lifeMs,
+    sizeMinPx: typeof p.sizeMinPx === "number" ? p.sizeMinPx : d.sizeMinPx,
+    sizeMaxPx: typeof p.sizeMaxPx === "number" ? p.sizeMaxPx : d.sizeMaxPx,
+    speedMin: typeof p.speedMin === "number" ? p.speedMin : d.speedMin,
+    speedMax: typeof p.speedMax === "number" ? p.speedMax : d.speedMax,
+    dragPerSec: typeof p.dragPerSec === "number" ? p.dragPerSec : d.dragPerSec,
+    gravity: typeof p.gravity === "number" ? p.gravity : d.gravity,
+    angleSpreadRad:
+      typeof p.angleSpreadRad === "number"
+        ? p.angleSpreadRad
+        : d.angleSpreadRad,
+    splatterProb:
+      typeof p.splatterProb === "number" ? p.splatterProb : d.splatterProb,
+    dripGravity:
+      typeof p.dripGravity === "number" ? p.dripGravity : d.dripGravity,
+    dripStretch:
+      typeof p.dripStretch === "number" ? p.dripStretch : d.dripStretch,
+    noiseAmount:
+      typeof p.noiseAmount === "number" ? p.noiseAmount : d.noiseAmount,
+    noiseScalePx:
+      typeof p.noiseScalePx === "number" ? p.noiseScalePx : d.noiseScalePx,
+    decal: p.decal ?? d.decal, // sprite sizeScale is optional, so this is exact-optional-safe
+    antiHaloPx: typeof p.antiHaloPx === "number" ? p.antiHaloPx : d.antiHaloPx,
+    antiHaloAlpha:
+      typeof p.antiHaloAlpha === "number" ? p.antiHaloAlpha : d.antiHaloAlpha,
+    inkMode:
+      p.inkMode === "rim" || p.inkMode === "inner-grain"
+        ? p.inkMode
+        : d.inkMode,
+  };
+
+  return { ...opt, particle: safe };
+}
+
+/* --------------------------------- entries -------------------------------- */
+
+export function drawParticle(ctx: Ctx2D, opt: RenderOptions): void {
+  // Normalize tilt routing once for parity with other backends
   const tilt = getTiltOverrides(opt.engine.overrides);
   const optWithTilt: RenderOptions = {
     ...opt,
@@ -39,22 +94,18 @@ export default function drawParticle(ctx: Ctx2D, opt: RenderOptions): void {
     },
   };
 
-  switch (pickMode(optWithTilt)) {
-    case "smoke":
-      drawSmoke(ctx, optWithTilt);
-      break;
-    case "sparkle":
-      drawSparkle(ctx, optWithTilt);
-      break;
-    case "trail":
-    default:
-      drawTrail(ctx, optWithTilt);
-      break;
-  }
+  const nopt = normalizeOptions(optWithTilt);
+  const path: RenderPathPoint[] = nopt.path ?? [];
+  if (path.length === 0) return;
+
+  // ctx.canvas is HTMLCanvasElement | OffscreenCanvas → matches CanvasLike
+  drawParticleToCanvas(ctx.canvas as CanvasLike, path, nopt);
 }
 
-/** Convenience: accept a canvas surface, fetch a 2D context, then draw. */
-export function drawToCanvas(canvas: CanvasLike, opt: RenderOptions): void {
-  const ctx = get2D(canvas);
+/** Convenience wrapper: accept a surface, get a 2D context, then draw. */
+export function drawToCanvas(surface: CanvasLike, opt: RenderOptions): void {
+  const ctx = get2D(surface);
   drawParticle(ctx, opt);
 }
+
+export default drawToCanvas;
